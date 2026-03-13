@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多 AI 智能体聊天室</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- 标题栏 -->
+    <header class="header">
+      <h1>🤖 多 AI 智能体聊天室</h1>
+      <div class="header-actions">
+        <span class="status" id="status">已连接</span>
+        <button class="btn-clear" onclick="clearHistory()">清空历史</button>
+      </div>
+    </header>
+
+    <!-- 智能体列表 -->
+    <div class="agents-bar" id="agentsBar">
+      <span class="agents-label">智能体:</span>
+      <div class="agents-list" id="agentsList"></div>
+    </div>
+
+    <!-- 当前对话智能体提示 -->
+    <div class="current-agent-bar" id="currentAgentBar" style="display: none;">
+      <span class="current-agent-label">当前对话:</span>
+      <span class="current-agent-name" id="currentAgentName"></span>
+      <button class="btn-switch" onclick="switchAgent()">切换</button>
+    </div>
+
+    <!-- 消息列表 -->
+    <div class="messages" id="messages">
+      <div class="welcome">
+        <div class="welcome-icon">💬</div>
+        <h2>欢迎使用 AI 智能体聊天室</h2>
+        <p class="hint">点击下方智能体标签， 或使用 <code>@智能体名</code> 开始对话</p>
+        <div class="welcome-agents">
+          <span class="welcome-agent" onclick="selectAgent('Claude')">🤖 Claude</span>
+          <span class="welcome-agent" onclick="selectAgent('Alice')">👩‍💻 Alice</span>
+          <span class="welcome-agent" onclick="selectAgent('Bob')">🧑‍💻 Bob</span>
+        </div>
+        <p class="hint secondary">✨ @ 一次后，后续消息会自动发送给该智能体</p>
+      </div>
+    </div>
+
+    <!-- 输入区域 -->
+    <div class="input-area">
+      <form onsubmit="sendMessage(event)">
+        <input
+          type="text"
+          id="userInput"
+          placeholder="输入消息... 使用 @智能体名 来召唤 AI"
+          autocomplete="off"
+          autofocus
+        >
+        <button type="submit" id="sendBtn">发送</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // ============================================
+    // 状态管理
+    // ============================================
+    let history = [];
+    let agents = [];
+    let isLoading = false;
+    let currentAgent = null;  // 当前对话的智能体
+
+    // DOM 元素
+    const messagesEl = document.getElementById('messages');
+    const userInputEl = document.getElementById('userInput');
+    const sendBtnEl = document.getElementById('sendBtn');
+    const statusEl = document.getElementById('status');
+    const agentsListEl = document.getElementById('agentsList');
+    const currentAgentBarEl = document.getElementById('currentAgentBar');
+    const currentAgentNameEl = document.getElementById('currentAgentName');
+
+    // ============================================
+    // 初始化
+    // ============================================
+
+    // 加载智能体列表
+    async function loadAgents() {
+      try {
+        const response = await fetch('/api/agents');
+        if (response.ok) {
+          const data = await response.json();
+          agents = data.agents || [];
+          renderAgentsList();
+        }
+      } catch (error) {
+        console.error('加载智能体失败:', error);
+      }
+    }
+
+    // 渲染智能体列表
+    function renderAgentsList() {
+      agentsListEl.innerHTML = agents.map(agent => `
+        <span class="agent-tag" style="--agent-color: ${agent.color}" title="@${agent.name}" onclick="selectAgent('${agent.name}')">
+          ${agent.avatar} ${agent.name}
+        </span>
+      `).join('');
+    }
+
+    // 选择智能体
+    function selectAgent(name) {
+      const agent = agents.find(a => a.name === name);
+      if (agent) {
+        userInputEl.value = `@${name} ` + userInputEl.value;
+        userInputEl.focus();
+      }
+    }
+
+    // 切换智能体
+    function switchAgent() {
+      currentAgent = null;
+      updateCurrentAgentUI();
+      userInputEl.placeholder = '输入消息... 使用 @智能体名 来召唤 AI';
+    }
+
+    // 更新当前智能体 UI
+    function updateCurrentAgentUI() {
+      if (currentAgent) {
+        const agent = agents.find(a => a.name === currentAgent);
+        currentAgentBarEl.style.display = 'flex';
+        currentAgentNameEl.textContent = `${agent ? agent.avatar : '🤖'} ${currentAgent}`;
+        currentAgentNameEl.style.color = agent ? agent.color : '#888';
+        userInputEl.placeholder = `发送消息给 ${currentAgent}... (输入 @其他智能体 可切换)`;
+      } else {
+        currentAgentBarEl.style.display = 'none';
+        userInputEl.placeholder = '输入消息... 使用 @智能体名 来召唤 AI';
+      }
+    }
+
+    // ============================================
+    // 渲染函数
+    // ============================================
+
+    /**
+     * 获取智能体信息
+     */
+    function getAgentInfo(name) {
+      return agents.find(a => a.name === name);
+    }
+
+    /**
+     * 获取发送者颜色
+     */
+    function getSenderColor(sender, role) {
+      if (role === 'user') return null;
+      const agent = getAgentInfo(sender);
+      return agent ? agent.color : null;
+    }
+
+    /**
+     * 获取发送者头像
+     */
+    function getSenderAvatar(sender, role) {
+      if (role === 'user') return '👤';
+      const agent = getAgentInfo(sender);
+      return agent ? agent.avatar : '🤖';
+    }
+
+    /**
+     * 渲染单个 card 块
+     */
+    function renderCard(block) {
+      const toneClass = `card--${block.tone || 'info'}`;
+      const icon = {
+        info: 'ℹ️',
+        success: '✅',
+        warning: '⚠️'
+      }[block.tone] || 'ℹ️';
+
+      return `
+        <div class="card ${toneClass}">
+          <div class="card__icon">${icon}</div>
+          <div class="card__content">
+            <div class="card__title">${escapeHtml(block.title)}</div>
+            <div class="card__body">${escapeHtml(block.body)}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    /**
+     * 渲染单个 checklist 块
+     */
+    function renderChecklist(block) {
+      const items = block.items || [];
+      const doneCount = items.filter(item => item.done).length;
+
+      return `
+        <div class="checklist">
+          <div class="checklist__header">
+            <span class="checklist__title">${escapeHtml(block.title)}</span>
+            <span class="checklist__count">${doneCount}/${items.length}</span>
+          </div>
+          <ul class="checklist__items">
+            ${items.map(item => `
+              <li class="checklist__item ${item.done ? 'checklist__item--done' : ''}">
+                <span class="checklist__checkbox">${item.done ? '☑' : '☐'}</span>
+                <span class="checklist__text">${escapeHtml(item.text)}</span>
+              </li>
+            `).join('')}
+          </ul>
+        </div>
+      `;
+    }
+
+    /**
+     * 渲染 rich blocks
+     */
+    function renderBlocks(blocks) {
+      if (!blocks || blocks.length === 0) return '';
+
+      return blocks.map(block => {
+        switch (block.kind) {
+          case 'card':
+            return renderCard(block);
+          case 'checklist':
+            return renderChecklist(block);
+          default:
+            return `<div class="unknown-block">[未知块: ${block.kind}]</div>`;
+        }
+      }).join('');
+    }
+
+    /**
+     * 高亮 @ 提及
+     */
+    function highlightMentions(text) {
+      return text.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
+    }
+
+    /**
+     * 渲染一条消息
+     */
+    function renderMessage(msg) {
+      const isUser = msg.role === 'user';
+      const roleClass = isUser ? 'message--user' : 'message--assistant';
+      const senderColor = getSenderColor(msg.sender, msg.role);
+      const avatar = getSenderAvatar(msg.sender, msg.role);
+
+      const colorStyle = senderColor ? `style="--sender-color: ${senderColor}"` : '';
+
+      let content = '';
+
+      if (isUser) {
+        content = `<div class="message__text">${highlightMentions(escapeHtml(msg.text || ''))}</div>`;
+      } else {
+        content = `
+          <div class="message__sender" ${colorStyle}>${escapeHtml(msg.sender || 'AI')}</div>
+          <div class="message__text">${escapeHtml(msg.text || '')}</div>
+          <div class="message__blocks">${renderBlocks(msg.blocks)}</div>
+        `;
+      }
+
+      return `
+        <div class="message ${roleClass}" ${colorStyle}>
+          <div class="message__avatar">${avatar}</div>
+          <div class="message__content">${content}</div>
+        </div>
+      `;
+    }
+
+    /**
+     * 渲染加载中状态
+     */
+    function renderLoading(agentName) {
+      const agent = getAgentInfo(agentName);
+      const avatar = agent ? agent.avatar : '🤖';
+      const color = agent ? agent.color : '#888';
+
+      return `
+        <div class="message message--assistant message--loading" style="--sender-color: ${color}">
+          <div class="message__avatar">${avatar}</div>
+          <div class="message__content">
+            <div class="message__sender" style="--sender-color: ${color}">${agentName}</div>
+            <div class="message__text">
+              <span class="loading-dots">
+                <span>.</span><span>.</span><span>.</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    /**
+     * 渲染所有消息
+     */
+    function renderMessages() {
+      messagesEl.innerHTML = '';
+      history.forEach(msg => {
+        messagesEl.innerHTML += renderMessage(msg);
+      });
+      scrollToBottom();
+    }
+
+    /**
+     * 添加单条消息
+     */
+    function addMessage(msg) {
+      const welcome = messagesEl.querySelector('.welcome');
+      if (welcome) welcome.remove();
+
+      messagesEl.innerHTML += renderMessage(msg);
+      scrollToBottom();
+    }
+
+    /**
+     * 显示/隐藏加载状态
+     */
+    function setLoading(loading, agentName = null) {
+      isLoading = loading;
+
+      if (loading) {
+        sendBtnEl.disabled = true;
+        sendBtnEl.textContent = '...';
+        messagesEl.innerHTML += renderLoading(agentName || 'AI');
+        scrollToBottom();
+      } else {
+        sendBtnEl.disabled = false;
+        sendBtnEl.textContent = '发送';
+        const loadingEl = messagesEl.querySelector('.message--loading');
+        if (loadingEl) loadingEl.remove();
+      }
+    }
+
+    /**
+     * 滚动到底部
+     */
+    function scrollToBottom() {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    /**
+     * HTML 转义
+     */
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML.replace(/\n/g, '<br>');
+    }
+
+    // ============================================
+    // API 调用
+    // ============================================
+
+    /**
+     * 发送消息
+     */
+    async function sendMessage(event) {
+      event.preventDefault();
+
+      if (isLoading) return;
+
+      const text = userInputEl.value.trim();
+      if (!text) return;
+
+      // 清空输入框
+      userInputEl.value = '';
+
+      // 提取 @ 提及
+      const mentions = text.match(/@(\w+)/g)?.map(m => m.slice(1)) || [];
+
+      // 确定要响应的智能体
+      let agentToRespond = mentions.length > 0 ? mentions[0] : currentAgent;
+
+      // 显示用户消息
+      const userMsg = { role: 'user', sender: '用户', text: text };
+      addMessage(userMsg);
+
+      // 如果有智能体要响应，显示加载状态
+      if (agentToRespond) {
+        setLoading(true, agentToRespond);
+        statusEl.textContent = `${agentToRespond} 思考中...`;
+      } else {
+        // 没有智能体可以响应
+        addMessage({
+          role: 'assistant',
+          sender: '系统',
+          text: '💡 请先 @ 一个智能体开始对话，例如: @Claude 你好'
+        });
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 更新当前智能体
+        if (data.currentAgent) {
+          currentAgent = data.currentAgent;
+          updateCurrentAgentUI();
+        }
+
+        // 更新历史
+        if (data.userMessage) {
+          history.push(data.userMessage);
+        }
+        if (data.aiMessages) {
+          data.aiMessages.forEach(msg => {
+            history.push(msg);
+            addMessage(msg);
+          });
+        }
+
+        statusEl.textContent = '已连接';
+
+      } catch (error) {
+        console.error('发送失败:', error);
+        statusEl.textContent = '连接失败';
+
+        addMessage({
+          role: 'assistant',
+          sender: '系统',
+          text: `❌ 发送失败: ${error.message}`
+        });
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    /**
+     * 加载历史记录
+     */
+    async function loadHistory() {
+      try {
+        const response = await fetch('/api/history');
+        if (response.ok) {
+          const data = await response.json();
+          history = data.messages || [];
+          if (data.agents) {
+            agents = data.agents;
+            renderAgentsList();
+          }
+          if (data.currentAgent) {
+            currentAgent = data.currentAgent;
+            updateCurrentAgentUI();
+          }
+          renderMessages();
+        }
+      } catch (error) {
+        console.error('加载历史失败:', error);
+      }
+    }
+
+    /**
+     * 清空历史
+     */
+    async function clearHistory() {
+      if (!confirm('确定要清空所有聊天记录吗?')) return;
+
+      try {
+        const response = await fetch('/api/clear', { method: 'POST' });
+        const data = await response.json();
+        history = [];
+        currentAgent = data.currentAgent;  // 重置为 null
+        updateCurrentAgentUI();
+        messagesEl.innerHTML = `
+          <div class="welcome">
+            <p>👋 欢迎来到多 AI 智能体聊天室!</p>
+            <p class="hint">试试 @ 提及来召唤 AI 智能体:</p>
+            <p class="hint examples">
+              <em>@Claude 你好</em> |
+              <em>@Alice 帮我列个待办</em> |
+              <em>@Bob 有什么建议?</em>
+            </p>
+            <p class="hint secondary">@ 一次后，后续消息会自动发送给同一个 AI</p>
+          </div>
+        `;
+      } catch (error) {
+        console.error('清空失败:', error);
+        alert('清空失败: ' + error.message);
+      }
+    }
+
+    // ============================================
+    // 初始化
+    // ============================================
+
+    window.addEventListener('load', () => {
+      loadAgents();
+      loadHistory();
+      userInputEl.focus();
+    });
+
+    // 回车发送
+    userInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage(e);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 聊天 - Rich Blocks</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- 标题栏 -->
+    <header class="header">
+      <h1>🤖 AI 聊天助手</h1>
+      <div class="header-actions">
+        <span class="status" id="status">已连接</span>
+        <button class="btn-clear" onclick="clearHistory()">清空历史</button>
+      </div>
+    </header>
+
+    <!-- 消息列表 -->
+    <div class="messages" id="messages">
+      <div class="welcome">
+        <p>👋 你好！我是 AI 助手。</p>
+        <p class="hint">试试说：<em>"帮我列一个今天的待办事项"</em> 或 <em>"总结一下昨天的进展"</em></p>
+      </div>
+    </div>
+
+    <!-- 输入区域 -->
+    <div class="input-area">
+      <form onsubmit="sendMessage(event)">
+        <input
+          type="text"
+          id="userInput"
+          placeholder="输入消息..."
+          autocomplete="off"
+          autofocus
+        >
+        <button type="submit" id="sendBtn">发送</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // ============================================
+    // 状态管理
+    // ============================================
+    let history = [];
+    let isLoading = false;
+
+    // DOM 元素
+    const messagesEl = document.getElementById('messages');
+    const userInputEl = document.getElementById('userInput');
+    const sendBtnEl = document.getElementById('sendBtn');
+    const statusEl = document.getElementById('status');
+
+    // ============================================
+    // 渲染函数
+    // ============================================
+
+    /**
+     * 渲染单个 card 块
+     */
+    function renderCard(block) {
+      const toneClass = `card--${block.tone || 'info'}`;
+      const icon = {
+        info: 'ℹ️',
+        success: '✅',
+        warning: '⚠️'
+      }[block.tone] || 'ℹ️';
+
+      return `
+        <div class="card ${toneClass}">
+          <div class="card__icon">${icon}</div>
+          <div class="card__content">
+            <div class="card__title">${escapeHtml(block.title)}</div>
+            <div class="card__body">${escapeHtml(block.body)}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    /**
+     * 渲染单个 checklist 块
+     */
+    function renderChecklist(block) {
+      const items = block.items || [];
+      const doneCount = items.filter(item => item.done).length;
+
+      return `
+        <div class="checklist">
+          <div class="checklist__header">
+            <span class="checklist__title">${escapeHtml(block.title)}</span>
+            <span class="checklist__count">${doneCount}/${items.length}</span>
+          </div>
+          <ul class="checklist__items">
+            ${items.map(item => `
+              <li class="checklist__item ${item.done ? 'checklist__item--done' : ''}">
+                <span class="checklist__checkbox">${item.done ? '☑' : '☐'}</span>
+                <span class="checklist__text">${escapeHtml(item.text)}</span>
+              </li>
+            `).join('')}
+          </ul>
+        </div>
+      `;
+    }
+
+    /**
+     * 渲染 rich blocks
+     */
+    function renderBlocks(blocks) {
+      if (!blocks || blocks.length === 0) return '';
+
+      return blocks.map(block => {
+        switch (block.kind) {
+          case 'card':
+            return renderCard(block);
+          case 'checklist':
+            return renderChecklist(block);
+          default:
+            return `<div class="unknown-block">[未知块: ${block.kind}]</div>`;
+        }
+      }).join('');
+    }
+
+    /**
+     * 渲染一条消息
+     */
+    function renderMessage(msg) {
+      const isUser = msg.role === 'user';
+      const roleClass = isUser ? 'message--user' : 'message--assistant';
+
+      let content = '';
+
+      if (isUser) {
+        // 用户消息：纯文本
+        content = `<div class="message__text">${escapeHtml(msg.text || '')}</div>`;
+      } else {
+        // AI 消息：文本 + blocks
+        content = `
+          <div class="message__text">${escapeHtml(msg.text || '')}</div>
+          <div class="message__blocks">${renderBlocks(msg.blocks)}</div>
+        `;
+      }
+
+      return `
+        <div class="message ${roleClass}">
+          <div class="message__avatar">${isUser ? '👤' : '🤖'}</div>
+          <div class="message__content">${content}</div>
+        </div>
+      `;
+    }
+
+    /**
+     * 渲染加载中状态
+     */
+    function renderLoading() {
+      return `
+        <div class="message message--assistant message--loading">
+          <div class="message__avatar">🤖</div>
+          <div class="message__content">
+            <div class="message__text">
+              <span class="loading-dots">
+                <span>.</span><span>.</span><span>.</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    /**
+     * 渲染所有消息
+     */
+    function renderMessages() {
+      // 保留欢迎消息或清空
+      const welcome = messagesEl.querySelector('.welcome');
+
+      messagesEl.innerHTML = '';
+
+      // 渲染历史消息
+      history.forEach(msg => {
+        messagesEl.innerHTML += renderMessage(msg);
+      });
+
+      // 滚动到底部
+      scrollToBottom();
+    }
+
+    /**
+     * 添加单条消息
+     */
+    function addMessage(msg) {
+      // 移除欢迎消息
+      const welcome = messagesEl.querySelector('.welcome');
+      if (welcome) welcome.remove();
+
+      messagesEl.innerHTML += renderMessage(msg);
+      scrollToBottom();
+    }
+
+    /**
+     * 显示/隐藏加载状态
+     */
+    function setLoading(loading) {
+      isLoading = loading;
+
+      if (loading) {
+        sendBtnEl.disabled = true;
+        sendBtnEl.textContent = '...';
+        messagesEl.innerHTML += renderLoading();
+        scrollToBottom();
+      } else {
+        sendBtnEl.disabled = false;
+        sendBtnEl.textContent = '发送';
+        const loadingEl = messagesEl.querySelector('.message--loading');
+        if (loadingEl) loadingEl.remove();
+      }
+    }
+
+    /**
+     * 滚动到底部
+     */
+    function scrollToBottom() {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    /**
+     * HTML 转义
+     */
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML.replace(/\n/g, '<br>');
+    }
+
+    // ============================================
+    // API 调用
+    // ============================================
+
+    /**
+     * 发送消息
+     */
+    async function sendMessage(event) {
+      event.preventDefault();
+
+      if (isLoading) return;
+
+      const text = userInputEl.value.trim();
+      if (!text) return;
+
+      // 清空输入框
+      userInputEl.value = '';
+
+      // 添加用户消息到界面
+      const userMsg = { role: 'user', text: text };
+      addMessage(userMsg);
+
+      // 显示加载状态
+      setLoading(true);
+      statusEl.textContent = '思考中...';
+
+      try {
+        const response = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: text,
+            history: history
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // AI 消息
+        const aiMsg = {
+          role: 'assistant',
+          text: data.text,
+          blocks: data.blocks
+        };
+
+        // 更新历史
+        history.push(userMsg);
+        history.push(aiMsg);
+
+        // 添加到界面
+        addMessage(aiMsg);
+
+        statusEl.textContent = '已连接';
+
+      } catch (error) {
+        console.error('发送失败:', error);
+        statusEl.textContent = '连接失败';
+
+        // 显示错误消息
+        addMessage({
+          role: 'assistant',
+          text: `❌ 发送失败: ${error.message}`
+        });
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    /**
+     * 加载历史记录
+     */
+    async function loadHistory() {
+      try {
+        const response = await fetch('/history');
+        if (response.ok) {
+          history = await response.json();
+          renderMessages();
+        }
+      } catch (error) {
+        console.error('加载历史失败:', error);
+      }
+    }
+
+    /**
+     * 清空历史
+     */
+    async function clearHistory() {
+      if (!confirm('确定要清空所有聊天记录吗？')) return;
+
+      try {
+        await fetch('/clear', { method: 'POST' });
+        history = [];
+        messagesEl.innerHTML = `
+          <div class="welcome">
+            <p>👋 你好！我是 AI 助手。</p>
+            <p class="hint">试试说：<em>"帮我列一个今天的待办事项"</em> 或 <em>"总结一下昨天的进展"</em></p>
+          </div>
+        `;
+      } catch (error) {
+        console.error('清空失败:', error);
+        alert('清空失败: ' + error.message);
+      }
+    }
+
+    // ============================================
+    // 初始化
+    // ============================================
+
+    // 页面加载时恢复历史
+    window.addEventListener('load', () => {
+      loadHistory();
+      userInputEl.focus();
+    });
+
+    // 回车发送
+    userInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage(e);
+      }
+    });
+  </script>
+</body>
+</html>

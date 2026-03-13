@@ -1,0 +1,24 @@
+{
+  "name": "multi-agent-chat",
+  "version": "1.0.0",
+  "description": "Multi AI Agent Chat Room",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "ioredis": "^5.10.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.9.3",
+    "ts-node": "^10.9.0"
+  }
+}
