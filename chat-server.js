@@ -64,8 +64,8 @@ const SYSTEM_PROMPT = `你是一个友好的 AI 助手。
 
 普通文本和 cc_rich 块可以混合使用，让回复更加丰富。`;
 
-// 存储聊天历史（内存中，重启后清空）
-let chatHistory = [];
+// 存储聊天历史（按 session 隔离，重启后清空）
+const chatHistoryBySession = new Map();
 
 // ============================================
 // 工具函数
@@ -87,6 +87,30 @@ function parseBody(req) {
     });
     req.on('error', reject);
   });
+}
+
+/**
+ * 从 URL 中读取查询参数
+ */
+function getQueryParams(reqUrl) {
+  const parsed = new URL(reqUrl, `http://localhost:${PORT}`);
+  return parsed.searchParams;
+}
+
+/**
+ * 获取指定 session 的历史（不存在则返回空数组）
+ */
+function getSessionHistory(sessionId) {
+  return chatHistoryBySession.get(sessionId) || [];
+}
+
+/**
+ * 向指定 session 写入消息
+ */
+function appendSessionMessage(sessionId, message) {
+  const history = getSessionHistory(sessionId);
+  history.push(message);
+  chatHistoryBySession.set(sessionId, history);
 }
 
 /**
@@ -305,10 +329,13 @@ async function handleChat(req, res) {
     console.log('\n[Chat] Session:', sid);
     console.log('[Chat] User:', message);
 
+    // 始终使用服务端 session 历史，保证隔离
+    const sessionHistory = getSessionHistory(sid);
+
     // 调用 Claude CLI（如果失败则使用模拟回复）
     let aiResponse;
     try {
-      aiResponse = await callClaudeCLI(message, history);
+      aiResponse = await callClaudeCLI(message, sessionHistory.length > 0 ? sessionHistory : history);
     } catch (error) {
       console.log('[Chat] Claude CLI 不可用:', error.message);
       console.log('[Chat] 使用模拟回复');
@@ -345,9 +372,9 @@ async function handleChat(req, res) {
       }
     };
 
-    // 更新历史
-    chatHistory.push({ role: 'user', text: message, sessionId: sid });
-    chatHistory.push({ role: 'assistant', text: cleanText, blocks: mergedBlocks, sessionId: sid });
+    // 更新 session 历史
+    appendSessionMessage(sid, { role: 'user', text: message, sessionId: sid });
+    appendSessionMessage(sid, { role: 'assistant', text: cleanText, blocks: mergedBlocks, sessionId: sid });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(response));
@@ -442,17 +469,38 @@ function handleBlockStatus(req, res) {
  * 获取历史记录
  */
 function handleHistory(req, res) {
+  const params = getQueryParams(req.url);
+  const sessionId = params.get('sessionId') || DEFAULT_SESSION_ID;
+  const history = getSessionHistory(sessionId);
+
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(chatHistory));
+  res.end(JSON.stringify(history));
 }
 
 /**
  * 清空历史
  */
 function handleClear(req, res) {
-  chatHistory = [];
+  const params = getQueryParams(req.url);
+  const sessionId = params.get('sessionId');
+
+  if (sessionId) {
+    chatHistoryBySession.set(sessionId, []);
+  } else {
+    chatHistoryBySession.clear();
+  }
+
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ success: true }));
+  res.end(JSON.stringify({ success: true, sessionId: sessionId || null }));
+}
+
+/**
+ * 获取所有 session 列表
+ */
+function handleSessions(req, res) {
+  const sessions = Array.from(chatHistoryBySession.keys());
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ sessions }));
 }
 
 /**
@@ -477,7 +525,8 @@ function serveStatic(req, res, filePath, contentType) {
 // ============================================
 
 const server = http.createServer(async (req, res) => {
-  const url = req.url;
+  const parsedUrl = new URL(req.url, `http://localhost:${PORT}`);
+  const url = parsedUrl.pathname;
   const method = req.method;
 
   // CORS 头
@@ -502,6 +551,8 @@ const server = http.createServer(async (req, res) => {
     handleBlockStatus(req, res);
   } else if (url === '/history' && method === 'GET') {
     handleHistory(req, res);
+  } else if (url === '/sessions' && method === 'GET') {
+    handleSessions(req, res);
   } else if (url === '/clear' && method === 'POST') {
     handleClear(req, res);
   } else if (url === '/' || url === '/index.html') {
@@ -526,8 +577,9 @@ server.listen(PORT, () => {
   console.log('  POST /chat              - 发送聊天消息（合并 Route A + B）');
   console.log('  POST /api/create-block  - Route A: 直接创建 block');
   console.log('  GET  /api/block-status  - 查看 BlockBuffer 状态');
-  console.log('  GET  /history           - 获取历史记录');
-  console.log('  POST /clear             - 清空历史');
+  console.log('  GET  /history           - 获取指定 session 历史');
+  console.log('  GET  /sessions          - 获取 session 列表');
+  console.log('  POST /clear             - 清空 session 或全部历史');
   console.log('');
   console.log('双路由模式:');
   console.log('  Route A (HTTP 回调): POST /api/create-block → BlockBuffer');

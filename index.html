@@ -12,10 +12,20 @@
     <header class="header">
       <h1>🤖 AI 聊天助手</h1>
       <div class="header-actions">
+        <select id="sessionSelect" class="session-select" onchange="switchSession(this.value)"></select>
+        <button class="btn-clear" type="button" onclick="createSession()">新建会话</button>
         <span class="status" id="status">已连接</span>
         <button class="btn-clear" onclick="clearHistory()">清空历史</button>
       </div>
     </header>
+
+    <section class="profile-bar">
+      <label for="userAvatarInput">用户头像</label>
+      <input id="userAvatarInput" type="text" maxlength="2" placeholder="👤" oninput="updateAvatar('user', this.value)">
+      <label for="assistantAvatarInput">助手头像</label>
+      <input id="assistantAvatarInput" type="text" maxlength="2" placeholder="🤖" oninput="updateAvatar('assistant', this.value)">
+      <button class="btn-clear" type="button" onclick="resetAvatars()">重置头像</button>
+    </section>
 
     <!-- 消息列表 -->
     <div class="messages" id="messages">
@@ -46,12 +56,22 @@
     // ============================================
     let history = [];
     let isLoading = false;
+    let currentSessionId = 'default';
+    let sessions = ['default'];
+    const SESSION_STORAGE_KEY = 'bot-room-sessions';
+    const ACTIVE_SESSION_STORAGE_KEY = 'bot-room-active-session';
+    const AVATAR_STORAGE_KEY = 'bot-room-avatars';
+    const defaultAvatars = { user: '👤', assistant: '🤖' };
+    let avatars = { ...defaultAvatars };
 
     // DOM 元素
     const messagesEl = document.getElementById('messages');
     const userInputEl = document.getElementById('userInput');
     const sendBtnEl = document.getElementById('sendBtn');
     const statusEl = document.getElementById('status');
+    const sessionSelectEl = document.getElementById('sessionSelect');
+    const userAvatarInputEl = document.getElementById('userAvatarInput');
+    const assistantAvatarInputEl = document.getElementById('assistantAvatarInput');
 
     // ============================================
     // 渲染函数
@@ -144,7 +164,7 @@
 
       return `
         <div class="message ${roleClass}">
-          <div class="message__avatar">${isUser ? '👤' : '🤖'}</div>
+          <div class="message__avatar">${isUser ? avatars.user : avatars.assistant}</div>
           <div class="message__content">${content}</div>
         </div>
       `;
@@ -156,7 +176,7 @@
     function renderLoading() {
       return `
         <div class="message message--assistant message--loading">
-          <div class="message__avatar">🤖</div>
+          <div class="message__avatar">${avatars.assistant}</div>
           <div class="message__content">
             <div class="message__text">
               <span class="loading-dots">
@@ -266,7 +286,8 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: text,
-            history: history
+            history: history,
+            sessionId: currentSessionId
           })
         });
 
@@ -311,7 +332,7 @@
      */
     async function loadHistory() {
       try {
-        const response = await fetch('/history');
+        const response = await fetch(`/history?sessionId=${encodeURIComponent(currentSessionId)}`);
         if (response.ok) {
           history = await response.json();
           renderMessages();
@@ -325,10 +346,10 @@
      * 清空历史
      */
     async function clearHistory() {
-      if (!confirm('确定要清空所有聊天记录吗？')) return;
+      if (!confirm(`确定要清空会话「${currentSessionId}」的聊天记录吗？`)) return;
 
       try {
-        await fetch('/clear', { method: 'POST' });
+        await fetch(`/clear?sessionId=${encodeURIComponent(currentSessionId)}`, { method: 'POST' });
         history = [];
         messagesEl.innerHTML = `
           <div class="welcome">
@@ -342,13 +363,100 @@
       }
     }
 
+    function updateSessionSelect() {
+      sessionSelectEl.innerHTML = sessions.map(sessionId => (
+        `<option value="${escapeHtml(sessionId)}" ${sessionId === currentSessionId ? 'selected' : ''}>${escapeHtml(sessionId)}</option>`
+      )).join('');
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions));
+      localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, currentSessionId);
+    }
+
+    async function loadSessions() {
+      try {
+        const response = await fetch('/sessions');
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data.sessions) && data.sessions.length > 0) {
+            sessions = Array.from(new Set(['default', ...data.sessions]));
+          }
+        }
+      } catch (error) {
+        console.warn('从服务端加载会话失败，使用本地缓存', error);
+      }
+
+      const savedSessions = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) || '[]');
+      if (Array.isArray(savedSessions) && savedSessions.length > 0) {
+        sessions = Array.from(new Set([...sessions, ...savedSessions]));
+      }
+
+      const savedActiveSession = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+      if (savedActiveSession && sessions.includes(savedActiveSession)) {
+        currentSessionId = savedActiveSession;
+      }
+
+      updateSessionSelect();
+    }
+
+    async function switchSession(sessionId) {
+      currentSessionId = sessionId;
+      updateSessionSelect();
+      history = [];
+      renderMessages();
+      await loadHistory();
+      userInputEl.focus();
+    }
+
+    function createSession() {
+      const newId = prompt('请输入新会话 ID（例如：project-a）');
+      if (!newId) return;
+
+      const sessionId = newId.trim();
+      if (!sessionId) return;
+
+      if (!sessions.includes(sessionId)) {
+        sessions.push(sessionId);
+      }
+
+      switchSession(sessionId);
+    }
+
+    function loadAvatars() {
+      const saved = JSON.parse(localStorage.getItem(AVATAR_STORAGE_KEY) || '{}');
+      avatars = {
+        user: saved.user || defaultAvatars.user,
+        assistant: saved.assistant || defaultAvatars.assistant
+      };
+      userAvatarInputEl.value = avatars.user;
+      assistantAvatarInputEl.value = avatars.assistant;
+    }
+
+    function saveAvatars() {
+      localStorage.setItem(AVATAR_STORAGE_KEY, JSON.stringify(avatars));
+    }
+
+    function updateAvatar(role, value) {
+      const normalized = (value || '').trim();
+      avatars[role] = normalized || defaultAvatars[role];
+      saveAvatars();
+      renderMessages();
+    }
+
+    function resetAvatars() {
+      avatars = { ...defaultAvatars };
+      userAvatarInputEl.value = avatars.user;
+      assistantAvatarInputEl.value = avatars.assistant;
+      saveAvatars();
+      renderMessages();
+    }
+
     // ============================================
     // 初始化
     // ============================================
 
     // 页面加载时恢复历史
     window.addEventListener('load', () => {
-      loadHistory();
+      loadAvatars();
+      loadSessions().then(loadHistory);
       userInputEl.focus();
     });
 

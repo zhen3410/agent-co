@@ -94,6 +94,21 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.session-select {
+  padding: 6px 12px;
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 12px;
+  min-width: 140px;
+}
+
+.session-select option {
+  color: var(--text-primary);
 }
 
 .status {
@@ -120,6 +135,26 @@ body {
 .btn-clear:hover {
   background: rgba(255, 255, 255, 0.3);
   transform: translateY(-1px);
+}
+
+.profile-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-bottom: 1px solid rgba(139, 105, 20, 0.15);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.profile-bar input {
+  width: 48px;
+  text-align: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--wood-cream);
+  padding: 4px 6px;
+  font-size: 18px;
 }
 
 /* ============================================
