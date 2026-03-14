@@ -10,6 +10,8 @@ import * as http from 'http';
 import * as path from 'path';
 import { URL } from 'url';
 
+// 引入 fs 模块的 promise 版本用于异步操作
+
 type UserRecord = {
   username: string;
   passwordHash: string;
@@ -123,10 +125,40 @@ function validateCredInput(username: string, password: string): string | null {
   return null;
 }
 
+function serveStatic(res: http.ServerResponse, filePath: string, contentType: string): void {
+  const fullPath = path.join(__dirname, '..', 'public-auth', filePath);
+
+  fs.readFile(fullPath, (err, data) => {
+    if (err) {
+      sendJson(res, 404, { error: 'Not Found' });
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': contentType });
+    res.end(data);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const method = req.method || 'GET';
   const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || `localhost:${PORT}`}`);
   const pathname = parsedUrl.pathname;
+
+  // CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-token');
+
+  if (method === 'OPTIONS') {
+    res.writeHead(200);
+    res.end();
+    return;
+  }
+
+  // Serve admin page
+  if (method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
+    serveStatic(res, 'admin.html', 'text/html; charset=utf-8');
+    return;
+  }
 
   if (method === 'GET' && pathname === '/healthz') {
     sendJson(res, 200, { ok: true });
@@ -270,6 +302,10 @@ server.listen(PORT, () => {
   console.log('🔐 鉴权管理服务已启动');
   console.log(`📍 地址: http://localhost:${PORT}`);
   console.log(`📁 用户数据: ${DATA_FILE}`);
+  console.log('');
+  console.log('页面:');
+  console.log('  GET    /                       管理页面');
+  console.log('');
   console.log('API 端点:');
   console.log('  GET    /healthz');
   console.log('  POST   /api/auth/verify');
