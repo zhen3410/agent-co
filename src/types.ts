@@ -64,6 +64,7 @@ export interface AIAgentConfig {
   avatar: string;
   personality: string;
   color: string;
+  systemPrompt?: string;
 }
 
 // ============================================

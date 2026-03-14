@@ -77,7 +77,9 @@
     }
 
     input[type="text"],
-    input[type="password"] {
+    input[type="password"],
+    textarea,
+    select {
       width: 100%;
       padding: 12px 16px;
       background: rgba(255, 255, 255, 0.08);
@@ -88,7 +90,9 @@
       transition: border-color 0.2s;
     }
 
-    input:focus {
+    input:focus,
+    textarea:focus,
+    select:focus {
       outline: none;
       border-color: #6366f1;
     }
@@ -323,6 +327,23 @@
       border-radius: 4px;
       font-family: monospace;
     }
+
+    textarea {
+      min-height: 84px;
+      resize: vertical;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 800px) {
+      .split {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
@@ -369,6 +390,43 @@
         </div>
       </div>
     </div>
+
+    <div class="card" id="agentCard" style="display: none;">
+      <h2>🤖 智能体管理</h2>
+      <div class="split">
+        <div>
+          <div class="form-group"><label>名称</label><input type="text" id="agentName" placeholder="如 ProductOwner"></div>
+          <div class="form-row">
+            <div class="form-group"><label>头像</label><input type="text" id="agentAvatar" placeholder="🤖"></div>
+            <div class="form-group"><label>颜色</label><input type="text" id="agentColor" value="#3b82f6"></div>
+          </div>
+          <div class="form-group"><label>性格描述（personality）</label><textarea id="agentPersonality" placeholder="该智能体的定位与风格"></textarea></div>
+          <div class="form-group"><label>自定义提示词（systemPrompt，可选）</label><textarea id="agentPrompt" placeholder="留空则使用 personality 生成默认提示词"></textarea></div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>生效策略</label>
+              <select id="agentApplyMode">
+                <option value="immediate">热生效（立即）</option>
+                <option value="after_chat">会话结束后生效</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>操作</label>
+              <button class="btn btn-primary" onclick="submitAgentForm()" id="agentSubmitBtn">新增智能体</button>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="info-box" id="pendingInfo" style="display:none;"></div>
+          <button class="btn btn-secondary" onclick="applyPendingAgents()">立即应用待生效配置</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🧠 智能体列表</h2>
+      <div id="agentsContainer"><div class="loading"><p>请先验证管理员 Token</p></div></div>
+    </div>
   </div>
 
   <!-- 修改密码模态框 -->
@@ -397,6 +455,7 @@
   <script>
     let adminToken = '';
     let currentEditUser = '';
+    let editingAgentName = '';
 
     function showToast(message, type = 'success') {
       const toast = document.getElementById('toast');
@@ -429,7 +488,9 @@
           showToast('Token 验证成功');
           document.getElementById('addUserCard').style.display = 'block';
           document.getElementById('tokenHint').style.display = 'block';
+          localStorage.setItem('authAdminToken', adminToken);
           loadUsers();
+          loadAgents();
         } else {
           const data = await response.json();
           showToast(data.error || 'Token 验证失败', 'error');
@@ -535,7 +596,9 @@
           showToast(`用户 ${username} 创建成功`);
           document.getElementById('newUsername').value = '';
           document.getElementById('newPassword').value = '';
+          localStorage.setItem('authAdminToken', adminToken);
           loadUsers();
+          loadAgents();
         } else {
           showToast(data.error || '创建失败', 'error');
         }
@@ -586,7 +649,9 @@
         if (response.ok) {
           showToast(`用户 ${currentEditUser} 密码已更新`);
           closePasswordModal();
+          localStorage.setItem('authAdminToken', adminToken);
           loadUsers();
+          loadAgents();
         } else {
           showToast(data.error || '修改失败', 'error');
         }
@@ -610,10 +675,175 @@
 
         if (response.ok) {
           showToast(`用户 ${username} 已删除`);
+          localStorage.setItem('authAdminToken', adminToken);
           loadUsers();
+          loadAgents();
         } else {
           showToast(data.error || '删除失败', 'error');
         }
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+
+    async function loadAgents() {
+      const container = document.getElementById('agentsContainer');
+      try {
+        const response = await fetch('/api/agents', { headers: { 'x-admin-token': adminToken } });
+        if (!response.ok) throw new Error('加载失败');
+        const data = await response.json();
+        document.getElementById('agentCard').style.display = 'block';
+        renderAgents(data.agents || []);
+        const pendingInfo = document.getElementById('pendingInfo');
+        if (data.pendingAgents) {
+          pendingInfo.style.display = 'block';
+          pendingInfo.innerHTML = `⏳ 存在待生效配置（${data.pendingAgents.length} 个智能体），等待当前聊天结束后生效。`;
+        } else {
+          pendingInfo.style.display = 'none';
+        }
+      } catch (error) {
+        container.innerHTML = '<div class="empty-state"><div class="icon">❌</div><p>加载智能体失败</p></div>';
+      }
+    }
+
+    function renderAgents(agents) {
+      const container = document.getElementById('agentsContainer');
+      if (!agents.length) {
+        container.innerHTML = '<div class="empty-state"><div class="icon">🤖</div><p>暂无智能体</p></div>';
+        return;
+      }
+      container.innerHTML = `
+        <table class="users-table">
+          <thead><tr><th>名称</th><th>性格</th><th>提示词</th><th>操作</th></tr></thead>
+          <tbody>
+            ${agents.map((agent, idx) => `
+              <tr>
+                <td><strong>${escapeHtml(agent.avatar)} ${escapeHtml(agent.name)}</strong><br><small>${escapeHtml(agent.color)}</small></td>
+                <td>${escapeHtml(agent.personality || '-')}</td>
+                <td>${escapeHtml((agent.systemPrompt || '').slice(0, 80) || '默认模板')}</td>
+                <td><div class="actions">
+                  <button class="btn btn-secondary btn-sm" data-action="edit-agent" data-index="${idx}">编辑</button>
+                  <button class="btn btn-secondary btn-sm" onclick="editPrompt('${agent.name}')">改提示词</button>
+                  <button class="btn btn-danger btn-sm" onclick="deleteAgent('${agent.name}')">删除</button>
+                </div></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`;
+
+      container.querySelectorAll('[data-action="edit-agent"]').forEach(btn => {
+        btn.onclick = () => {
+          const index = Number(btn.getAttribute('data-index'));
+          editAgent(agents[index]);
+        };
+      });
+    }
+
+    function getAgentForm() {
+      return {
+        name: document.getElementById('agentName').value.trim(),
+        avatar: document.getElementById('agentAvatar').value.trim(),
+        color: document.getElementById('agentColor').value.trim(),
+        personality: document.getElementById('agentPersonality').value.trim(),
+        systemPrompt: document.getElementById('agentPrompt').value.trim()
+      };
+    }
+
+    function resetAgentForm() {
+      editingAgentName = '';
+      document.getElementById('agentName').value = '';
+      document.getElementById('agentAvatar').value = '';
+      document.getElementById('agentColor').value = '#3b82f6';
+      document.getElementById('agentPersonality').value = '';
+      document.getElementById('agentPrompt').value = '';
+      document.getElementById('agentSubmitBtn').textContent = '新增智能体';
+    }
+
+    function editAgent(agent) {
+      editingAgentName = agent.name;
+      document.getElementById('agentName').value = agent.name;
+      document.getElementById('agentAvatar').value = agent.avatar;
+      document.getElementById('agentColor').value = agent.color;
+      document.getElementById('agentPersonality').value = agent.personality || '';
+      document.getElementById('agentPrompt').value = agent.systemPrompt || '';
+      document.getElementById('agentSubmitBtn').textContent = `保存 ${agent.name}`;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function submitAgentForm() {
+      const applyMode = document.getElementById('agentApplyMode').value;
+      const agent = getAgentForm();
+      if (!agent.name || !agent.avatar || !agent.color) {
+        showToast('请完整填写智能体基础信息', 'error');
+        return;
+      }
+
+      const method = editingAgentName ? 'PUT' : 'POST';
+      const path = editingAgentName ? `/api/agents/${encodeURIComponent(editingAgentName)}` : '/api/agents';
+
+      try {
+        const response = await fetch(path, {
+          method,
+          headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+          body: JSON.stringify({ agent, applyMode })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '保存失败');
+        showToast(editingAgentName ? '智能体已更新' : '智能体已创建');
+        resetAgentForm();
+        loadAgents();
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    async function editPrompt(name) {
+      const prompt = window.prompt(`请输入 ${name} 新提示词（留空跳过）`);
+      if (prompt === null) return;
+      const applyMode = document.getElementById('agentApplyMode').value;
+      try {
+        const response = await fetch(`/api/agents/${encodeURIComponent(name)}/prompt`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+          body: JSON.stringify({ systemPrompt: prompt, applyMode })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '修改失败');
+        showToast(`提示词已更新（${applyMode === 'immediate' ? '立即生效' : '会话后生效'}）`);
+        loadAgents();
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    async function deleteAgent(name) {
+      if (!confirm(`确定删除智能体 ${name} 吗？`)) return;
+      const applyMode = document.getElementById('agentApplyMode').value;
+      try {
+        const response = await fetch(`/api/agents/${encodeURIComponent(name)}?applyMode=${applyMode}`, {
+          method: 'DELETE',
+          headers: { 'x-admin-token': adminToken }
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '删除失败');
+        showToast(`智能体 ${name} 已删除`);
+        loadAgents();
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    async function applyPendingAgents() {
+      try {
+        const response = await fetch('/api/agents/apply-pending', {
+          method: 'POST',
+          headers: { 'x-admin-token': adminToken }
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '应用失败');
+        showToast('待生效智能体配置已应用');
+        loadAgents();
       } catch (error) {
         showToast('请求失败: ' + error.message, 'error');
       }
@@ -634,12 +864,6 @@
       }
     });
 
-    // 保存 token 到 localStorage
-    document.getElementById('adminToken').addEventListener('change', (e) => {
-      if (adminToken) {
-        localStorage.setItem('authAdminToken', adminToken);
-      }
-    });
   </script>
 </body>
 </html>
