@@ -16,18 +16,25 @@ npm run build
 
 ## 二、使用 systemd 启动服务（推荐）
 
-### 1）准备目录并部署代码
+### 1）部署目录
 
 ```bash
-sudo mkdir -p /opt/bot-room
-sudo rsync -av ./ /opt/bot-room/
+cd <你的部署目录>
 ```
+
+> 默认部署目录为你执行安装脚本时所在仓库根目录；也可通过环境变量 `APP_DIR` 显式指定。
 
 ### 2）执行一键安装脚本
 
 ```bash
-cd /opt/bot-room
+cd <你的部署目录>
 sudo bash scripts/install-systemd.sh
+```
+
+或：
+
+```bash
+sudo APP_DIR=/path/to/bot-room bash /path/to/bot-room/scripts/install-systemd.sh
 ```
 
 脚本会自动完成：
@@ -37,6 +44,8 @@ sudo bash scripts/install-systemd.sh
 - `systemctl daemon-reload`
 - `systemctl enable --now bot-room-auth-admin.service`
 - `systemctl enable --now bot-room-chat.service`
+
+两个服务都以 `root` 用户运行（`User=root`）。
 
 ### 3）修改生产配置
 

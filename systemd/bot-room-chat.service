@@ -5,18 +5,18 @@ Requires=bot-room-auth-admin.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/bot-room
+WorkingDirectory=__APP_DIR__
 EnvironmentFile=-/etc/bot-room/bot-room-chat.env
-ExecStart=/usr/bin/node /opt/bot-room/dist/server.js
+ExecStart=/usr/bin/node __APP_DIR__/dist/server.js
 Restart=always
 RestartSec=2
-User=botroom
-Group=botroom
+User=root
+Group=root
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadOnlyPaths=/opt/bot-room/public
+ReadOnlyPaths=__APP_DIR__/public
 
 [Install]
 WantedBy=multi-user.target
