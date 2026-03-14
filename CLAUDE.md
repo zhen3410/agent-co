@@ -27,7 +27,7 @@
 | `/api/chat` | POST | 发送消息 |
 | `/api/history` | GET | 获取历史记录 |
 | `/api/clear` | POST | 清空历史 |
-| `/api/login` | POST | 密码登录（当 `BOT_ROOM_PASSWORD` 已设置） |
+| `/api/login` | POST | 用户名+密码登录（默认启用鉴权） |
 | `/api/logout` | POST | 登出并清除 Cookie |
 | `/api/auth-status` | GET | 查看是否启用鉴权/当前是否已登录 |
 | `/api/create-block` | POST | Route A: 创建 block |
@@ -35,9 +35,10 @@
 
 ## 公网鉴权
 
-- 设置环境变量 `BOT_ROOM_PASSWORD` 后，聊天 API 会启用密码登录保护。
+- 鉴权默认启用（可通过 `BOT_ROOM_AUTH_ENABLED=false` 临时关闭）。
+- 聊天服务通过 `AUTH_ADMIN_BASE_URL` 调用独立鉴权管理服务校验用户名/密码。
 - 浏览器通过 `/api/login` 获取 HttpOnly Cookie，后续请求自动携带。
-- 若未设置 `BOT_ROOM_PASSWORD`，系统保持无鉴权模式（便于本地开发）。
+- 用户的新增/删改由鉴权管理服务负责，建议仅内网开放管理端口。
 
 ## iOS / PWA
 

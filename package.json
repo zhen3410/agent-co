@@ -5,8 +5,11 @@
   "main": "dist/server.js",
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
-    "start": "node dist/server.js",
-    "dev": "ts-node src/server.ts"
+    "start": "npm run start:chat",
+    "dev": "ts-node src/server.ts",
+    "start:chat": "node dist/server.js",
+    "start:auth": "node dist/auth-admin-server.js",
+    "systemd:install": "bash scripts/install-systemd.sh"
   },
   "keywords": [],
   "author": "",
