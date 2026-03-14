@@ -20,7 +20,8 @@ import { addBlock, consumeBlocks, getStatus as getBlockBufferStatus } from './bl
 const PORT = 3002;
 const DEFAULT_SESSION_ID = 'default';
 const DEFAULT_USER_NAME = '用户';
-const AUTH_PASSWORD = process.env.BOT_ROOM_PASSWORD || '';
+const AUTH_ENABLED = process.env.BOT_ROOM_AUTH_ENABLED !== 'false';
+const AUTH_ADMIN_BASE_URL = process.env.AUTH_ADMIN_BASE_URL || 'http://127.0.0.1:3003';
 const SESSION_COOKIE_NAME = 'bot_room_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 天
 
@@ -79,7 +80,7 @@ function issueSessionToken(): string {
 }
 
 function isAuthenticated(req: http.IncomingMessage): boolean {
-  if (!AUTH_PASSWORD) return true;
+  if (!AUTH_ENABLED) return true;
 
   const cookies = parseCookies(req);
   const token = cookies[SESSION_COOKIE_NAME];
@@ -125,17 +126,26 @@ function clearSessionCookie(res: http.ServerResponse): void {
 }
 
 async function handleLogin(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  if (!AUTH_PASSWORD) {
+  if (!AUTH_ENABLED) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, authEnabled: false }));
     return;
   }
 
   try {
-    const body = await parseBody<{ password?: string }>(req);
-    if (!body.password || body.password !== AUTH_PASSWORD) {
+    const body = await parseBody<{ username?: string; password?: string }>(req);
+    const username = (body.username || '').trim().toLowerCase();
+
+    if (!username || !body.password) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '缺少用户名或密码' }));
+      return;
+    }
+
+    const verifyResult = await verifyCredentials(username, body.password);
+    if (!verifyResult.success) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: '密码错误' }));
+      res.end(JSON.stringify({ error: verifyResult.error || '用户名或密码错误' }));
       return;
     }
 
@@ -163,9 +173,55 @@ function handleLogout(req: http.IncomingMessage, res: http.ServerResponse): void
 function handleAuthStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
-    authEnabled: Boolean(AUTH_PASSWORD),
+    authEnabled: AUTH_ENABLED,
     authenticated: isAuthenticated(req)
   }));
+}
+
+function verifyCredentials(username: string, password: string): Promise<{ success: boolean; error?: string }> {
+  return new Promise((resolve, reject) => {
+    const targetUrl = new URL('/api/auth/verify', AUTH_ADMIN_BASE_URL);
+    const payload = JSON.stringify({ username, password });
+
+    const request = http.request({
+      hostname: targetUrl.hostname,
+      port: targetUrl.port,
+      path: targetUrl.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      },
+      timeout: 3000
+    }, response => {
+      let responseBody = '';
+      response.on('data', chunk => (responseBody += chunk));
+      response.on('end', () => {
+        try {
+          const data = responseBody ? JSON.parse(responseBody) as { success?: boolean; error?: string } : {};
+          if (response.statusCode === 200 && data.success) {
+            resolve({ success: true });
+            return;
+          }
+
+          resolve({ success: false, error: data.error || '鉴权失败' });
+        } catch {
+          resolve({ success: false, error: '鉴权服务返回格式错误' });
+        }
+      });
+    });
+
+    request.on('timeout', () => {
+      request.destroy(new Error('鉴权服务超时'));
+    });
+
+    request.on('error', err => {
+      reject(new Error(`鉴权服务不可用: ${err.message}`));
+    });
+
+    request.write(payload);
+    request.end();
+  });
 }
 
 /**
@@ -491,7 +547,7 @@ const server = http.createServer(async (req, res) => {
     '/icon.svg'
   ]);
 
-  if (!publicPaths.has(url) && !isAuthenticated(req)) {
+  if (AUTH_ENABLED && !publicPaths.has(url) && !isAuthenticated(req)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: '未授权，请先登录' }));
     return;
@@ -554,10 +610,10 @@ server.listen(PORT, () => {
   console.log('  - 输入 @Bob 可以召唤 Bob');
   console.log('');
   console.log('💡 提示: 如果 Claude CLI 不可用,会自动使用模拟回复');
-  if (AUTH_PASSWORD) {
-    console.log('🔐 鉴权已启用: 请通过 /api/login 登录后访问聊天 API');
+  if (AUTH_ENABLED) {
+    console.log(`🔐 鉴权已启用: 依赖独立鉴权服务 ${AUTH_ADMIN_BASE_URL}`);
   } else {
-    console.log('🔓 鉴权未启用: 设置 BOT_ROOM_PASSWORD 后可开启登录保护');
+    console.log('🔓 鉴权未启用: 设置 BOT_ROOM_AUTH_ENABLED=false');
   }
   console.log('='.repeat(60));
 });

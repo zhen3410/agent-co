@@ -1,0 +1,21 @@
+[Unit]
+Description=Bot Room Auth Admin Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/bot-room
+EnvironmentFile=-/etc/bot-room/bot-room-auth-admin.env
+ExecStart=/usr/bin/node /opt/bot-room/dist/auth-admin-server.js
+Restart=always
+RestartSec=2
+User=botroom
+Group=botroom
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/bot-room/data
+
+[Install]
+WantedBy=multi-user.target

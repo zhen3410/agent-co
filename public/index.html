@@ -15,8 +15,9 @@
   <div class="auth-overlay" id="authOverlay" style="display: none;">
     <div class="auth-card">
       <h2>🔐 访问受保护</h2>
-      <p>请输入访问密码以进入 bot-room。</p>
+      <p>请输入用户名和密码以进入 bot-room。</p>
       <form onsubmit="submitLogin(event)">
+        <input type="text" id="usernameInput" placeholder="输入用户名" autocomplete="username" required>
         <input type="password" id="passwordInput" placeholder="输入密码" autocomplete="current-password" required>
         <button type="submit" id="loginBtn">登录</button>
       </form>
@@ -99,6 +100,7 @@
     const currentAgentBarEl = document.getElementById('currentAgentBar');
     const currentAgentNameEl = document.getElementById('currentAgentName');
     const authOverlayEl = document.getElementById('authOverlay');
+    const usernameInputEl = document.getElementById('usernameInput');
     const passwordInputEl = document.getElementById('passwordInput');
     const authErrorEl = document.getElementById('authError');
     const logoutBtnEl = document.getElementById('logoutBtn');
@@ -135,7 +137,10 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ password: passwordInputEl.value.trim() })
+          body: JSON.stringify({
+            username: usernameInputEl.value.trim(),
+            password: passwordInputEl.value
+          })
         });
 
         if (!response.ok) {
@@ -143,6 +148,7 @@
           throw new Error(data.error || '登录失败');
         }
 
+        usernameInputEl.value = '';
         passwordInputEl.value = '';
         authOverlayEl.style.display = 'none';
         logoutBtnEl.style.display = 'inline-flex';
