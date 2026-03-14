@@ -10,6 +10,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { Message, AIAgentConfig, ChatRequest, RichBlock, SessionState } from './types';
 import { AgentManager } from './agent-manager';
+import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
 import { callClaudeCLI, generateMockReply, ClaudeResult } from './claude-cli';
 import { extractRichBlocks } from './rich-extract';
 import { addBlock, consumeBlocks, getStatus as getBlockBufferStatus } from './block-buffer';
@@ -24,6 +25,7 @@ const AUTH_ENABLED = process.env.BOT_ROOM_AUTH_ENABLED !== 'false';
 const AUTH_ADMIN_BASE_URL = process.env.AUTH_ADMIN_BASE_URL || 'http://127.0.0.1:3003';
 const SESSION_COOKIE_NAME = 'bot_room_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 天
+const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
 
 // 存储聊天历史
 let chatHistory: Message[] = [];
@@ -32,8 +34,39 @@ let chatHistory: Message[] = [];
 const sessionStates = new Map<string, SessionState>();
 const authSessions = new Map<string, number>();
 
-// AI 智能体管理器
-const agentManager = new AgentManager();
+// AI 智能体管理器（由共享配置文件驱动）
+let agentStore = loadAgentStore(AGENT_DATA_FILE);
+let agentStoreMtimeMs = fs.existsSync(AGENT_DATA_FILE) ? fs.statSync(AGENT_DATA_FILE).mtimeMs : 0;
+const agentManager = new AgentManager(agentStore.activeAgents);
+
+function isChatSessionActive(): boolean {
+  const session = getSessionState(DEFAULT_SESSION_ID);
+  return chatHistory.length > 0 || !!session.currentAgent;
+}
+
+function syncAgentsFromStore(): void {
+  try {
+    const mtime = fs.existsSync(AGENT_DATA_FILE) ? fs.statSync(AGENT_DATA_FILE).mtimeMs : 0;
+    if (mtime <= agentStoreMtimeMs && !agentStore.pendingAgents) {
+      return;
+    }
+
+    agentStore = loadAgentStore(AGENT_DATA_FILE);
+    agentStoreMtimeMs = mtime;
+
+    if (agentStore.pendingAgents && !isChatSessionActive()) {
+      agentStore = applyPendingAgents(agentStore);
+      saveAgentStore(AGENT_DATA_FILE, agentStore);
+      agentStoreMtimeMs = fs.existsSync(AGENT_DATA_FILE) ? fs.statSync(AGENT_DATA_FILE).mtimeMs : Date.now();
+      console.log('[AgentStore] 已应用等待生效的智能体配置');
+    }
+
+    agentManager.replaceAgents(agentStore.activeAgents);
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('[AgentStore] 同步失败:', err.message);
+  }
+}
 
 // 获取或创建会话状态
 function getSessionState(sessionId: string): SessionState {
@@ -275,6 +308,7 @@ function mergeBlocks(blocksA: RichBlock[], blocksB: RichBlock[]): RichBlock[] {
  * 处理获取智能体列表
  */
 function handleGetAgents(req: http.IncomingMessage, res: http.ServerResponse): void {
+  syncAgentsFromStore();
   const agents = agentManager.getAgentConfigs();
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ agents }));
@@ -285,6 +319,7 @@ function handleGetAgents(req: http.IncomingMessage, res: http.ServerResponse): v
  */
 async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
+    syncAgentsFromStore();
     const body = await parseBody<ChatRequest & { message: string; sender?: string }>(req);
     const { message, sender: bodySender } = body;
     const sender = bodySender || DEFAULT_USER_NAME;
@@ -402,6 +437,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
  * 处理获取历史记录
  */
 function handleGetHistory(req: http.IncomingMessage, res: http.ServerResponse): void {
+  syncAgentsFromStore();
   const sessionState = getSessionState(DEFAULT_SESSION_ID);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
@@ -418,6 +454,7 @@ function handleClearHistory(req: http.IncomingMessage, res: http.ServerResponse)
   chatHistory = [];
   // 同时重置当前对话智能体
   setCurrentAgent(DEFAULT_SESSION_ID, null);
+  syncAgentsFromStore();
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ success: true }));
 }
@@ -586,6 +623,7 @@ server.listen(PORT, () => {
   console.log('='.repeat(60));
   console.log(`📍 地址: http://localhost:${PORT}`);
   console.log('');
+  console.log(`📁 智能体配置: ${AGENT_DATA_FILE}`);
   console.log('可用的 AI 智能体:');
   agentManager.getAgents().forEach(agent => {
     console.log(`  - ${agent.avatar} ${agent.name}`);

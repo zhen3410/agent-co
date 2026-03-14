@@ -9,8 +9,16 @@ import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
 import { URL } from 'url';
-
-// 引入 fs 模块的 promise 版本用于异步操作
+import { AIAgentConfig } from './types';
+import {
+  ApplyMode,
+  applyPendingAgents,
+  loadAgentStore,
+  normalizeAgentConfig,
+  saveAgentStore,
+  updateAgentStore,
+  validateAgentConfig
+} from './agent-config-store';
 
 type UserRecord = {
   username: string;
@@ -29,6 +37,7 @@ const ADMIN_TOKEN = process.env.AUTH_ADMIN_TOKEN || 'change-me-in-production';
 const DATA_FILE = process.env.AUTH_DATA_FILE || path.join(process.cwd(), 'data', 'users.json');
 const DEFAULT_USER = process.env.BOT_ROOM_DEFAULT_USER || 'admin';
 const DEFAULT_PASSWORD = process.env.BOT_ROOM_DEFAULT_PASSWORD || 'admin123!';
+const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
 
 function parseBody<T>(req: http.IncomingMessage): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -125,6 +134,25 @@ function validateCredInput(username: string, password: string): string | null {
   return null;
 }
 
+
+function parseApplyMode(input?: string | null): ApplyMode {
+  return input === 'after_chat' ? 'after_chat' : 'immediate';
+}
+
+function parseAgentPath(pathname: string): { name: string; action: 'base' | 'prompt' } | null {
+  const promptMatch = pathname.match(/^\/api\/agents\/([^/]+)\/prompt$/);
+  if (promptMatch) {
+    return { name: decodeURIComponent(promptMatch[1]), action: 'prompt' };
+  }
+
+  const baseMatch = pathname.match(/^\/api\/agents\/([^/]+)$/);
+  if (baseMatch) {
+    return { name: decodeURIComponent(baseMatch[1]), action: 'base' };
+  }
+
+  return null;
+}
+
 function serveStatic(res: http.ServerResponse, filePath: string, contentType: string): void {
   const fullPath = path.join(__dirname, '..', 'public-auth', filePath);
 
@@ -192,12 +220,167 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (!pathname.startsWith('/api/users')) {
+  if (!pathname.startsWith('/api/users') && !pathname.startsWith('/api/agents')) {
     sendJson(res, 404, { error: 'Not Found' });
     return;
   }
 
   if (!requireAdmin(req, res)) {
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/agents') {
+    const store = loadAgentStore(AGENT_DATA_FILE);
+    sendJson(res, 200, {
+      agents: store.activeAgents,
+      pendingAgents: store.pendingAgents,
+      pendingReason: store.pendingReason,
+      pendingUpdatedAt: store.pendingUpdatedAt
+    });
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/api/agents') {
+    try {
+      const body = await parseBody<{ agent?: AIAgentConfig; applyMode?: ApplyMode }>(req);
+      if (!body.agent) {
+        sendJson(res, 400, { error: '缺少 agent 配置' });
+        return;
+      }
+      const applyMode = parseApplyMode(body.applyMode);
+      const normalized = normalizeAgentConfig(body.agent);
+      const validationError = validateAgentConfig(normalized);
+      if (validationError) {
+        sendJson(res, 400, { error: validationError });
+        return;
+      }
+
+      const store = loadAgentStore(AGENT_DATA_FILE);
+      const next = updateAgentStore(store, applyMode, agents => {
+        if (agents.some(agent => agent.name === normalized.name)) {
+          throw new Error('智能体名称已存在');
+        }
+        return [...agents, normalized];
+      });
+      saveAgentStore(AGENT_DATA_FILE, next);
+      sendJson(res, 201, { success: true, applyMode, agent: normalized });
+    } catch (error: unknown) {
+      const err = error as Error;
+      sendJson(res, 400, { error: err.message });
+    }
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/api/agents/apply-pending') {
+    const store = loadAgentStore(AGENT_DATA_FILE);
+    const next = applyPendingAgents(store);
+    saveAgentStore(AGENT_DATA_FILE, next);
+    sendJson(res, 200, { success: true, agents: next.activeAgents });
+    return;
+  }
+
+  const agentPath = parseAgentPath(pathname);
+  if (agentPath && method === 'PUT' && agentPath.action === 'base') {
+    try {
+      const targetName = agentPath.name;
+      const body = await parseBody<{ agent?: AIAgentConfig; applyMode?: ApplyMode }>(req);
+      if (!body.agent) {
+        sendJson(res, 400, { error: '缺少 agent 配置' });
+        return;
+      }
+      const applyMode = parseApplyMode(body.applyMode);
+      const normalized = normalizeAgentConfig(body.agent);
+      const validationError = validateAgentConfig(normalized);
+      if (validationError) {
+        sendJson(res, 400, { error: validationError });
+        return;
+      }
+
+      const store = loadAgentStore(AGENT_DATA_FILE);
+      const next = updateAgentStore(store, applyMode, agents => {
+        const index = agents.findIndex(agent => agent.name === targetName);
+        if (index === -1) {
+          throw new Error('智能体不存在');
+        }
+        if (normalized.name !== targetName && agents.some(agent => agent.name === normalized.name)) {
+          throw new Error('新的智能体名称已存在');
+        }
+        const cloned = [...agents];
+        cloned[index] = normalized;
+        return cloned;
+      });
+      saveAgentStore(AGENT_DATA_FILE, next);
+      sendJson(res, 200, { success: true, applyMode, agent: normalized });
+    } catch (error: unknown) {
+      const err = error as Error;
+      sendJson(res, 400, { error: err.message });
+    }
+    return;
+  }
+
+  if (agentPath && method === 'PUT' && agentPath.action === 'prompt') {
+    try {
+      const targetName = agentPath.name;
+      const body = await parseBody<{ systemPrompt?: string; personality?: string; applyMode?: ApplyMode }>(req);
+      const applyMode = parseApplyMode(body.applyMode);
+      const nextPrompt = (body.systemPrompt || '').trim();
+      const nextPersonality = (body.personality || '').trim();
+
+      if (!nextPrompt && !nextPersonality) {
+        sendJson(res, 400, { error: '至少提供 systemPrompt 或 personality' });
+        return;
+      }
+
+      const store = loadAgentStore(AGENT_DATA_FILE);
+      const next = updateAgentStore(store, applyMode, agents => {
+        const index = agents.findIndex(agent => agent.name === targetName);
+        if (index === -1) {
+          throw new Error('智能体不存在');
+        }
+        const current = agents[index];
+        const updated: AIAgentConfig = {
+          ...current,
+          personality: nextPersonality || current.personality,
+          systemPrompt: nextPrompt || current.systemPrompt
+        };
+        const validationError = validateAgentConfig(updated);
+        if (validationError) {
+          throw new Error(validationError);
+        }
+        const cloned = [...agents];
+        cloned[index] = updated;
+        return cloned;
+      });
+      saveAgentStore(AGENT_DATA_FILE, next);
+      sendJson(res, 200, { success: true, applyMode });
+    } catch (error: unknown) {
+      const err = error as Error;
+      sendJson(res, 400, { error: err.message });
+    }
+    return;
+  }
+
+  if (agentPath && method === 'DELETE' && agentPath.action === 'base') {
+    try {
+      const applyMode = parseApplyMode(parsedUrl.searchParams.get('applyMode'));
+      const targetName = agentPath.name;
+      const store = loadAgentStore(AGENT_DATA_FILE);
+      const next = updateAgentStore(store, applyMode, agents => {
+        if (agents.length <= 1) {
+          throw new Error('至少保留一个智能体，无法删除');
+        }
+        const filtered = agents.filter(agent => agent.name !== targetName);
+        if (filtered.length === agents.length) {
+          throw new Error('智能体不存在');
+        }
+        return filtered;
+      });
+      saveAgentStore(AGENT_DATA_FILE, next);
+      sendJson(res, 200, { success: true, applyMode, name: targetName });
+    } catch (error: unknown) {
+      const err = error as Error;
+      sendJson(res, 400, { error: err.message });
+    }
     return;
   }
 
@@ -302,6 +485,7 @@ server.listen(PORT, () => {
   console.log('🔐 鉴权管理服务已启动');
   console.log(`📍 地址: http://localhost:${PORT}`);
   console.log(`📁 用户数据: ${DATA_FILE}`);
+  console.log(`📁 智能体数据: ${AGENT_DATA_FILE}`);
   console.log('');
   console.log('页面:');
   console.log('  GET    /                       管理页面');
@@ -313,5 +497,11 @@ server.listen(PORT, () => {
   console.log('  POST   /api/users               (x-admin-token)');
   console.log('  PUT    /api/users/:name/password (x-admin-token)');
   console.log('  DELETE /api/users/:name         (x-admin-token)');
+  console.log('  GET    /api/agents              (x-admin-token)');
+  console.log('  POST   /api/agents              (x-admin-token)');
+  console.log('  PUT    /api/agents/:name        (x-admin-token)');
+  console.log('  PUT    /api/agents/:name/prompt (x-admin-token)');
+  console.log('  DELETE /api/agents/:name        (x-admin-token)');
+  console.log('  POST   /api/agents/apply-pending (x-admin-token)');
   console.log('='.repeat(60));
 });

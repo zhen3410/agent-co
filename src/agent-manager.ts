@@ -4,10 +4,10 @@
  * 功能：管理多个 AI 智能体
  */
 
-import { AIAgent, AIAgentConfig, Message } from './types';
+import { AIAgent, AIAgentConfig } from './types';
 
 // 预设的智能体配置
-const DEFAULT_AGENTS: AIAgentConfig[] = [
+export const DEFAULT_AGENTS: AIAgentConfig[] = [
   {
     name: 'Claude',
     avatar: '🤖',
@@ -36,15 +36,16 @@ export class AgentManager {
   private agentConfigs: Map<string, AIAgentConfig> = new Map();
 
   constructor(customAgents?: AIAgentConfig[]) {
-    // 初始化默认智能体
-    for (const config of DEFAULT_AGENTS) {
+    const initialAgents = customAgents && customAgents.length > 0 ? customAgents : DEFAULT_AGENTS;
+    this.replaceAgents(initialAgents);
+  }
+
+  replaceAgents(configs: AIAgentConfig[]): void {
+    this.agents.clear();
+    this.agentConfigs.clear();
+
+    for (const config of configs) {
       this.addAgent(config);
-    }
-    // 添加自定义智能体
-    if (customAgents) {
-      for (const config of customAgents) {
-        this.addAgent(config);
-      }
     }
   }
 
@@ -68,6 +69,10 @@ export class AgentManager {
    * 构建系统提示词
    */
   private buildSystemPrompt(config: AIAgentConfig): string {
+    if (config.systemPrompt && config.systemPrompt.trim()) {
+      return config.systemPrompt.trim();
+    }
+
     return `你是 ${config.name}，一个 AI 助手。
 
 你的性格: ${config.personality}
@@ -103,37 +108,22 @@ export class AgentManager {
 普通文本和 cc_rich 块可以混合使用,让回复更加丰富。`;
   }
 
-  /**
-   * 获取所有智能体
-   */
   getAgents(): AIAgent[] {
     return Array.from(this.agents.values());
   }
 
-  /**
-   * 获取智能体配置
-   */
   getAgentConfigs(): AIAgentConfig[] {
     return Array.from(this.agentConfigs.values());
   }
 
-  /**
-   * 根据名字获取智能体
-   */
   getAgent(name: string): AIAgent | undefined {
     return this.agents.get(name);
   }
 
-  /**
-   * 检查智能体是否存在
-   */
   hasAgent(name: string): boolean {
     return this.agents.has(name);
   }
 
-  /**
-   * 从消息中提取 @ 提及
-   */
   extractMentions(text: string): string[] {
     const mentionRegex = /@([^\s@]+)/g;
     const mentions: string[] = [];
@@ -153,28 +143,9 @@ export class AgentManager {
       }
     }
 
-    // 去重
     return [...new Set(mentions)];
   }
 
-  /**
-   * 获取被 @ 的智能体列表
-   */
-  getMentionedAgents(text: string): AIAgent[] {
-    const mentions = this.extractMentions(text);
-    const agents: AIAgent[] = [];
-    for (const name of mentions) {
-      const agent = this.getAgent(name);
-      if (agent) {
-        agents.push(agent);
-      }
-    }
-    return agents;
-  }
-
-  /**
-   * 移除智能体
-   */
   removeAgent(name: string): boolean {
     if (this.agents.has(name)) {
       this.agents.delete(name);
