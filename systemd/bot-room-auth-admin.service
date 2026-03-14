@@ -4,18 +4,18 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/bot-room
+WorkingDirectory=__APP_DIR__
 EnvironmentFile=-/etc/bot-room/bot-room-auth-admin.env
-ExecStart=/usr/bin/node /opt/bot-room/dist/auth-admin-server.js
+ExecStart=/usr/bin/node __APP_DIR__/dist/auth-admin-server.js
 Restart=always
 RestartSec=2
-User=botroom
-Group=botroom
+User=root
+Group=root
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/opt/bot-room/data
+ReadWritePaths=__APP_DIR__/data
 
 [Install]
 WantedBy=multi-user.target
