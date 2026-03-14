@@ -7,6 +7,7 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { Message, AIAgentConfig, ChatRequest, RichBlock, SessionState } from './types';
 import { AgentManager } from './agent-manager';
 import { callClaudeCLI, generateMockReply, ClaudeResult } from './claude-cli';
@@ -19,12 +20,16 @@ import { addBlock, consumeBlocks, getStatus as getBlockBufferStatus } from './bl
 const PORT = 3002;
 const DEFAULT_SESSION_ID = 'default';
 const DEFAULT_USER_NAME = '用户';
+const AUTH_PASSWORD = process.env.BOT_ROOM_PASSWORD || '';
+const SESSION_COOKIE_NAME = 'bot_room_session';
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 天
 
 // 存储聊天历史
 let chatHistory: Message[] = [];
 
 // 会话状态管理（记住当前对话的智能体）
 const sessionStates = new Map<string, SessionState>();
+const authSessions = new Map<string, number>();
 
 // AI 智能体管理器
 const agentManager = new AgentManager();
@@ -55,6 +60,112 @@ function setCurrentAgent(sessionId: string, agentName: string | null): void {
  */
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function parseCookies(req: http.IncomingMessage): Record<string, string> {
+  const header = req.headers.cookie;
+  if (!header) return {};
+
+  const entries = header.split(';').map(part => part.trim().split('='));
+  const cookieMap: Record<string, string> = {};
+  entries.forEach(([key, value]) => {
+    if (key && value) cookieMap[key] = decodeURIComponent(value);
+  });
+  return cookieMap;
+}
+
+function issueSessionToken(): string {
+  return crypto.randomBytes(24).toString('hex');
+}
+
+function isAuthenticated(req: http.IncomingMessage): boolean {
+  if (!AUTH_PASSWORD) return true;
+
+  const cookies = parseCookies(req);
+  const token = cookies[SESSION_COOKIE_NAME];
+  if (!token) return false;
+
+  const expiresAt = authSessions.get(token);
+  if (!expiresAt) return false;
+
+  if (Date.now() > expiresAt) {
+    authSessions.delete(token);
+    return false;
+  }
+
+  return true;
+}
+
+function setSessionCookie(res: http.ServerResponse, token: string): void {
+  const isProd = process.env.NODE_ENV === 'production';
+  const attrs = [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'Path=/',
+    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    isProd ? 'Secure' : ''
+  ].filter(Boolean).join('; ');
+
+  res.setHeader('Set-Cookie', attrs);
+}
+
+function clearSessionCookie(res: http.ServerResponse): void {
+  const isProd = process.env.NODE_ENV === 'production';
+  const attrs = [
+    `${SESSION_COOKIE_NAME}=`,
+    'Path=/',
+    'Max-Age=0',
+    'HttpOnly',
+    'SameSite=Lax',
+    isProd ? 'Secure' : ''
+  ].filter(Boolean).join('; ');
+
+  res.setHeader('Set-Cookie', attrs);
+}
+
+async function handleLogin(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (!AUTH_PASSWORD) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, authEnabled: false }));
+    return;
+  }
+
+  try {
+    const body = await parseBody<{ password?: string }>(req);
+    if (!body.password || body.password !== AUTH_PASSWORD) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '密码错误' }));
+      return;
+    }
+
+    const token = issueSessionToken();
+    authSessions.set(token, Date.now() + SESSION_TTL_MS);
+    setSessionCookie(res, token);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, authEnabled: true }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+function handleLogout(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const cookies = parseCookies(req);
+  const token = cookies[SESSION_COOKIE_NAME];
+  if (token) authSessions.delete(token);
+  clearSessionCookie(res);
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ success: true }));
+}
+
+function handleAuthStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    authEnabled: Boolean(AUTH_PASSWORD),
+    authenticated: isAuthenticated(req)
+  }));
 }
 
 /**
@@ -348,10 +459,41 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
 
   if (method === 'OPTIONS') {
     res.writeHead(200);
     res.end();
+    return;
+  }
+
+  if (url === '/api/login' && method === 'POST') {
+    await handleLogin(req, res);
+    return;
+  }
+
+  if (url === '/api/logout' && method === 'POST') {
+    handleLogout(req, res);
+    return;
+  }
+
+  if (url === '/api/auth-status' && method === 'GET') {
+    handleAuthStatus(req, res);
+    return;
+  }
+
+  const publicPaths = new Set([
+    '/',
+    '/index.html',
+    '/styles.css',
+    '/manifest.json',
+    '/service-worker.js',
+    '/icon.svg'
+  ]);
+
+  if (!publicPaths.has(url) && !isAuthenticated(req)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '未授权，请先登录' }));
     return;
   }
 
@@ -372,6 +514,12 @@ const server = http.createServer(async (req, res) => {
     serveStatic(req, res, 'index.html', 'text/html');
   } else if (url === '/styles.css') {
     serveStatic(req, res, 'styles.css', 'text/css');
+  } else if (url === '/manifest.json') {
+    serveStatic(req, res, 'manifest.json', 'application/manifest+json');
+  } else if (url === '/service-worker.js') {
+    serveStatic(req, res, 'service-worker.js', 'application/javascript');
+  } else if (url === '/icon.svg') {
+    serveStatic(req, res, 'icon.svg', 'image/svg+xml');
   } else {
     res.writeHead(404);
     res.end('Not Found');
@@ -394,6 +542,9 @@ server.listen(PORT, () => {
   console.log('  POST /api/chat        - 发送消息');
   console.log('  GET  /api/history    - 获取历史记录');
   console.log('  POST /api/clear      - 清空历史');
+  console.log('  POST /api/login      - 登录鉴权');
+  console.log('  POST /api/logout     - 登出');
+  console.log('  GET  /api/auth-status - 鉴权状态');
   console.log('  POST /api/create-block - Route A: 创建 block');
   console.log('  GET  /api/block-status - 查看 BlockBuffer 状态');
   console.log('');
@@ -403,5 +554,10 @@ server.listen(PORT, () => {
   console.log('  - 输入 @Bob 可以召唤 Bob');
   console.log('');
   console.log('💡 提示: 如果 Claude CLI 不可用,会自动使用模拟回复');
+  if (AUTH_PASSWORD) {
+    console.log('🔐 鉴权已启用: 请通过 /api/login 登录后访问聊天 API');
+  } else {
+    console.log('🔓 鉴权未启用: 设置 BOT_ROOM_PASSWORD 后可开启登录保护');
+  }
   console.log('='.repeat(60));
 });

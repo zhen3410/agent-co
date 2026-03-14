@@ -3,16 +3,34 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Bot Room">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon.svg">
   <title>多 AI 智能体聊天室</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div class="auth-overlay" id="authOverlay" style="display: none;">
+    <div class="auth-card">
+      <h2>🔐 访问受保护</h2>
+      <p>请输入访问密码以进入 bot-room。</p>
+      <form onsubmit="submitLogin(event)">
+        <input type="password" id="passwordInput" placeholder="输入密码" autocomplete="current-password" required>
+        <button type="submit" id="loginBtn">登录</button>
+      </form>
+      <p class="auth-error" id="authError"></p>
+    </div>
+  </div>
+
   <div class="container">
     <!-- 标题栏 -->
     <header class="header">
       <h1>🤖 多 AI 智能体聊天室</h1>
       <div class="header-actions">
         <span class="status" id="status">已连接</span>
+        <button class="btn-clear" id="logoutBtn" onclick="logout()" style="display: none;">退出登录</button>
         <button class="btn-clear" onclick="clearHistory()">清空历史</button>
       </div>
     </header>
@@ -77,6 +95,59 @@
     const agentsListEl = document.getElementById('agentsList');
     const currentAgentBarEl = document.getElementById('currentAgentBar');
     const currentAgentNameEl = document.getElementById('currentAgentName');
+    const authOverlayEl = document.getElementById('authOverlay');
+    const passwordInputEl = document.getElementById('passwordInput');
+    const authErrorEl = document.getElementById('authError');
+    const logoutBtnEl = document.getElementById('logoutBtn');
+
+    let authEnabled = false;
+
+    async function checkAuthStatus() {
+      const response = await fetch('/api/auth-status', { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error('鉴权状态检查失败');
+      }
+      const data = await response.json();
+      authEnabled = data.authEnabled;
+      const authenticated = data.authenticated;
+      authOverlayEl.style.display = authEnabled && !authenticated ? 'flex' : 'none';
+      logoutBtnEl.style.display = authEnabled && authenticated ? 'inline-flex' : 'none';
+      return !authEnabled || authenticated;
+    }
+
+    async function submitLogin(event) {
+      event.preventDefault();
+      authErrorEl.textContent = '';
+
+      try {
+        const response = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ password: passwordInputEl.value.trim() })
+        });
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({ error: '登录失败' }));
+          throw new Error(data.error || '登录失败');
+        }
+
+        passwordInputEl.value = '';
+        authOverlayEl.style.display = 'none';
+        logoutBtnEl.style.display = 'inline-flex';
+        await loadAgents();
+        await loadHistory();
+      } catch (error) {
+        authErrorEl.textContent = error.message;
+      }
+    }
+
+    async function logout() {
+      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+      history = [];
+      messagesEl.innerHTML = '';
+      await checkAuthStatus();
+    }
 
     // ============================================
     // 初始化
@@ -85,7 +156,7 @@
     // 加载智能体列表
     async function loadAgents() {
       try {
-        const response = await fetch('/api/agents');
+        const response = await fetch('/api/agents', { credentials: 'include' });
         if (response.ok) {
           const data = await response.json();
           agents = data.agents || [];
@@ -394,6 +465,7 @@
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ message: text })
         });
 
@@ -441,7 +513,7 @@
      */
     async function loadHistory() {
       try {
-        const response = await fetch('/api/history');
+        const response = await fetch('/api/history', { credentials: 'include' });
         if (response.ok) {
           const data = await response.json();
           history = data.messages || [];
@@ -467,7 +539,7 @@
       if (!confirm('确定要清空所有聊天记录吗?')) return;
 
       try {
-        const response = await fetch('/api/clear', { method: 'POST' });
+        const response = await fetch('/api/clear', { method: 'POST', credentials: 'include' });
         const data = await response.json();
         history = [];
         currentAgent = data.currentAgent;  // 重置为 null
@@ -494,10 +566,19 @@
     // 初始化
     // ============================================
 
-    window.addEventListener('load', () => {
-      loadAgents();
-      loadHistory();
+    window.addEventListener('load', async () => {
+      const canAccess = await checkAuthStatus().catch(() => false);
+      if (canAccess) {
+        await loadAgents();
+        await loadHistory();
+      }
       userInputEl.focus();
+
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/service-worker.js').catch((err) => {
+          console.warn('Service Worker 注册失败', err);
+        });
+      }
     });
 
     // 回车发送
