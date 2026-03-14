@@ -38,6 +38,65 @@ body {
   line-height: 1.6;
 }
 
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-medium);
+  padding: 24px;
+}
+
+.auth-card h2 {
+  margin-bottom: 8px;
+}
+
+.auth-card p {
+  color: #6b5347;
+  margin-bottom: 14px;
+}
+
+.auth-card form {
+  display: flex;
+  gap: 10px;
+}
+
+.auth-card input,
+.auth-card button {
+  height: 42px;
+  border-radius: var(--radius-md);
+}
+
+.auth-card input {
+  flex: 1;
+  border: 1px solid rgba(255, 180, 169, 0.5);
+  padding: 0 12px;
+}
+
+.auth-card button {
+  min-width: 88px;
+  border: none;
+  color: #fff;
+  background: linear-gradient(135deg, var(--warm-peach) 0%, var(--warm-coral) 100%);
+}
+
+.auth-error {
+  min-height: 20px;
+  margin-top: 10px;
+  color: #d14343 !important;
+  margin-bottom: 0 !important;
+}
+
 /* ============================================
    容器布局
    ============================================ */
@@ -614,6 +673,22 @@ body {
   .container {
     height: 100dvh;
     border-radius: 0;
+  }
+
+  .header {
+    padding: 14px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .auth-card form {
+    flex-direction: column;
   }
 
   .header h1 {

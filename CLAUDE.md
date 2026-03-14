@@ -27,8 +27,23 @@
 | `/api/chat` | POST | 发送消息 |
 | `/api/history` | GET | 获取历史记录 |
 | `/api/clear` | POST | 清空历史 |
+| `/api/login` | POST | 密码登录（当 `BOT_ROOM_PASSWORD` 已设置） |
+| `/api/logout` | POST | 登出并清除 Cookie |
+| `/api/auth-status` | GET | 查看是否启用鉴权/当前是否已登录 |
 | `/api/create-block` | POST | Route A: 创建 block |
 | `/api/block-status` | GET | 查看 BlockBuffer 状态 |
+
+## 公网鉴权
+
+- 设置环境变量 `BOT_ROOM_PASSWORD` 后，聊天 API 会启用密码登录保护。
+- 浏览器通过 `/api/login` 获取 HttpOnly Cookie，后续请求自动携带。
+- 若未设置 `BOT_ROOM_PASSWORD`，系统保持无鉴权模式（便于本地开发）。
+
+## iOS / PWA
+
+- `public/manifest.json` + `public/service-worker.js` 已提供基础 PWA 能力。
+- iOS Safari 可通过「添加到主屏幕」安装为类 App 体验。
+- 已添加 `apple-touch-icon`（SVG）与 iOS web app meta 标签。
 
 ## 富文本支持
 
