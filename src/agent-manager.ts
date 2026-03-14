@@ -135,12 +135,19 @@ export class AgentManager {
    * 从消息中提取 @ 提及
    */
   extractMentions(text: string): string[] {
-    const mentionRegex = /@(\w+)/g;
+    const mentionRegex = /@([^\s@]+)/g;
     const mentions: string[] = [];
     let match;
 
     while ((match = mentionRegex.exec(text)) !== null) {
-      const mentionName = match[1];
+      const mentionName = match[1].trim();
+      if (!mentionName) continue;
+
+      if (mentionName === 'all' || mentionName === '所有人') {
+        mentions.push(...this.agentConfigs.keys());
+        continue;
+      }
+
       if (this.hasAgent(mentionName)) {
         mentions.push(mentionName);
       }
@@ -178,4 +185,3 @@ export class AgentManager {
     return false;
   }
 }
-

@@ -66,13 +66,16 @@
     <!-- 输入区域 -->
     <div class="input-area">
       <form onsubmit="sendMessage(event)">
-        <input
-          type="text"
-          id="userInput"
-          placeholder="输入消息... 使用 @智能体名 来召唤 AI"
-          autocomplete="off"
-          autofocus
-        >
+        <div class="mention-input-wrap">
+          <input
+            type="text"
+            id="userInput"
+            placeholder="输入消息... 使用 @智能体名 来召唤 AI"
+            autocomplete="off"
+            autofocus
+          >
+          <div class="mention-suggestions" id="mentionSuggestions" style="display: none;"></div>
+        </div>
         <button type="submit" id="sendBtn">发送</button>
       </form>
     </div>
@@ -99,6 +102,14 @@
     const passwordInputEl = document.getElementById('passwordInput');
     const authErrorEl = document.getElementById('authError');
     const logoutBtnEl = document.getElementById('logoutBtn');
+    const mentionSuggestionsEl = document.getElementById('mentionSuggestions');
+
+    let mentionState = {
+      visible: false,
+      items: [],
+      selectedIndex: 0,
+      tokenStart: -1
+    };
 
     let authEnabled = false;
 
@@ -183,6 +194,116 @@
         userInputEl.value = `@${name} ` + userInputEl.value;
         userInputEl.focus();
       }
+    }
+
+    function getMentionCandidates() {
+      const list = agents.map(agent => ({
+        type: 'agent',
+        name: agent.name,
+        avatar: agent.avatar,
+        color: agent.color
+      }));
+
+      list.unshift({
+        type: 'all',
+        name: '所有人',
+        alias: 'all',
+        avatar: '📣',
+        color: '#ec4899'
+      });
+
+      return list;
+    }
+
+    function hideMentionSuggestions() {
+      mentionState.visible = false;
+      mentionSuggestionsEl.style.display = 'none';
+      mentionSuggestionsEl.innerHTML = '';
+    }
+
+    function renderMentionSuggestions() {
+      if (!mentionState.visible || mentionState.items.length === 0) {
+        hideMentionSuggestions();
+        return;
+      }
+
+      mentionSuggestionsEl.style.display = 'block';
+      mentionSuggestionsEl.innerHTML = mentionState.items.map((item, index) => {
+        const selectedClass = index === mentionState.selectedIndex ? 'mention-suggestion--active' : '';
+        const secondary = item.type === 'all' ? '<span class="mention-suggestion__desc">@all</span>' : '<span class="mention-suggestion__desc">智能体</span>';
+
+        return `
+          <button
+            type="button"
+            class="mention-suggestion ${selectedClass}"
+            data-index="${index}"
+            onclick="selectMentionSuggestion(${index})"
+          >
+            <span class="mention-suggestion__main">
+              <span class="mention-suggestion__avatar">${item.avatar}</span>
+              <span class="mention-suggestion__name" style="color: ${item.color};">@${escapeHtml(item.name)}</span>
+            </span>
+            ${secondary}
+          </button>
+        `;
+      }).join('');
+    }
+
+    function updateMentionSuggestions() {
+      const value = userInputEl.value;
+      const cursor = userInputEl.selectionStart ?? value.length;
+      const beforeCursor = value.slice(0, cursor);
+      const atIndex = beforeCursor.lastIndexOf('@');
+
+      if (atIndex < 0) {
+        hideMentionSuggestions();
+        return;
+      }
+
+      const prefix = beforeCursor.slice(atIndex + 1);
+      if (/\s/.test(prefix) || prefix.includes('@')) {
+        hideMentionSuggestions();
+        return;
+      }
+
+      const normalizedPrefix = prefix.toLowerCase();
+      const allCandidates = getMentionCandidates();
+      const filtered = allCandidates.filter(item => {
+        const names = [item.name, item.alias || ''];
+        return names.some(name => name.toLowerCase().startsWith(normalizedPrefix));
+      });
+
+      if (filtered.length === 0) {
+        hideMentionSuggestions();
+        return;
+      }
+
+      mentionState.visible = true;
+      mentionState.items = filtered;
+      mentionState.selectedIndex = 0;
+      mentionState.tokenStart = atIndex;
+      renderMentionSuggestions();
+    }
+
+    function applyMentionSuggestion(index) {
+      const item = mentionState.items[index];
+      if (!item) return;
+
+      const value = userInputEl.value;
+      const cursor = userInputEl.selectionStart ?? value.length;
+      const before = value.slice(0, mentionState.tokenStart);
+      const after = value.slice(cursor);
+      const mentionText = `@${item.name} `;
+
+      userInputEl.value = `${before}${mentionText}${after}`;
+      const nextCursor = (before + mentionText).length;
+      userInputEl.setSelectionRange(nextCursor, nextCursor);
+      hideMentionSuggestions();
+      userInputEl.focus();
+    }
+
+    function selectMentionSuggestion(index) {
+      applyMentionSuggestion(index);
     }
 
     // 切换智能体
@@ -438,7 +559,7 @@
       userInputEl.value = '';
 
       // 提取 @ 提及
-      const mentions = text.match(/@(\w+)/g)?.map(m => m.slice(1)) || [];
+      const mentions = text.match(/@([^\s@]+)/g)?.map(m => m.slice(1)) || [];
 
       // 确定要响应的智能体
       let agentToRespond = mentions.length > 0 ? mentions[0] : currentAgent;
@@ -582,7 +703,43 @@
     });
 
     // 回车发送
+    userInputEl.addEventListener('input', () => {
+      updateMentionSuggestions();
+    });
+
+    userInputEl.addEventListener('blur', () => {
+      setTimeout(() => hideMentionSuggestions(), 120);
+    });
+
     userInputEl.addEventListener('keydown', (e) => {
+      if (mentionState.visible && mentionState.items.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          mentionState.selectedIndex = (mentionState.selectedIndex + 1) % mentionState.items.length;
+          renderMentionSuggestions();
+          return;
+        }
+
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          mentionState.selectedIndex = (mentionState.selectedIndex - 1 + mentionState.items.length) % mentionState.items.length;
+          renderMentionSuggestions();
+          return;
+        }
+
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          applyMentionSuggestion(mentionState.selectedIndex);
+          return;
+        }
+
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          hideMentionSuggestions();
+          return;
+        }
+      }
+
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessage(e);
