@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>鉴权管理 - Bot Room</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      color: #e0e0e0;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      color: #fff;
+      margin-bottom: 10px;
+    }
+
+    .header p {
+      color: #888;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+
+    .card h2 {
+      font-size: 1.2rem;
+      margin-bottom: 16px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      color: #aaa;
+      font-size: 0.9rem;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 12px;
+    }
+
+    .form-row .form-group {
+      flex: 1;
+    }
+
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 1rem;
+      transition: border-color 0.2s;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: #6366f1;
+    }
+
+    input::placeholder {
+      color: #666;
+    }
+
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.3);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .btn-sm {
+      padding: 8px 16px;
+      font-size: 0.875rem;
+    }
+
+    .token-section {
+      margin-bottom: 20px;
+    }
+
+    .token-input {
+      display: flex;
+      gap: 12px;
+    }
+
+    .token-input input {
+      flex: 1;
+    }
+
+    .users-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .users-table th,
+    .users-table td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .users-table th {
+      color: #888;
+      font-weight: 500;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+    }
+
+    .users-table td {
+      color: #e0e0e0;
+    }
+
+    .users-table tr:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+    }
+
+    .status.success {
+      background: rgba(34, 197, 94, 0.2);
+      color: #22c55e;
+    }
+
+    .status.error {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 16px 24px;
+      border-radius: 8px;
+      color: #fff;
+      font-weight: 500;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.3s;
+      z-index: 1000;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .toast.success {
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+    }
+
+    .toast.error {
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    }
+
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal-overlay.show {
+      display: flex;
+    }
+
+    .modal {
+      background: #1e1e2e;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 24px;
+      width: 90%;
+      max-width: 400px;
+    }
+
+    .modal h3 {
+      margin-bottom: 16px;
+      color: #fff;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .modal-actions .btn {
+      flex: 1;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+
+    .empty-state .icon {
+      font-size: 3rem;
+      margin-bottom: 16px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+    }
+
+    .info-box {
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+      font-size: 0.9rem;
+      color: #a5b4fc;
+    }
+
+    .info-box code {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🔐 鉴权管理</h1>
+      <p>Bot Room 用户管理控制台</p>
+    </div>
+
+    <div class="card token-section">
+      <div class="form-group">
+        <label>管理员 Token</label>
+        <div class="token-input">
+          <input type="password" id="adminToken" placeholder="输入管理员 Token 以解锁管理功能">
+          <button class="btn btn-primary" onclick="verifyToken()">验证</button>
+        </div>
+      </div>
+      <div class="info-box" id="tokenHint" style="display: none;">
+        提示: 默认 Token 为 <code>change-me-in-production</code>，请在生产环境中修改环境变量 <code>AUTH_ADMIN_TOKEN</code>
+      </div>
+    </div>
+
+    <div class="card" id="addUserCard" style="display: none;">
+      <h2>➕ 添加用户</h2>
+      <div class="form-row">
+        <div class="form-group">
+          <label>用户名</label>
+          <input type="text" id="newUsername" placeholder="3-32位字母数字">
+        </div>
+        <div class="form-group">
+          <label>密码</label>
+          <input type="password" id="newPassword" placeholder="至少8位">
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="addUser()">添加用户</button>
+    </div>
+
+    <div class="card">
+      <h2>📋 用户列表</h2>
+      <div id="usersContainer">
+        <div class="loading">
+          <span class="spinner"></span>
+          <p>请先验证管理员 Token</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 修改密码模态框 -->
+  <div class="modal-overlay" id="passwordModal">
+    <div class="modal">
+      <h3>🔑 修改密码</h3>
+      <p style="margin-bottom: 16px; color: #888;">为用户 <strong id="modalUsername"></strong> 设置新密码</p>
+      <div class="form-group">
+        <label>新密码</label>
+        <input type="password" id="modalNewPassword" placeholder="至少8位">
+      </div>
+      <div class="form-group">
+        <label>确认密码</label>
+        <input type="password" id="modalConfirmPassword" placeholder="再次输入密码">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closePasswordModal()">取消</button>
+        <button class="btn btn-primary" onclick="submitPasswordChange()">确认修改</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 通知 -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    let adminToken = '';
+    let currentEditUser = '';
+
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = `toast ${type} show`;
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+
+    function formatTime(timestamp) {
+      return new Date(timestamp).toLocaleString('zh-CN');
+    }
+
+    async function verifyToken() {
+      const tokenInput = document.getElementById('adminToken');
+      adminToken = tokenInput.value.trim();
+
+      if (!adminToken) {
+        showToast('请输入管理员 Token', 'error');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/users', {
+          headers: { 'x-admin-token': adminToken }
+        });
+
+        if (response.ok) {
+          showToast('Token 验证成功');
+          document.getElementById('addUserCard').style.display = 'block';
+          document.getElementById('tokenHint').style.display = 'block';
+          loadUsers();
+        } else {
+          const data = await response.json();
+          showToast(data.error || 'Token 验证失败', 'error');
+          adminToken = '';
+        }
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    async function loadUsers() {
+      const container = document.getElementById('usersContainer');
+
+      try {
+        const response = await fetch('/api/users', {
+          headers: { 'x-admin-token': adminToken }
+        });
+
+        if (!response.ok) {
+          throw new Error('加载失败');
+        }
+
+        const data = await response.json();
+        renderUsers(data.users);
+      } catch (error) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">❌</div>
+            <p>加载用户列表失败，请验证 Token</p>
+          </div>
+        `;
+      }
+    }
+
+    function renderUsers(users) {
+      const container = document.getElementById('usersContainer');
+
+      if (!users || users.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">👤</div>
+            <p>暂无用户</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>用户名</th>
+              <th>创建时间</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${users.map(user => `
+              <tr>
+                <td><strong>${escapeHtml(user.username)}</strong></td>
+                <td>${formatTime(user.createdAt)}</td>
+                <td>${formatTime(user.updatedAt)}</td>
+                <td>
+                  <div class="actions">
+                    <button class="btn btn-secondary btn-sm" onclick="openPasswordModal('${user.username}')">
+                      改密
+                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteUser('${user.username}')">
+                      删除
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function addUser() {
+      const username = document.getElementById('newUsername').value.trim();
+      const password = document.getElementById('newPassword').value;
+
+      if (!username || !password) {
+        showToast('请填写用户名和密码', 'error');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/users', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-token': adminToken
+          },
+          body: JSON.stringify({ username, password })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          showToast(`用户 ${username} 创建成功`);
+          document.getElementById('newUsername').value = '';
+          document.getElementById('newPassword').value = '';
+          loadUsers();
+        } else {
+          showToast(data.error || '创建失败', 'error');
+        }
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    function openPasswordModal(username) {
+      currentEditUser = username;
+      document.getElementById('modalUsername').textContent = username;
+      document.getElementById('modalNewPassword').value = '';
+      document.getElementById('modalConfirmPassword').value = '';
+      document.getElementById('passwordModal').classList.add('show');
+    }
+
+    function closePasswordModal() {
+      document.getElementById('passwordModal').classList.remove('show');
+      currentEditUser = '';
+    }
+
+    async function submitPasswordChange() {
+      const newPassword = document.getElementById('modalNewPassword').value;
+      const confirmPassword = document.getElementById('modalConfirmPassword').value;
+
+      if (!newPassword || newPassword.length < 8) {
+        showToast('密码至少8位', 'error');
+        return;
+      }
+
+      if (newPassword !== confirmPassword) {
+        showToast('两次密码不一致', 'error');
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/users/${currentEditUser}/password`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-token': adminToken
+          },
+          body: JSON.stringify({ password: newPassword })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          showToast(`用户 ${currentEditUser} 密码已更新`);
+          closePasswordModal();
+          loadUsers();
+        } else {
+          showToast(data.error || '修改失败', 'error');
+        }
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    async function deleteUser(username) {
+      if (!confirm(`确定要删除用户 "${username}" 吗？此操作不可恢复。`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/users/${username}`, {
+          method: 'DELETE',
+          headers: { 'x-admin-token': adminToken }
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          showToast(`用户 ${username} 已删除`);
+          loadUsers();
+        } else {
+          showToast(data.error || '删除失败', 'error');
+        }
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // 页面加载时显示默认提示
+    document.addEventListener('DOMContentLoaded', () => {
+      // 检查是否有保存的 token
+      const savedToken = localStorage.getItem('authAdminToken');
+      if (savedToken) {
+        document.getElementById('adminToken').value = savedToken;
+      }
+    });
+
+    // 保存 token 到 localStorage
+    document.getElementById('adminToken').addEventListener('change', (e) => {
+      if (adminToken) {
+        localStorage.setItem('authAdminToken', adminToken);
+      }
+    });
+  </script>
+</body>
+</html>

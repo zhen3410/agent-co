@@ -98,29 +98,27 @@ function isAuthenticated(req: http.IncomingMessage): boolean {
 }
 
 function setSessionCookie(res: http.ServerResponse, token: string): void {
-  const isProd = process.env.NODE_ENV === 'production';
+  // 注意: Secure 标志只在 HTTPS 下有效，如果通过 HTTP 访问会导致 cookie 无法发送
+  // 这里不设置 Secure，让反向代理(如 nginx)处理 HTTPS
   const attrs = [
     `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
     'Path=/',
     `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
     'HttpOnly',
-    'SameSite=Lax',
-    isProd ? 'Secure' : ''
-  ].filter(Boolean).join('; ');
+    'SameSite=Lax'
+  ].join('; ');
 
   res.setHeader('Set-Cookie', attrs);
 }
 
 function clearSessionCookie(res: http.ServerResponse): void {
-  const isProd = process.env.NODE_ENV === 'production';
   const attrs = [
     `${SESSION_COOKIE_NAME}=`,
     'Path=/',
     'Max-Age=0',
     'HttpOnly',
-    'SameSite=Lax',
-    isProd ? 'Secure' : ''
-  ].filter(Boolean).join('; ');
+    'SameSite=Lax'
+  ].join('; ');
 
   res.setHeader('Set-Cookie', attrs);
 }
