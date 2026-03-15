@@ -6,6 +6,8 @@
  */
 
 import { spawn } from 'child_process';
+import { mkdirSync, appendFileSync } from 'fs';
+import { join } from 'path';
 import * as readline from 'readline';
 import { AIAgent, Message } from './types';
 import { digestHistory } from './rich-digest';
@@ -15,6 +17,19 @@ import { extractRichBlocks } from './rich-extract';
 // 配置
 const CLAUDE_TIMEOUT_MS = 60 * 1000; // Claude CLI 超时： 60 秒
 const MAX_LINE_LENGTH = 10 * 1024 * 1024; // 单行最大 10MB
+const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || 'logs/claude-verbose';
+
+function createVerboseLogger(agentName: string): (channel: 'stdout' | 'stderr' | 'meta', content: string) => void {
+  mkdirSync(VERBOSE_LOG_DIR, { recursive: true });
+  const safeAgentName = agentName.replace(/[^a-zA-Z0-9-_]/g, '_');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const logPath = join(VERBOSE_LOG_DIR, `${timestamp}-${safeAgentName}.log`);
+
+  return (channel: 'stdout' | 'stderr' | 'meta', content: string) => {
+    const line = `[${new Date().toISOString()}] [${channel}] ${content}`;
+    appendFileSync(logPath, `${line}\n`, 'utf8');
+  };
+}
 
 export interface ClaudeResult {
   text: string;
@@ -62,6 +77,8 @@ export async function callClaudeCLI(
   return new Promise((resolve, reject) => {
     const prompt = buildPrompt(userMessage, agent, history);
     console.log(`\n[Claude CLI] Agent: ${agent.name}, Prompt length: ${prompt.length}`);
+    const logVerbose = createVerboseLogger(agent.name);
+    logVerbose('meta', `Prompt length: ${prompt.length}`);
 
     // 启动 Claude CLI 子进程
     // 注意: 需要 unset CLAUDECODE 以避免嵌套会话检测
@@ -80,6 +97,7 @@ export async function callClaudeCLI(
     });
 
     let result = '';
+    let finalResult = '';
     let stderrData = '';
     let timeoutId: NodeJS.Timeout | null;
 
@@ -91,7 +109,9 @@ export async function callClaudeCLI(
 
     // 收集 stderr 用于调试
     child.stderr?.on('data', (data) => {
-      stderrData += data.toString();
+      const content = data.toString();
+      stderrData += content;
+      logVerbose('stderr', content.trimEnd());
     });
 
     // 逐行解析 JSON 输出
@@ -102,6 +122,7 @@ export async function callClaudeCLI(
 
     rl.on('line', (line) => {
       if (!line.trim()) return;
+      logVerbose('stdout', line);
 
       // 安全检查: 防止超大行
       if (line.length > MAX_LINE_LENGTH) {
@@ -111,6 +132,10 @@ export async function callClaudeCLI(
 
       try {
         const event = JSON.parse(line);
+
+        if (event.type === 'result' && typeof event.result === 'string') {
+          finalResult = event.result;
+        }
 
         // 提取 assistant 消息中的文本
         if (event.type === 'assistant' && event.message?.content) {
@@ -131,10 +156,13 @@ export async function callClaudeCLI(
 
       if (code !== 0 && !result) {
         const errorMsg = stderrData.trim() || `Exit code: ${code}`;
+        logVerbose('meta', `Process exited with code ${code}, no usable output`);
         reject(new Error(`Claude CLI error: ${errorMsg}`));
       } else {
+        const output = finalResult || result;
+        logVerbose('meta', `Process exited with code ${code}; final output length: ${output.length}`);
         // 提取 rich blocks
-        const { cleanText, blocks } = extractRichBlocks(result);
+        const { cleanText, blocks } = extractRichBlocks(output);
         resolve({ text: cleanText, blocks });
       }
     });

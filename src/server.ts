@@ -26,6 +26,7 @@ const AUTH_ADMIN_BASE_URL = process.env.AUTH_ADMIN_BASE_URL || 'http://127.0.0.1
 const SESSION_COOKIE_NAME = 'bot_room_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 天
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
+const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || path.join(process.cwd(), 'logs', 'claude-verbose');
 
 // 存储聊天历史
 let chatHistory: Message[] = [];
@@ -521,6 +522,110 @@ function handleGetBlockStatus(req: http.IncomingMessage, res: http.ServerRespons
   res.end(JSON.stringify(getBlockBufferStatus()));
 }
 
+
+interface VerboseLogMeta {
+  fileName: string;
+  agent: string;
+  updatedAt: number;
+  size: number;
+}
+
+function listVerboseLogs(): VerboseLogMeta[] {
+  if (!fs.existsSync(VERBOSE_LOG_DIR)) {
+    return [];
+  }
+
+  const entries = fs.readdirSync(VERBOSE_LOG_DIR, { withFileTypes: true });
+  const logs: VerboseLogMeta[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.log')) {
+      continue;
+    }
+
+    const match = entry.name.match(/^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)-(.+)\.log$/);
+    const agent = match ? match[2] : 'unknown';
+    const fullPath = path.join(VERBOSE_LOG_DIR, entry.name);
+    const stat = fs.statSync(fullPath);
+
+    logs.push({
+      fileName: entry.name,
+      agent,
+      updatedAt: stat.mtimeMs,
+      size: stat.size
+    });
+  }
+
+  return logs.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function handleGetVerboseAgents(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const logs = listVerboseLogs();
+  const summary = new Map<string, { agent: string; logCount: number; latestFile: string; latestUpdatedAt: number }>();
+
+  for (const log of logs) {
+    const existing = summary.get(log.agent);
+    if (!existing) {
+      summary.set(log.agent, {
+        agent: log.agent,
+        logCount: 1,
+        latestFile: log.fileName,
+        latestUpdatedAt: log.updatedAt
+      });
+      continue;
+    }
+
+    existing.logCount += 1;
+  }
+
+  const agents = Array.from(summary.values()).sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt);
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    logDir: VERBOSE_LOG_DIR,
+    agents
+  }));
+}
+
+function handleGetVerboseLogs(req: http.IncomingMessage, res: http.ServerResponse, url: URL): void {
+  const agent = (url.searchParams.get('agent') || '').trim();
+  if (!agent) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '缺少 agent 参数' }));
+    return;
+  }
+
+  const logs = listVerboseLogs().filter(item => item.agent === agent);
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ agent, logs }));
+}
+
+function handleGetVerboseLogContent(req: http.IncomingMessage, res: http.ServerResponse, url: URL): void {
+  const fileName = (url.searchParams.get('file') || '').trim();
+  if (!fileName) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '缺少 file 参数' }));
+    return;
+  }
+
+  if (fileName.includes('/') || fileName.includes('\\') || !fileName.endsWith('.log')) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '非法 file 参数' }));
+    return;
+  }
+
+  const fullPath = path.join(VERBOSE_LOG_DIR, fileName);
+  if (!fs.existsSync(fullPath)) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '日志文件不存在' }));
+    return;
+  }
+
+  const content = fs.readFileSync(fullPath, 'utf8');
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ fileName, content }));
+}
+
 /**
  * 提供静态文件
  */
@@ -573,44 +678,55 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const requestUrl = new URL(url, `http://${req.headers.host || '127.0.0.1'}`);
+
   const publicPaths = new Set([
     '/',
     '/index.html',
     '/styles.css',
     '/manifest.json',
     '/service-worker.js',
-    '/icon.svg'
+    '/icon.svg',
+    '/verbose-logs.html'
   ]);
 
-  if (AUTH_ENABLED && !publicPaths.has(url) && !isAuthenticated(req)) {
+  if (AUTH_ENABLED && !publicPaths.has(requestUrl.pathname) && !isAuthenticated(req)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: '未授权，请先登录' }));
     return;
   }
 
   // 路由
-  if (url === '/api/agents' && method === 'GET') {
+  if (requestUrl.pathname === '/api/agents' && method === 'GET') {
     handleGetAgents(req, res);
-  } else if (url === '/api/chat' && method === 'POST') {
+  } else if (requestUrl.pathname === '/api/chat' && method === 'POST') {
     await handleSendMessage(req, res);
-  } else if (url === '/api/history' && method === 'GET') {
+  } else if (requestUrl.pathname === '/api/history' && method === 'GET') {
     handleGetHistory(req, res);
-  } else if (url === '/api/clear' && method === 'POST') {
+  } else if (requestUrl.pathname === '/api/clear' && method === 'POST') {
     handleClearHistory(req, res);
-  } else if (url === '/api/create-block' && method === 'POST') {
+  } else if (requestUrl.pathname === '/api/create-block' && method === 'POST') {
     await handleCreateBlock(req, res);
-  } else if (url === '/api/block-status' && method === 'GET') {
+  } else if (requestUrl.pathname === '/api/block-status' && method === 'GET') {
     handleGetBlockStatus(req, res);
-  } else if (url === '/' || url === '/index.html') {
+  } else if (requestUrl.pathname === '/api/verbose/agents' && method === 'GET') {
+    handleGetVerboseAgents(req, res);
+  } else if (requestUrl.pathname === '/api/verbose/logs' && method === 'GET') {
+    handleGetVerboseLogs(req, res, requestUrl);
+  } else if (requestUrl.pathname === '/api/verbose/log-content' && method === 'GET') {
+    handleGetVerboseLogContent(req, res, requestUrl);
+  } else if (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html') {
     serveStatic(req, res, 'index.html', 'text/html');
-  } else if (url === '/styles.css') {
+  } else if (requestUrl.pathname === '/styles.css') {
     serveStatic(req, res, 'styles.css', 'text/css');
-  } else if (url === '/manifest.json') {
+  } else if (requestUrl.pathname === '/manifest.json') {
     serveStatic(req, res, 'manifest.json', 'application/manifest+json');
-  } else if (url === '/service-worker.js') {
+  } else if (requestUrl.pathname === '/service-worker.js') {
     serveStatic(req, res, 'service-worker.js', 'application/javascript');
-  } else if (url === '/icon.svg') {
+  } else if (requestUrl.pathname === '/icon.svg') {
     serveStatic(req, res, 'icon.svg', 'image/svg+xml');
+  } else if (requestUrl.pathname === '/verbose-logs.html') {
+    serveStatic(req, res, 'verbose-logs.html', 'text/html');
   } else {
     res.writeHead(404);
     res.end('Not Found');
@@ -639,6 +755,9 @@ server.listen(PORT, () => {
   console.log('  GET  /api/auth-status - 鉴权状态');
   console.log('  POST /api/create-block - Route A: 创建 block');
   console.log('  GET  /api/block-status - 查看 BlockBuffer 状态');
+  console.log('  GET  /api/verbose/agents - 查看 verbose 日志智能体列表');
+  console.log('  GET  /api/verbose/logs?agent=xxx - 查看智能体日志文件列表');
+  console.log('  GET  /api/verbose/log-content?file=xxx.log - 查看日志文件内容');
   console.log('');
   console.log('使用方式:');
   console.log('  - 输入 @Claude 可以召唤 Claude');
