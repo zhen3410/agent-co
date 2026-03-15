@@ -37,57 +37,61 @@
       </div>
     </header>
 
-    <!-- 智能体列表 -->
-    <div class="agents-bar" id="agentsBar">
-      <span class="agents-label">智能体:</span>
-      <div class="agents-list" id="agentsList"></div>
-    </div>
+    <div class="main-layout">
+      <aside class="sessions-sidebar">
+        <span class="sessions-label">会话</span>
+        <select id="sessionSelect" size="14"></select>
+        <button class="btn-session" onclick="createSession()">新建会话</button>
+        <button class="btn-session" onclick="renameSession()">重命名</button>
+        <button class="btn-session btn-session--danger" onclick="deleteSession()">删除</button>
+      </aside>
 
-    <div class="sessions-bar">
-      <span class="sessions-label">会话:</span>
-      <select id="sessionSelect"></select>
-      <button class="btn-session" onclick="createSession()">新建</button>
-      <button class="btn-session" onclick="renameSession()">重命名</button>
-      <button class="btn-session btn-session--danger" onclick="deleteSession()">删除</button>
-    </div>
-
-    <!-- 当前对话智能体提示 -->
-    <div class="current-agent-bar" id="currentAgentBar" style="display: none;">
-      <span class="current-agent-label">当前对话:</span>
-      <span class="current-agent-name" id="currentAgentName"></span>
-      <button class="btn-switch" onclick="switchAgent()">切换</button>
-    </div>
-
-    <!-- 消息列表 -->
-    <div class="messages" id="messages">
-      <div class="welcome">
-        <div class="welcome-icon">💬</div>
-        <h2>欢迎使用 AI 智能体聊天室</h2>
-        <p class="hint">点击下方智能体标签， 或使用 <code>@智能体名</code> 开始对话</p>
-        <div class="welcome-agents">
-          <span class="welcome-agent" onclick="selectAgent('Claude')">🤖 Claude</span>
-          <span class="welcome-agent" onclick="selectAgent('Alice')">👩‍💻 Alice</span>
-          <span class="welcome-agent" onclick="selectAgent('Bob')">🧑‍💻 Bob</span>
+      <div class="chat-panel">
+        <!-- 智能体列表 -->
+        <div class="agents-bar" id="agentsBar">
+          <span class="agents-label">智能体:</span>
+          <div class="agents-list" id="agentsList"></div>
         </div>
-        <p class="hint secondary">✨ @ 一次后，后续消息会自动发送给该智能体</p>
+
+        <!-- 当前对话智能体提示 -->
+        <div class="current-agent-bar" id="currentAgentBar" style="display: none;">
+          <span class="current-agent-label">当前对话:</span>
+          <span class="current-agent-name" id="currentAgentName"></span>
+          <button class="btn-switch" onclick="switchAgent()">切换</button>
+        </div>
+
+        <!-- 消息列表 -->
+        <div class="messages" id="messages">
+          <div class="welcome">
+            <div class="welcome-icon">💬</div>
+            <h2>欢迎使用 AI 智能体聊天室</h2>
+            <p class="hint">点击下方智能体标签， 或使用 <code>@智能体名</code> 开始对话</p>
+            <div class="welcome-agents">
+              <span class="welcome-agent" onclick="selectAgent('Claude')">🤖 Claude</span>
+              <span class="welcome-agent" onclick="selectAgent('Alice')">👩‍💻 Alice</span>
+              <span class="welcome-agent" onclick="selectAgent('Bob')">🧑‍💻 Bob</span>
+            </div>
+            <p class="hint secondary">✨ @ 一次后，后续消息会自动发送给该智能体</p>
+          </div>
+        </div>
+
+        <!-- 输入区域 -->
+        <div class="input-area">
+          <form onsubmit="sendMessage(event)">
+            <div class="mention-input-wrap">
+              <input
+                type="text"
+                id="userInput"
+                placeholder="输入消息... 使用 @智能体名 来召唤 AI"
+                autocomplete="off"
+                autofocus
+              >
+              <div class="mention-suggestions" id="mentionSuggestions" style="display: none;"></div>
+            </div>
+            <button type="submit" id="sendBtn">发送</button>
+          </form>
+        </div>
       </div>
-    </div>
-
-    <!-- 输入区域 -->
-    <div class="input-area">
-      <form onsubmit="sendMessage(event)">
-        <div class="mention-input-wrap">
-          <input
-            type="text"
-            id="userInput"
-            placeholder="输入消息... 使用 @智能体名 来召唤 AI"
-            autocomplete="off"
-            autofocus
-          >
-          <div class="mention-suggestions" id="mentionSuggestions" style="display: none;"></div>
-        </div>
-        <button type="submit" id="sendBtn">发送</button>
-      </form>
     </div>
   </div>
 
