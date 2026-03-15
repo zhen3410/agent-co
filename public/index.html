@@ -552,7 +552,7 @@
     // ============================================
 
     /**
-     * 发送消息
+     * 发送消息（流式响应）
      */
     async function sendMessage(event) {
       event.preventDefault();
@@ -565,32 +565,21 @@
       // 清空输入框
       userInputEl.value = '';
 
-      // 提取 @ 提及
-      const mentions = text.match(/@([^\s@]+)/g)?.map(m => m.slice(1)) || [];
-
-      // 确定要响应的智能体
-      let agentToRespond = mentions.length > 0 ? mentions[0] : currentAgent;
-
       // 显示用户消息
       const userMsg = { role: 'user', sender: '用户', text: text };
       addMessage(userMsg);
+      history.push(userMsg);
 
-      // 如果有智能体要响应，显示加载状态
-      if (agentToRespond) {
-        setLoading(true, agentToRespond);
-        statusEl.textContent = `${agentToRespond} 思考中...`;
-      } else {
-        // 没有智能体可以响应
-        addMessage({
-          role: 'assistant',
-          sender: '系统',
-          text: '💡 请先 @ 一个智能体开始对话，例如: @Claude 你好'
-        });
-        return;
-      }
+      isLoading = true;
+      sendBtnEl.disabled = true;
+      sendBtnEl.textContent = '...';
+      statusEl.textContent = '发送中...';
+
+      // 当前正在思考的智能体列表
+      const thinkingAgents = new Set();
 
       try {
-        const response = await fetch('/api/chat', {
+        const response = await fetch('/api/chat-stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
@@ -601,26 +590,65 @@
           throw new Error(`HTTP ${response.status}`);
         }
 
-        const data = await response.json();
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        // 更新当前智能体
-        if (data.currentAgent) {
-          currentAgent = data.currentAgent;
-          updateCurrentAgentUI();
-        }
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        // 更新历史
-        if (data.userMessage) {
-          history.push(data.userMessage);
-        }
-        if (data.aiMessages) {
-          data.aiMessages.forEach(msg => {
-            history.push(msg);
-            addMessage(msg);
-          });
-        }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // 保留未完成的行
 
-        statusEl.textContent = '已连接';
+          let eventType = '';
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              eventType = line.substring(7).trim();
+            } else if (line.startsWith('data: ')) {
+              const dataStr = line.substring(6);
+              try {
+                const data = JSON.parse(dataStr);
+
+                if (eventType === 'user_message') {
+                  // 用户消息已确认
+                  statusEl.textContent = '处理中...';
+                } else if (eventType === 'agent_thinking') {
+                  // 智能体开始思考
+                  const agentName = data.agent;
+                  thinkingAgents.add(agentName);
+                  statusEl.textContent = `${agentName} 思考中...`;
+                  showThinkingIndicator(agentName);
+                } else if (eventType === 'agent_message') {
+                  // 智能体回复完成，立即显示
+                  thinkingAgents.delete(data.sender);
+                  hideThinkingIndicator(data.sender);
+                  history.push(data);
+                  addMessage(data);
+                  statusEl.textContent = thinkingAgents.size > 0
+                    ? `${Array.from(thinkingAgents).join(', ')} 思考中...`
+                    : '已连接';
+                } else if (eventType === 'done') {
+                  // 所有回复完成
+                  if (data.currentAgent) {
+                    currentAgent = data.currentAgent;
+                    updateCurrentAgentUI();
+                  }
+                } else if (eventType === 'error') {
+                  addMessage({
+                    role: 'assistant',
+                    sender: '系统',
+                    text: `❌ 错误: ${data.error}`
+                  });
+                }
+              } catch (e) {
+                console.error('解析 SSE 数据失败:', e);
+              }
+              eventType = ''; // 重置事件类型
+            }
+          }
+        }
 
       } catch (error) {
         console.error('发送失败:', error);
@@ -632,8 +660,45 @@
           text: `❌ 发送失败: ${error.message}`
         });
       } finally {
-        setLoading(false);
+        isLoading = false;
+        sendBtnEl.disabled = false;
+        sendBtnEl.textContent = '发送';
+        // 清理所有思考指示器
+        document.querySelectorAll('.message--thinking').forEach(el => el.remove());
       }
+    }
+
+    /**
+     * 显示智能体思考指示器
+     */
+    function showThinkingIndicator(agentName) {
+      const agent = agents.find(a => a.name === agentName);
+      const avatar = agent ? agent.avatar : '🤖';
+      const color = agent ? agent.color : '#888';
+
+      const thinkingHtml = `
+        <div class="message message--assistant message--thinking" data-agent="${agentName}" style="--sender-color: ${color}">
+          <div class="message__avatar">${avatar}</div>
+          <div class="message__content">
+            <div class="message__sender" style="--sender-color: ${color}">${agentName}</div>
+            <div class="message__text">
+              <span class="loading-dots">
+                <span>.</span><span>.</span><span>.</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      `;
+      messagesEl.insertAdjacentHTML('beforeend', thinkingHtml);
+      scrollToBottom();
+    }
+
+    /**
+     * 隐藏智能体思考指示器
+     */
+    function hideThinkingIndicator(agentName) {
+      const thinkingEl = messagesEl.querySelector(`.message--thinking[data-agent="${agentName}"]`);
+      if (thinkingEl) thinkingEl.remove();
     }
 
     /**

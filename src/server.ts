@@ -573,6 +573,158 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
 }
 
 /**
+ * 处理流式发送消息 (SSE)
+ * 每个智能体回复完成后立即推送
+ */
+async function handleChatStream(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  // 速率限制
+  const clientIP = getClientIP(req);
+  const rateLimit = checkRateLimit(clientIP, RATE_LIMIT_MAX_REQUESTS);
+  if (!rateLimit.allowed) {
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: '请求过于频繁，请稍后再试',
+      retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000)
+    }));
+    return;
+  }
+
+  try {
+    syncAgentsFromStore();
+    const body = await parseBody<ChatRequest & { message: string; sender?: string }>(req);
+    const { message, sender: bodySender } = body;
+    const sender = bodySender || DEFAULT_USER_NAME;
+    if (!message) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '缺少 message 字段' }));
+      return;
+    }
+
+    // 使用用户隔离的会话
+    const sessionId = getSessionIdFromRequest(req);
+    const userHistory = getUserHistory(sessionId);
+    const currentAgent = getUserCurrentAgent(sessionId);
+
+    console.log(`\n[ChatStream] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
+
+    // 提取 @ 提及
+    const mentions = agentManager.extractMentions(message);
+    console.log(`[ChatStream] @ 提及: ${mentions.join(', ') || '无'}`);
+
+    // 确定要响应的智能体列表
+    const agentsToRespond: string[] = [];
+
+    if (mentions.length > 0) {
+      for (const mention of mentions) {
+        agentsToRespond.push(mention);
+      }
+      setUserCurrentAgent(sessionId, mentions[0]);
+      console.log(`[ChatStream] 设置当前对话智能体: ${mentions[0]}`);
+    } else if (currentAgent) {
+      agentsToRespond.push(currentAgent);
+      console.log(`[ChatStream] 继续与 ${currentAgent} 对话`);
+    }
+
+    // 创建用户消息
+    const userMessage: Message = {
+      id: generateId(),
+      role: 'user',
+      sender,
+      text: message,
+      timestamp: Date.now(),
+      mentions: mentions.length > 0 ? mentions : undefined
+    };
+
+    // 添加到用户历史
+    userHistory.push(userMessage);
+
+    // 设置 SSE 响应头
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no' // 禁用 Nginx 缓冲
+    });
+
+    // 发送用户消息事件
+    const sendEvent = (event: string, data: unknown) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    sendEvent('user_message', userMessage);
+
+    // 如果没有智能体可以响应
+    if (agentsToRespond.length === 0) {
+      sendEvent('done', { currentAgent: null });
+      res.end();
+      return;
+    }
+
+    // 逐个调用智能体，完成后立即推送
+    for (const agentName of agentsToRespond) {
+      const agent = agentManager.getAgent(agentName);
+      if (!agent) continue;
+
+      console.log(`[ChatStream] 调用 AI: ${agentName}`);
+
+      // 发送开始思考事件
+      sendEvent('agent_thinking', { agent: agentName });
+
+      let aiResponse: ClaudeResult;
+      try {
+        aiResponse = await callClaudeCLI(message, agent, userHistory);
+      } catch (error: unknown) {
+        const err = error as Error;
+        console.log(`[ChatStream] Claude CLI 不可用: ${err.message}`);
+        const mockText = generateMockReply(message, agentName);
+        const extracted = extractRichBlocks(mockText);
+        aiResponse = { text: extracted.cleanText, blocks: extracted.blocks };
+      }
+
+      // 提取 blocks
+      const { cleanText, blocks: textBlocks } = extractRichBlocks(aiResponse.text);
+      const bufferedBlocks = consumeBlocks(sessionId);
+      const mergedBlocks = mergeBlocks(bufferedBlocks, textBlocks);
+
+      // 创建 AI 消息
+      const aiMessage: Message = {
+        id: generateId(),
+        role: 'assistant',
+        sender: agentName,
+        text: cleanText,
+        blocks: mergedBlocks,
+        timestamp: Date.now()
+      };
+
+      userHistory.push(aiMessage);
+
+      // 立即推送该智能体的回复
+      sendEvent('agent_message', aiMessage);
+      console.log(`[ChatStream] ${agentName} 回复已推送`);
+    }
+
+    // 发送完成事件
+    sendEvent('done', { currentAgent: getUserCurrentAgent(sessionId) });
+    res.end();
+
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('[ChatStream Error]', err);
+    // 如果响应头还没发送，发送错误响应
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    } else {
+      // 已发送响应头，通过 SSE 发送错误
+      res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.end();
+    }
+  }
+}
+
+/**
  * 处理获取历史记录
  */
 function handleGetHistory(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -845,6 +997,8 @@ const server = http.createServer(async (req, res) => {
     handleGetAgents(req, res);
   } else if (requestUrl.pathname === '/api/chat' && method === 'POST') {
     await handleSendMessage(req, res);
+  } else if (requestUrl.pathname === '/api/chat-stream' && method === 'POST') {
+    await handleChatStream(req, res);
   } else if (requestUrl.pathname === '/api/history' && method === 'GET') {
     handleGetHistory(req, res);
   } else if (requestUrl.pathname === '/api/clear' && method === 'POST') {
