@@ -14,11 +14,12 @@ import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-conf
 import { callClaudeCLI, generateMockReply, ClaudeResult } from './claude-cli';
 import { extractRichBlocks } from './rich-extract';
 import { addBlock, consumeBlocks, getStatus as getBlockBufferStatus } from './block-buffer';
+import { checkRateLimit, getClientIP } from './rate-limiter';
 
 // ============================================
 // 配置
 // ============================================
-const PORT = 3002;
+const PORT = Number(process.env.PORT || 3002);
 const DEFAULT_SESSION_ID = 'default';
 const DEFAULT_USER_NAME = '用户';
 const AUTH_ENABLED = process.env.BOT_ROOM_AUTH_ENABLED !== 'false';
@@ -28,7 +29,52 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 天
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
 const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || path.join(process.cwd(), 'logs', 'claude-verbose');
 
-// 存储聊天历史
+// 速率限制配置
+const RATE_LIMIT_MAX_REQUESTS = 100; // 每分钟最多 100 次请求
+const LOGIN_RATE_LIMIT_MAX = 5; // 每分钟最多 5 次登录尝试
+
+// ============================================
+// 修复 4: 用户隔离的聊天历史
+// ============================================
+// 改为按用户/会话存储
+const userHistories = new Map<string, Message[]>();
+const userAgentStates = new Map<string, string | null>();
+
+function getUserHistory(sessionId: string): Message[] {
+  if (!userHistories.has(sessionId)) {
+    userHistories.set(sessionId, []);
+  }
+  return userHistories.get(sessionId)!;
+}
+
+function getUserCurrentAgent(sessionId: string): string | null {
+  return userAgentStates.get(sessionId) || null;
+}
+
+function setUserCurrentAgent(sessionId: string, agentName: string | null): void {
+  userAgentStates.set(sessionId, agentName);
+}
+
+// 别名，供 handleSwitchAgent 使用
+const setUserCurrentAgentAlias = setUserCurrentAgent;
+
+function clearUserHistory(sessionId: string): void {
+  userHistories.set(sessionId, []);
+  userAgentStates.set(sessionId, null);
+}
+
+// 从请求中获取会话 ID
+function getSessionIdFromRequest(req: http.IncomingMessage): string {
+  const cookies = parseCookies(req);
+  const token = cookies[SESSION_COOKIE_NAME];
+  if (token && authSessions.has(token)) {
+    return `session:${token}`;
+  }
+  // 未登录用户使用 IP 作为会话标识
+  return `ip:${getClientIP(req)}`;
+}
+
+// 保留旧的全局变量以兼容（但不再使用）
 let chatHistory: Message[] = [];
 
 // 会话状态管理（记住当前对话的智能体）
@@ -40,9 +86,73 @@ let agentStore = loadAgentStore(AGENT_DATA_FILE);
 let agentStoreMtimeMs = fs.existsSync(AGENT_DATA_FILE) ? fs.statSync(AGENT_DATA_FILE).mtimeMs : 0;
 const agentManager = new AgentManager(agentStore.activeAgents);
 
+// ============================================
+// 修复 1: 生产环境安全检查
+// ============================================
+function performSecurityChecks(): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const warnings: string[] = [];
+
+  // 检查 ADMIN_TOKEN
+  const adminToken = process.env.AUTH_ADMIN_TOKEN;
+  if (isProduction) {
+    if (!adminToken) {
+      console.error('❌ 生产环境必须设置 AUTH_ADMIN_TOKEN 环境变量');
+      process.exit(1);
+    }
+    if (adminToken.length < 32) {
+      console.error('❌ AUTH_ADMIN_TOKEN 长度不能少于 32 字符');
+      process.exit(1);
+    }
+    if (adminToken === 'change-me-in-production') {
+      console.error('❌ AUTH_ADMIN_TOKEN 不能使用默认值');
+      process.exit(1);
+    }
+  } else {
+    if (!adminToken || adminToken === 'change-me-in-production') {
+      warnings.push('⚠️ AUTH_ADMIN_TOKEN 未设置或使用默认值（仅开发环境允许）');
+    }
+  }
+
+  // 检查默认密码
+  const defaultPassword = process.env.BOT_ROOM_DEFAULT_PASSWORD;
+  if (isProduction && defaultPassword) {
+    // 简单检查密码强度
+    if (defaultPassword.length < 12) {
+      console.error('❌ 生产环境 BOT_ROOM_DEFAULT_PASSWORD 长度不能少于 12 字符');
+      process.exit(1);
+    }
+    const hasLower = /[a-z]/.test(defaultPassword);
+    const hasUpper = /[A-Z]/.test(defaultPassword);
+    const hasNumber = /[0-9]/.test(defaultPassword);
+    const hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(defaultPassword);
+    if (!(hasLower && hasUpper && hasNumber && hasSpecial)) {
+      console.error('❌ 生产环境 BOT_ROOM_DEFAULT_PASSWORD 必须包含大小写字母、数字和特殊字符');
+      process.exit(1);
+    }
+  }
+
+  // 输出警告
+  if (warnings.length > 0) {
+    console.log('\n' + '='.repeat(60));
+    console.log('🔒 安全检查警告');
+    console.log('='.repeat(60));
+    warnings.forEach(w => console.log(w));
+    console.log('='.repeat(60) + '\n');
+  }
+}
+
+// 启动时执行安全检查
+performSecurityChecks();
+
 function isChatSessionActive(): boolean {
-  const session = getSessionState(DEFAULT_SESSION_ID);
-  return chatHistory.length > 0 || !!session.currentAgent;
+  // 检查是否有任何活跃的用户会话
+  for (const [sessionId, history] of Array.from(userHistories.entries())) {
+    if (history.length > 0 || userAgentStates.get(sessionId)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function syncAgentsFromStore(): void {
@@ -161,6 +271,18 @@ async function handleLogin(req: http.IncomingMessage, res: http.ServerResponse):
   if (!AUTH_ENABLED) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, authEnabled: false }));
+    return;
+  }
+
+  // 修复 2: 登录速率限制
+  const clientIP = getClientIP(req);
+  const loginLimit = checkRateLimit(`login:${clientIP}`, LOGIN_RATE_LIMIT_MAX);
+  if (!loginLimit.allowed) {
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: '登录尝试过于频繁，请稍后再试',
+      retryAfter: Math.ceil((loginLimit.resetAt - Date.now()) / 1000)
+    }));
     return;
   }
 
@@ -319,6 +441,18 @@ function handleGetAgents(req: http.IncomingMessage, res: http.ServerResponse): v
  * 处理发送消息
  */
 async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  // 修复 2: 全局速率限制
+  const clientIP = getClientIP(req);
+  const rateLimit = checkRateLimit(clientIP, RATE_LIMIT_MAX_REQUESTS);
+  if (!rateLimit.allowed) {
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: '请求过于频繁，请稍后再试',
+      retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000)
+    }));
+    return;
+  }
+
   try {
     syncAgentsFromStore();
     const body = await parseBody<ChatRequest & { message: string; sender?: string }>(req);
@@ -329,10 +463,13 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       res.end(JSON.stringify({ error: '缺少 message 字段' }));
       return;
     }
-    const sessionId = DEFAULT_SESSION_ID;
-    const sessionState = getSessionState(sessionId);
 
-    console.log(`\n[Chat] 用户 ${sender}: ${message}`);
+    // 修复 4: 使用用户隔离的会话
+    const sessionId = getSessionIdFromRequest(req);
+    const userHistory = getUserHistory(sessionId);
+    const currentAgent = getUserCurrentAgent(sessionId);
+
+    console.log(`\n[Chat] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
 
     // 提取 @ 提及
     const mentions = agentManager.extractMentions(message);
@@ -347,12 +484,12 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
         agentsToRespond.push(mention);
       }
       // 只记住第一个被 @ 的智能体作为后续默认对话对象
-      setCurrentAgent(sessionId, mentions[0]);
+      setUserCurrentAgent(sessionId, mentions[0]);
       console.log(`[Chat] 设置当前对话智能体: ${mentions[0]}`);
-    } else if (sessionState.currentAgent) {
+    } else if (currentAgent) {
       // 没有新的 @ 提及，但有之前的对话智能体
-      agentsToRespond.push(sessionState.currentAgent);
-      console.log(`[Chat] 继续与 ${sessionState.currentAgent} 对话`);
+      agentsToRespond.push(currentAgent);
+      console.log(`[Chat] 继续与 ${currentAgent} 对话`);
     }
 
     // 创建用户消息
@@ -365,8 +502,8 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       mentions: mentions.length > 0 ? mentions : undefined
     };
 
-    // 添加到历史
-    chatHistory.push(userMessage);
+    // 添加到用户历史
+    userHistory.push(userMessage);
 
     // 返回的 AI 消息列表
     const aiMessages: Message[] = [];
@@ -380,7 +517,8 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
 
       let aiResponse: ClaudeResult;
       try {
-        aiResponse = await callClaudeCLI(message, agent, chatHistory);
+        // 使用用户隔离的历史
+        aiResponse = await callClaudeCLI(message, agent, userHistory);
       } catch (error: unknown) {
         const err = error as Error;
         console.log(`[Chat] Claude CLI 不可用: ${err.message}`);
@@ -412,7 +550,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
         timestamp: Date.now()
       };
 
-      chatHistory.push(aiMessage);
+      userHistory.push(aiMessage);
       aiMessages.push(aiMessage);
 
       console.log(`[Chat] ${agentName} 回复完成`);
@@ -424,7 +562,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       success: true,
       userMessage,
       aiMessages,
-      currentAgent: sessionState.currentAgent
+      currentAgent: getUserCurrentAgent(sessionId)
     }));
   } catch (error: unknown) {
     const err = error as Error;
@@ -439,12 +577,16 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
  */
 function handleGetHistory(req: http.IncomingMessage, res: http.ServerResponse): void {
   syncAgentsFromStore();
-  const sessionState = getSessionState(DEFAULT_SESSION_ID);
+  // 修复 4: 使用用户隔离的历史
+  const sessionId = getSessionIdFromRequest(req);
+  const userHistory = getUserHistory(sessionId);
+  const currentAgent = getUserCurrentAgent(sessionId);
+
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
-    messages: chatHistory,
+    messages: userHistory,
     agents: agentManager.getAgentConfigs(),
-    currentAgent: sessionState.currentAgent
+    currentAgent: currentAgent
   }));
 }
 
@@ -452,9 +594,9 @@ function handleGetHistory(req: http.IncomingMessage, res: http.ServerResponse): 
  * 处理清空历史
  */
 function handleClearHistory(req: http.IncomingMessage, res: http.ServerResponse): void {
-  chatHistory = [];
-  // 同时重置当前对话智能体
-  setCurrentAgent(DEFAULT_SESSION_ID, null);
+  // 修复 4: 清空用户自己的历史
+  const sessionId = getSessionIdFromRequest(req);
+  clearUserHistory(sessionId);
   syncAgentsFromStore();
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ success: true }));
@@ -465,14 +607,16 @@ function handleClearHistory(req: http.IncomingMessage, res: http.ServerResponse)
  */
 function handleSwitchAgent(req: http.IncomingMessage, res: http.ServerResponse): void {
   parseBody<{ agent?: string }>(req).then(body => {
+    // 修复 4: 使用用户隔离的状态
+    const sessionId = getSessionIdFromRequest(req);
     const agentName = body.agent;
     if (agentName && agentManager.hasAgent(agentName)) {
-      setCurrentAgent(DEFAULT_SESSION_ID, agentName);
+      setUserCurrentAgent(sessionId, agentName);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, currentAgent: agentName }));
     } else if (!agentName) {
       // 清除当前智能体
-      setCurrentAgent(DEFAULT_SESSION_ID, null);
+      setUserCurrentAgent(sessionId, null);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, currentAgent: null }));
     } else {

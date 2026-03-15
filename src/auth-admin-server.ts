@@ -39,6 +39,58 @@ const DEFAULT_USER = process.env.BOT_ROOM_DEFAULT_USER || 'admin';
 const DEFAULT_PASSWORD = process.env.BOT_ROOM_DEFAULT_PASSWORD || 'admin123!';
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
 
+// ============================================
+// 修复 1: 生产环境安全检查
+// ============================================
+function performSecurityChecks(): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  if (isProduction) {
+    // 检查 ADMIN_TOKEN
+    if (!ADMIN_TOKEN || ADMIN_TOKEN === 'change-me-in-production') {
+      console.error('❌ 生产环境必须设置 AUTH_ADMIN_TOKEN 环境变量');
+      process.exit(1);
+    }
+    if (ADMIN_TOKEN.length < 32) {
+      console.error('❌ AUTH_ADMIN_TOKEN 长度不能少于 32 字符');
+      process.exit(1);
+    }
+
+    // 检查默认密码
+    if (DEFAULT_PASSWORD.length < 12) {
+      console.error('❌ 生产环境 BOT_ROOM_DEFAULT_PASSWORD 长度不能少于 12 字符');
+      process.exit(1);
+    }
+    const hasLower = /[a-z]/.test(DEFAULT_PASSWORD);
+    const hasUpper = /[A-Z]/.test(DEFAULT_PASSWORD);
+    const hasNumber = /[0-9]/.test(DEFAULT_PASSWORD);
+    const hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(DEFAULT_PASSWORD);
+    if (!(hasLower && hasUpper && hasNumber && hasSpecial)) {
+      console.error('❌ 生产环境 BOT_ROOM_DEFAULT_PASSWORD 必须包含大小写字母、数字和特殊字符');
+      process.exit(1);
+    }
+  } else {
+    // 开发环境警告
+    const warnings: string[] = [];
+    if (!ADMIN_TOKEN || ADMIN_TOKEN === 'change-me-in-production') {
+      warnings.push('⚠️ AUTH_ADMIN_TOKEN 未设置或使用默认值');
+    }
+    if (DEFAULT_PASSWORD.length < 12) {
+      warnings.push('⚠️ BOT_ROOM_DEFAULT_PASSWORD 长度不足');
+    }
+    if (warnings.length > 0) {
+      console.log('\n' + '='.repeat(60));
+      console.log('🔒 安全检查警告（开发环境）');
+      console.log('='.repeat(60));
+      warnings.forEach(w => console.log(w));
+      console.log('='.repeat(60) + '\n');
+    }
+  }
+}
+
+// 启动时执行安全检查
+performSecurityChecks();
+
 function parseBody<T>(req: http.IncomingMessage): Promise<T> {
   return new Promise((resolve, reject) => {
     let body = '';
