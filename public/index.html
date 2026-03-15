@@ -37,49 +37,61 @@
       </div>
     </header>
 
-    <!-- 智能体列表 -->
-    <div class="agents-bar" id="agentsBar">
-      <span class="agents-label">智能体:</span>
-      <div class="agents-list" id="agentsList"></div>
-    </div>
+    <div class="main-layout">
+      <aside class="sessions-sidebar">
+        <span class="sessions-label">会话</span>
+        <select id="sessionSelect" size="14"></select>
+        <button class="btn-session" onclick="createSession()">新建会话</button>
+        <button class="btn-session" onclick="renameSession()">重命名</button>
+        <button class="btn-session btn-session--danger" onclick="deleteSession()">删除</button>
+      </aside>
 
-    <!-- 当前对话智能体提示 -->
-    <div class="current-agent-bar" id="currentAgentBar" style="display: none;">
-      <span class="current-agent-label">当前对话:</span>
-      <span class="current-agent-name" id="currentAgentName"></span>
-      <button class="btn-switch" onclick="switchAgent()">切换</button>
-    </div>
-
-    <!-- 消息列表 -->
-    <div class="messages" id="messages">
-      <div class="welcome">
-        <div class="welcome-icon">💬</div>
-        <h2>欢迎使用 AI 智能体聊天室</h2>
-        <p class="hint">点击下方智能体标签， 或使用 <code>@智能体名</code> 开始对话</p>
-        <div class="welcome-agents">
-          <span class="welcome-agent" onclick="selectAgent('Claude')">🤖 Claude</span>
-          <span class="welcome-agent" onclick="selectAgent('Alice')">👩‍💻 Alice</span>
-          <span class="welcome-agent" onclick="selectAgent('Bob')">🧑‍💻 Bob</span>
+      <div class="chat-panel">
+        <!-- 智能体列表 -->
+        <div class="agents-bar" id="agentsBar">
+          <span class="agents-label">智能体:</span>
+          <div class="agents-list" id="agentsList"></div>
         </div>
-        <p class="hint secondary">✨ @ 一次后，后续消息会自动发送给该智能体</p>
+
+        <!-- 当前对话智能体提示 -->
+        <div class="current-agent-bar" id="currentAgentBar" style="display: none;">
+          <span class="current-agent-label">当前对话:</span>
+          <span class="current-agent-name" id="currentAgentName"></span>
+          <button class="btn-switch" onclick="switchAgent()">切换</button>
+        </div>
+
+        <!-- 消息列表 -->
+        <div class="messages" id="messages">
+          <div class="welcome">
+            <div class="welcome-icon">💬</div>
+            <h2>欢迎使用 AI 智能体聊天室</h2>
+            <p class="hint">点击下方智能体标签， 或使用 <code>@智能体名</code> 开始对话</p>
+            <div class="welcome-agents">
+              <span class="welcome-agent" onclick="selectAgent('Claude')">🤖 Claude</span>
+              <span class="welcome-agent" onclick="selectAgent('Alice')">👩‍💻 Alice</span>
+              <span class="welcome-agent" onclick="selectAgent('Bob')">🧑‍💻 Bob</span>
+            </div>
+            <p class="hint secondary">✨ @ 一次后，后续消息会自动发送给该智能体</p>
+          </div>
+        </div>
+
+        <!-- 输入区域 -->
+        <div class="input-area">
+          <form onsubmit="sendMessage(event)">
+            <div class="mention-input-wrap">
+              <input
+                type="text"
+                id="userInput"
+                placeholder="输入消息... 使用 @智能体名 来召唤 AI"
+                autocomplete="off"
+                autofocus
+              >
+              <div class="mention-suggestions" id="mentionSuggestions" style="display: none;"></div>
+            </div>
+            <button type="submit" id="sendBtn">发送</button>
+          </form>
+        </div>
       </div>
-    </div>
-
-    <!-- 输入区域 -->
-    <div class="input-area">
-      <form onsubmit="sendMessage(event)">
-        <div class="mention-input-wrap">
-          <input
-            type="text"
-            id="userInput"
-            placeholder="输入消息... 使用 @智能体名 来召唤 AI"
-            autocomplete="off"
-            autofocus
-          >
-          <div class="mention-suggestions" id="mentionSuggestions" style="display: none;"></div>
-        </div>
-        <button type="submit" id="sendBtn">发送</button>
-      </form>
     </div>
   </div>
 
@@ -91,6 +103,8 @@
     let agents = [];
     let isLoading = false;
     let currentAgent = null;  // 当前对话的智能体
+    let chatSessions = [];
+    let activeSessionId = null;
 
     // DOM 元素
     const messagesEl = document.getElementById('messages');
@@ -106,6 +120,7 @@
     const authErrorEl = document.getElementById('authError');
     const logoutBtnEl = document.getElementById('logoutBtn');
     const mentionSuggestionsEl = document.getElementById('mentionSuggestions');
+    const sessionSelectEl = document.getElementById('sessionSelect');
 
     let mentionState = {
       visible: false,
@@ -163,8 +178,104 @@
     async function logout() {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' });
       history = [];
+      chatSessions = [];
+      activeSessionId = null;
       messagesEl.innerHTML = '';
       await checkAuthStatus();
+    }
+
+    function renderSessionList() {
+      sessionSelectEl.innerHTML = chatSessions.map(session => `
+        <option value="${session.id}" ${session.id === activeSessionId ? 'selected' : ''}>
+          ${escapeHtml(session.name)} (${session.messageCount})
+        </option>
+      `).join('');
+    }
+
+    async function switchSession(sessionId) {
+      if (!sessionId || sessionId === activeSessionId || isLoading) return;
+      const response = await fetch('/api/sessions/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ sessionId })
+      });
+      if (!response.ok) {
+        alert('切换会话失败');
+        renderSessionList();
+        return;
+      }
+      const data = await response.json();
+      history = data.messages || [];
+      currentAgent = data.currentAgent || null;
+      activeSessionId = data.activeSessionId || null;
+      chatSessions = data.chatSessions || [];
+      renderSessionList();
+      updateCurrentAgentUI();
+      renderMessages();
+    }
+
+    async function createSession() {
+      const name = prompt('请输入新会话名称（可选）') || '';
+      const response = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name })
+      });
+      if (!response.ok) {
+        alert('创建会话失败');
+        return;
+      }
+      await loadHistory();
+    }
+
+    async function renameSession() {
+      if (!activeSessionId) return;
+      const current = chatSessions.find(item => item.id === activeSessionId);
+      const name = prompt('请输入新的会话名称', current ? current.name : '');
+      if (name === null) return;
+
+      const response = await fetch('/api/sessions/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ sessionId: activeSessionId, name })
+      });
+      if (!response.ok) {
+        alert('重命名失败');
+        return;
+      }
+
+      const data = await response.json();
+      chatSessions = data.chatSessions || chatSessions;
+      renderSessionList();
+    }
+
+    async function deleteSession() {
+      if (!activeSessionId) return;
+      if (!confirm('确定删除当前会话吗？该会话中的消息将丢失。')) return;
+
+      const response = await fetch('/api/sessions/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ sessionId: activeSessionId })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        alert(data.error || '删除失败');
+        return;
+      }
+
+      history = data.messages || [];
+      currentAgent = data.currentAgent || null;
+      activeSessionId = data.activeSessionId || null;
+      chatSessions = data.chatSessions || [];
+      renderSessionList();
+      updateCurrentAgentUI();
+      renderMessages();
     }
 
     // ============================================
@@ -717,7 +828,13 @@
           if (data.currentAgent) {
             currentAgent = data.currentAgent;
             updateCurrentAgentUI();
+          } else {
+            currentAgent = null;
+            updateCurrentAgentUI();
           }
+          chatSessions = data.chatSessions || [];
+          activeSessionId = data.activeSessionId || null;
+          renderSessionList();
           renderMessages();
         }
       } catch (error) {
@@ -816,6 +933,10 @@
         e.preventDefault();
         sendMessage(e);
       }
+    });
+
+    sessionSelectEl.addEventListener('change', (e) => {
+      switchSession(e.target.value);
     });
   </script>
 </body>

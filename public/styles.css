@@ -103,13 +103,26 @@ body {
    ============================================ */
 
 .container {
-  max-width: 800px;
+  max-width: 1120px;
   margin: 0 auto;
   height: 100vh;
   display: flex;
   flex-direction: column;
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(10px);
+}
+
+.main-layout {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.chat-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 /* ============================================
@@ -210,6 +223,57 @@ body {
   box-shadow: var(--shadow-medium);
   border-color: rgba(255, 180, 169, 0.5);
   border-left-color: var(--agent-color, var(--warm-coral));
+}
+
+.sessions-sidebar {
+  width: 240px;
+  padding: 16px 14px;
+  background: rgba(255, 249, 240, 0.96);
+  border-right: 1px solid rgba(255, 180, 169, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sessions-label {
+  font-size: 14px;
+  color: var(--warm-brown);
+  font-weight: 700;
+  padding: 0 4px;
+}
+
+#sessionSelect {
+  width: 100%;
+  min-height: 280px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 180, 169, 0.5);
+  background: #fff;
+  color: #5d4e37;
+  padding: 6px;
+  font-size: 13px;
+}
+
+#sessionSelect option {
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 4px;
+}
+
+.btn-session {
+  height: 36px;
+  width: 100%;
+  padding: 0 12px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 180, 169, 0.5);
+  background: #fff;
+  color: #7b4e33;
+  cursor: pointer;
+}
+
+.btn-session--danger {
+  border-color: rgba(209, 67, 67, 0.35);
+  color: #b53535;
 }
 
 /* ============================================
@@ -760,6 +824,20 @@ body {
 
   .card, .checklist {
     max-width: 100%;
+  }
+
+  .main-layout {
+    flex-direction: column;
+  }
+
+  .sessions-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 180, 169, 0.3);
+  }
+
+  #sessionSelect {
+    min-height: 120px;
   }
 
   .agents-bar {
