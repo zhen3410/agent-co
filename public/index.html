@@ -43,6 +43,14 @@
       <div class="agents-list" id="agentsList"></div>
     </div>
 
+    <div class="sessions-bar">
+      <span class="sessions-label">会话:</span>
+      <select id="sessionSelect"></select>
+      <button class="btn-session" onclick="createSession()">新建</button>
+      <button class="btn-session" onclick="renameSession()">重命名</button>
+      <button class="btn-session btn-session--danger" onclick="deleteSession()">删除</button>
+    </div>
+
     <!-- 当前对话智能体提示 -->
     <div class="current-agent-bar" id="currentAgentBar" style="display: none;">
       <span class="current-agent-label">当前对话:</span>
@@ -91,6 +99,8 @@
     let agents = [];
     let isLoading = false;
     let currentAgent = null;  // 当前对话的智能体
+    let chatSessions = [];
+    let activeSessionId = null;
 
     // DOM 元素
     const messagesEl = document.getElementById('messages');
@@ -106,6 +116,7 @@
     const authErrorEl = document.getElementById('authError');
     const logoutBtnEl = document.getElementById('logoutBtn');
     const mentionSuggestionsEl = document.getElementById('mentionSuggestions');
+    const sessionSelectEl = document.getElementById('sessionSelect');
 
     let mentionState = {
       visible: false,
@@ -163,8 +174,104 @@
     async function logout() {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' });
       history = [];
+      chatSessions = [];
+      activeSessionId = null;
       messagesEl.innerHTML = '';
       await checkAuthStatus();
+    }
+
+    function renderSessionList() {
+      sessionSelectEl.innerHTML = chatSessions.map(session => `
+        <option value="${session.id}" ${session.id === activeSessionId ? 'selected' : ''}>
+          ${escapeHtml(session.name)} (${session.messageCount})
+        </option>
+      `).join('');
+    }
+
+    async function switchSession(sessionId) {
+      if (!sessionId || sessionId === activeSessionId || isLoading) return;
+      const response = await fetch('/api/sessions/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ sessionId })
+      });
+      if (!response.ok) {
+        alert('切换会话失败');
+        renderSessionList();
+        return;
+      }
+      const data = await response.json();
+      history = data.messages || [];
+      currentAgent = data.currentAgent || null;
+      activeSessionId = data.activeSessionId || null;
+      chatSessions = data.chatSessions || [];
+      renderSessionList();
+      updateCurrentAgentUI();
+      renderMessages();
+    }
+
+    async function createSession() {
+      const name = prompt('请输入新会话名称（可选）') || '';
+      const response = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name })
+      });
+      if (!response.ok) {
+        alert('创建会话失败');
+        return;
+      }
+      await loadHistory();
+    }
+
+    async function renameSession() {
+      if (!activeSessionId) return;
+      const current = chatSessions.find(item => item.id === activeSessionId);
+      const name = prompt('请输入新的会话名称', current ? current.name : '');
+      if (name === null) return;
+
+      const response = await fetch('/api/sessions/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ sessionId: activeSessionId, name })
+      });
+      if (!response.ok) {
+        alert('重命名失败');
+        return;
+      }
+
+      const data = await response.json();
+      chatSessions = data.chatSessions || chatSessions;
+      renderSessionList();
+    }
+
+    async function deleteSession() {
+      if (!activeSessionId) return;
+      if (!confirm('确定删除当前会话吗？该会话中的消息将丢失。')) return;
+
+      const response = await fetch('/api/sessions/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ sessionId: activeSessionId })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        alert(data.error || '删除失败');
+        return;
+      }
+
+      history = data.messages || [];
+      currentAgent = data.currentAgent || null;
+      activeSessionId = data.activeSessionId || null;
+      chatSessions = data.chatSessions || [];
+      renderSessionList();
+      updateCurrentAgentUI();
+      renderMessages();
     }
 
     // ============================================
@@ -717,7 +824,13 @@
           if (data.currentAgent) {
             currentAgent = data.currentAgent;
             updateCurrentAgentUI();
+          } else {
+            currentAgent = null;
+            updateCurrentAgentUI();
           }
+          chatSessions = data.chatSessions || [];
+          activeSessionId = data.activeSessionId || null;
+          renderSessionList();
           renderMessages();
         }
       } catch (error) {
@@ -816,6 +929,10 @@
         e.preventDefault();
         sendMessage(e);
       }
+    });
+
+    sessionSelectEl.addEventListener('change', (e) => {
+      switchSession(e.target.value);
     });
   </script>
 </body>

@@ -212,6 +212,48 @@ body {
   border-left-color: var(--agent-color, var(--warm-coral));
 }
 
+.sessions-bar {
+  padding: 10px 24px;
+  background: rgba(255, 249, 240, 0.95);
+  border-bottom: 1px solid rgba(255, 180, 169, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sessions-label {
+  font-size: 13px;
+  color: var(--warm-brown);
+  font-weight: 600;
+}
+
+#sessionSelect {
+  flex: 1;
+  min-width: 180px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 180, 169, 0.5);
+  background: #fff;
+  color: #5d4e37;
+  padding: 0 8px;
+}
+
+.btn-session {
+  height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 180, 169, 0.5);
+  background: #fff;
+  color: #7b4e33;
+  cursor: pointer;
+}
+
+.btn-session--danger {
+  border-color: rgba(209, 67, 67, 0.35);
+  color: #b53535;
+}
+
 /* ============================================
    当前智能体栏
    ============================================ */

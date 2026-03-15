@@ -8,7 +8,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { Message, AIAgentConfig, ChatRequest, RichBlock, SessionState } from './types';
+import { Message, AIAgentConfig, ChatRequest, RichBlock } from './types';
 import { AgentManager } from './agent-manager';
 import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
 import { callClaudeCLI, generateMockReply, ClaudeResult } from './claude-cli';
@@ -20,7 +20,6 @@ import { checkRateLimit, getClientIP } from './rate-limiter';
 // 配置
 // ============================================
 const PORT = Number(process.env.PORT || 3002);
-const DEFAULT_SESSION_ID = 'default';
 const DEFAULT_USER_NAME = '用户';
 const AUTH_ENABLED = process.env.BOT_ROOM_AUTH_ENABLED !== 'false';
 const AUTH_ADMIN_BASE_URL = process.env.AUTH_ADMIN_BASE_URL || 'http://127.0.0.1:3003';
@@ -32,53 +31,171 @@ const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || path.join(proces
 // 速率限制配置
 const RATE_LIMIT_MAX_REQUESTS = 100; // 每分钟最多 100 次请求
 const LOGIN_RATE_LIMIT_MAX = 5; // 每分钟最多 5 次登录尝试
+const DEFAULT_CHAT_SESSION_ID = 'default';
+const DEFAULT_CHAT_SESSION_NAME = '默认会话';
+
+interface UserChatSession {
+  id: string;
+  name: string;
+  history: Message[];
+  currentAgent: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
 
 // ============================================
 // 修复 4: 用户隔离的聊天历史
 // ============================================
 // 改为按用户/会话存储
-const userHistories = new Map<string, Message[]>();
-const userAgentStates = new Map<string, string | null>();
+const userChatSessions = new Map<string, Map<string, UserChatSession>>();
+const userActiveChatSession = new Map<string, string>();
 
-function getUserHistory(sessionId: string): Message[] {
-  if (!userHistories.has(sessionId)) {
-    userHistories.set(sessionId, []);
+function normalizeSessionName(name: string | undefined): string {
+  const trimmed = (name || '').trim();
+  return trimmed ? trimmed.slice(0, 40) : DEFAULT_CHAT_SESSION_NAME;
+}
+
+function generateChatSessionId(): string {
+  return `s_${crypto.randomBytes(6).toString('hex')}`;
+}
+
+function createUserSession(name?: string): UserChatSession {
+  const now = Date.now();
+  return {
+    id: generateChatSessionId(),
+    name: normalizeSessionName(name),
+    history: [],
+    currentAgent: null,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function ensureUserSessions(userKey: string): Map<string, UserChatSession> {
+  let sessions = userChatSessions.get(userKey);
+  if (!sessions) {
+    const defaultSession: UserChatSession = {
+      id: DEFAULT_CHAT_SESSION_ID,
+      name: DEFAULT_CHAT_SESSION_NAME,
+      history: [],
+      currentAgent: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    sessions = new Map([[defaultSession.id, defaultSession]]);
+    userChatSessions.set(userKey, sessions);
+    userActiveChatSession.set(userKey, defaultSession.id);
   }
-  return userHistories.get(sessionId)!;
+  return sessions;
 }
 
-function getUserCurrentAgent(sessionId: string): string | null {
-  return userAgentStates.get(sessionId) || null;
-}
-
-function setUserCurrentAgent(sessionId: string, agentName: string | null): void {
-  userAgentStates.set(sessionId, agentName);
-}
-
-// 别名，供 handleSwitchAgent 使用
-const setUserCurrentAgentAlias = setUserCurrentAgent;
-
-function clearUserHistory(sessionId: string): void {
-  userHistories.set(sessionId, []);
-  userAgentStates.set(sessionId, null);
-}
-
-// 从请求中获取会话 ID
-function getSessionIdFromRequest(req: http.IncomingMessage): string {
+function getUserKeyFromRequest(req: http.IncomingMessage): string {
   const cookies = parseCookies(req);
   const token = cookies[SESSION_COOKIE_NAME];
   if (token && authSessions.has(token)) {
     return `session:${token}`;
   }
-  // 未登录用户使用 IP 作为会话标识
   return `ip:${getClientIP(req)}`;
 }
 
-// 保留旧的全局变量以兼容（但不再使用）
-let chatHistory: Message[] = [];
+function resolveChatSession(req: http.IncomingMessage): { userKey: string; session: UserChatSession } {
+  const userKey = getUserKeyFromRequest(req);
+  const sessions = ensureUserSessions(userKey);
 
-// 会话状态管理（记住当前对话的智能体）
-const sessionStates = new Map<string, SessionState>();
+  const activeSessionId = userActiveChatSession.get(userKey) || DEFAULT_CHAT_SESSION_ID;
+  const activeSession = sessions.get(activeSessionId) || sessions.values().next().value;
+
+  if (!activeSession) {
+    const fallback = createUserSession(DEFAULT_CHAT_SESSION_NAME);
+    fallback.id = DEFAULT_CHAT_SESSION_ID;
+    sessions.set(fallback.id, fallback);
+    userActiveChatSession.set(userKey, fallback.id);
+    return { userKey, session: fallback };
+  }
+
+  userActiveChatSession.set(userKey, activeSession.id);
+  return { userKey, session: activeSession };
+}
+
+function getSessionSummaries(userKey: string): Array<{ id: string; name: string; messageCount: number; updatedAt: number; createdAt: number }> {
+  const sessions = ensureUserSessions(userKey);
+  return Array.from(sessions.values())
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .map(session => ({
+      id: session.id,
+      name: session.name,
+      messageCount: session.history.length,
+      updatedAt: session.updatedAt,
+      createdAt: session.createdAt
+    }));
+}
+
+function touchSession(session: UserChatSession): void {
+  session.updatedAt = Date.now();
+}
+
+function getUserHistory(userKey: string, sessionId: string): Message[] {
+  return ensureUserSessions(userKey).get(sessionId)?.history || [];
+}
+
+function getUserCurrentAgent(userKey: string, sessionId: string): string | null {
+  return ensureUserSessions(userKey).get(sessionId)?.currentAgent || null;
+}
+
+function setUserCurrentAgent(userKey: string, sessionId: string, agentName: string | null): void {
+  const session = ensureUserSessions(userKey).get(sessionId);
+  if (!session) return;
+  session.currentAgent = agentName;
+  touchSession(session);
+}
+
+function clearUserHistory(userKey: string, sessionId: string): void {
+  const session = ensureUserSessions(userKey).get(sessionId);
+  if (!session) return;
+  session.history = [];
+  session.currentAgent = null;
+  touchSession(session);
+}
+
+function setActiveChatSession(userKey: string, sessionId: string): boolean {
+  const sessions = ensureUserSessions(userKey);
+  if (!sessions.has(sessionId)) return false;
+  userActiveChatSession.set(userKey, sessionId);
+  return true;
+}
+
+function createChatSessionForUser(userKey: string, name?: string): UserChatSession {
+  const sessions = ensureUserSessions(userKey);
+  const newSession = createUserSession(name);
+  sessions.set(newSession.id, newSession);
+  userActiveChatSession.set(userKey, newSession.id);
+  return newSession;
+}
+
+function renameChatSessionForUser(userKey: string, sessionId: string, name: string): UserChatSession | null {
+  const session = ensureUserSessions(userKey).get(sessionId);
+  if (!session) return null;
+  session.name = normalizeSessionName(name);
+  touchSession(session);
+  return session;
+}
+
+function deleteChatSessionForUser(userKey: string, sessionId: string): { success: boolean; activeSessionId: string } {
+  const sessions = ensureUserSessions(userKey);
+  if (sessions.size <= 1 || !sessions.has(sessionId)) {
+    return { success: false, activeSessionId: userActiveChatSession.get(userKey) || DEFAULT_CHAT_SESSION_ID };
+  }
+
+  sessions.delete(sessionId);
+  const currentActive = userActiveChatSession.get(userKey);
+  if (currentActive === sessionId) {
+    const fallback = sessions.values().next().value as UserChatSession;
+    userActiveChatSession.set(userKey, fallback.id);
+  }
+
+  return { success: true, activeSessionId: userActiveChatSession.get(userKey) || DEFAULT_CHAT_SESSION_ID };
+}
+
 const authSessions = new Map<string, number>();
 
 // AI 智能体管理器（由共享配置文件驱动）
@@ -146,10 +263,11 @@ function performSecurityChecks(): void {
 performSecurityChecks();
 
 function isChatSessionActive(): boolean {
-  // 检查是否有任何活跃的用户会话
-  for (const [sessionId, history] of Array.from(userHistories.entries())) {
-    if (history.length > 0 || userAgentStates.get(sessionId)) {
-      return true;
+  for (const sessions of Array.from(userChatSessions.values())) {
+    for (const session of Array.from(sessions.values())) {
+      if (session.history.length > 0 || session.currentAgent) {
+        return true;
+      }
     }
   }
   return false;
@@ -177,23 +295,6 @@ function syncAgentsFromStore(): void {
     const err = error as Error;
     console.error('[AgentStore] 同步失败:', err.message);
   }
-}
-
-// 获取或创建会话状态
-function getSessionState(sessionId: string): SessionState {
-  let state = sessionStates.get(sessionId);
-  if (!state) {
-    state = { currentAgent: null, lastActivity: Date.now() };
-    sessionStates.set(sessionId, state);
-  }
-  return state;
-}
-
-// 设置当前对话的智能体
-function setCurrentAgent(sessionId: string, agentName: string | null): void {
-  const state = getSessionState(sessionId);
-  state.currentAgent = agentName;
-  state.lastActivity = Date.now();
 }
 
 // ============================================
@@ -464,10 +565,10 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       return;
     }
 
-    // 修复 4: 使用用户隔离的会话
-    const sessionId = getSessionIdFromRequest(req);
-    const userHistory = getUserHistory(sessionId);
-    const currentAgent = getUserCurrentAgent(sessionId);
+    const { userKey, session } = resolveChatSession(req);
+    const sessionId = `${userKey}::${session.id}`;
+    const userHistory = session.history;
+    const currentAgent = session.currentAgent;
 
     console.log(`\n[Chat] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
 
@@ -484,7 +585,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
         agentsToRespond.push(mention);
       }
       // 只记住第一个被 @ 的智能体作为后续默认对话对象
-      setUserCurrentAgent(sessionId, mentions[0]);
+      setUserCurrentAgent(userKey, session.id, mentions[0]);
       console.log(`[Chat] 设置当前对话智能体: ${mentions[0]}`);
     } else if (currentAgent) {
       // 没有新的 @ 提及，但有之前的对话智能体
@@ -504,6 +605,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
 
     // 添加到用户历史
     userHistory.push(userMessage);
+    touchSession(session);
 
     // 返回的 AI 消息列表
     const aiMessages: Message[] = [];
@@ -552,6 +654,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
 
       userHistory.push(aiMessage);
       aiMessages.push(aiMessage);
+      touchSession(session);
 
       console.log(`[Chat] ${agentName} 回复完成`);
     }
@@ -562,7 +665,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       success: true,
       userMessage,
       aiMessages,
-      currentAgent: getUserCurrentAgent(sessionId)
+      currentAgent: getUserCurrentAgent(userKey, session.id)
     }));
   } catch (error: unknown) {
     const err = error as Error;
@@ -600,10 +703,10 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       return;
     }
 
-    // 使用用户隔离的会话
-    const sessionId = getSessionIdFromRequest(req);
-    const userHistory = getUserHistory(sessionId);
-    const currentAgent = getUserCurrentAgent(sessionId);
+    const { userKey, session } = resolveChatSession(req);
+    const sessionId = `${userKey}::${session.id}`;
+    const userHistory = session.history;
+    const currentAgent = session.currentAgent;
 
     console.log(`\n[ChatStream] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
 
@@ -618,7 +721,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       for (const mention of mentions) {
         agentsToRespond.push(mention);
       }
-      setUserCurrentAgent(sessionId, mentions[0]);
+      setUserCurrentAgent(userKey, session.id, mentions[0]);
       console.log(`[ChatStream] 设置当前对话智能体: ${mentions[0]}`);
     } else if (currentAgent) {
       agentsToRespond.push(currentAgent);
@@ -637,6 +740,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
 
     // 添加到用户历史
     userHistory.push(userMessage);
+    touchSession(session);
 
     // 设置 SSE 响应头
     res.writeHead(200, {
@@ -699,6 +803,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       };
 
       userHistory.push(aiMessage);
+      touchSession(session);
 
       // 立即推送该智能体的回复
       sendEvent('agent_message', aiMessage);
@@ -706,7 +811,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     }
 
     // 发送完成事件
-    sendEvent('done', { currentAgent: getUserCurrentAgent(sessionId) });
+    sendEvent('done', { currentAgent: getUserCurrentAgent(userKey, session.id) });
     res.end();
 
   } catch (error: unknown) {
@@ -729,16 +834,15 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
  */
 function handleGetHistory(req: http.IncomingMessage, res: http.ServerResponse): void {
   syncAgentsFromStore();
-  // 修复 4: 使用用户隔离的历史
-  const sessionId = getSessionIdFromRequest(req);
-  const userHistory = getUserHistory(sessionId);
-  const currentAgent = getUserCurrentAgent(sessionId);
+  const { userKey, session } = resolveChatSession(req);
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
-    messages: userHistory,
+    messages: session.history,
     agents: agentManager.getAgentConfigs(),
-    currentAgent: currentAgent
+    currentAgent: session.currentAgent,
+    chatSessions: getSessionSummaries(userKey),
+    activeSessionId: session.id
   }));
 }
 
@@ -746,9 +850,8 @@ function handleGetHistory(req: http.IncomingMessage, res: http.ServerResponse): 
  * 处理清空历史
  */
 function handleClearHistory(req: http.IncomingMessage, res: http.ServerResponse): void {
-  // 修复 4: 清空用户自己的历史
-  const sessionId = getSessionIdFromRequest(req);
-  clearUserHistory(sessionId);
+  const { userKey, session } = resolveChatSession(req);
+  clearUserHistory(userKey, session.id);
   syncAgentsFromStore();
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ success: true }));
@@ -759,16 +862,15 @@ function handleClearHistory(req: http.IncomingMessage, res: http.ServerResponse)
  */
 function handleSwitchAgent(req: http.IncomingMessage, res: http.ServerResponse): void {
   parseBody<{ agent?: string }>(req).then(body => {
-    // 修复 4: 使用用户隔离的状态
-    const sessionId = getSessionIdFromRequest(req);
+    const { userKey, session } = resolveChatSession(req);
     const agentName = body.agent;
     if (agentName && agentManager.hasAgent(agentName)) {
-      setUserCurrentAgent(sessionId, agentName);
+      setUserCurrentAgent(userKey, session.id, agentName);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, currentAgent: agentName }));
     } else if (!agentName) {
       // 清除当前智能体
-      setUserCurrentAgent(sessionId, null);
+      setUserCurrentAgent(userKey, session.id, null);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, currentAgent: null }));
     } else {
@@ -781,13 +883,118 @@ function handleSwitchAgent(req: http.IncomingMessage, res: http.ServerResponse):
   });
 }
 
+async function handleCreateChatSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseBody<{ name?: string }>(req);
+    const userKey = getUserKeyFromRequest(req);
+    const session = createChatSessionForUser(userKey, body.name);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      session,
+      chatSessions: getSessionSummaries(userKey),
+      activeSessionId: session.id
+    }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+async function handleSelectChatSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseBody<{ sessionId?: string }>(req);
+    const userKey = getUserKeyFromRequest(req);
+    const sessionId = (body.sessionId || '').trim();
+
+    if (!sessionId || !setActiveChatSession(userKey, sessionId)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '会话不存在' }));
+      return;
+    }
+
+    const sessions = ensureUserSessions(userKey);
+    const session = sessions.get(sessionId)!;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      messages: session.history,
+      currentAgent: session.currentAgent,
+      activeSessionId: session.id,
+      chatSessions: getSessionSummaries(userKey)
+    }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+async function handleRenameChatSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseBody<{ sessionId?: string; name?: string }>(req);
+    const userKey = getUserKeyFromRequest(req);
+    const sessionId = (body.sessionId || '').trim();
+    const name = body.name || '';
+    const renamed = renameChatSessionForUser(userKey, sessionId, name);
+
+    if (!renamed) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '会话不存在' }));
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      session: renamed,
+      chatSessions: getSessionSummaries(userKey)
+    }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+async function handleDeleteChatSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseBody<{ sessionId?: string }>(req);
+    const userKey = getUserKeyFromRequest(req);
+    const sessionId = (body.sessionId || '').trim();
+    const result = deleteChatSessionForUser(userKey, sessionId);
+
+    if (!result.success) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '无法删除该会话（至少需要保留一个会话）' }));
+      return;
+    }
+
+    const sessions = ensureUserSessions(userKey);
+    const active = sessions.get(result.activeSessionId)!;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      activeSessionId: active.id,
+      messages: active.history,
+      currentAgent: active.currentAgent,
+      chatSessions: getSessionSummaries(userKey)
+    }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
 /**
  * 处理创建 block (Route A)
  */
 async function handleCreateBlock(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
     const body = await parseBody<{ sessionId?: string; block: RichBlock }>(req);
-    const { sessionId = DEFAULT_SESSION_ID, } = body;
+    const { sessionId = DEFAULT_CHAT_SESSION_ID, } = body;
     const block = body.block;
     if (!block) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -795,7 +1002,7 @@ async function handleCreateBlock(req: http.IncomingMessage, res: http.ServerResp
       return;
     }
 
-    const sid = sessionId || DEFAULT_SESSION_ID;
+    const sid = sessionId || DEFAULT_CHAT_SESSION_ID;
     const addedBlock = addBlock(sid, block);
 
     console.log(`[CreateBlock] Session: ${sid}, Block: ${addedBlock.id}`);
@@ -1003,6 +1210,14 @@ const server = http.createServer(async (req, res) => {
     handleGetHistory(req, res);
   } else if (requestUrl.pathname === '/api/clear' && method === 'POST') {
     handleClearHistory(req, res);
+  } else if (requestUrl.pathname === '/api/sessions' && method === 'POST') {
+    await handleCreateChatSession(req, res);
+  } else if (requestUrl.pathname === '/api/sessions/select' && method === 'POST') {
+    await handleSelectChatSession(req, res);
+  } else if (requestUrl.pathname === '/api/sessions/rename' && method === 'POST') {
+    await handleRenameChatSession(req, res);
+  } else if (requestUrl.pathname === '/api/sessions/delete' && method === 'POST') {
+    await handleDeleteChatSession(req, res);
   } else if (requestUrl.pathname === '/api/create-block' && method === 'POST') {
     await handleCreateBlock(req, res);
   } else if (requestUrl.pathname === '/api/block-status' && method === 'GET') {
