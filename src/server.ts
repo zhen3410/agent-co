@@ -755,6 +755,10 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     const sendEvent = (event: string, data: unknown) => {
       res.write(`event: ${event}\n`);
       res.write(`data: ${JSON.stringify(data)}\n\n`);
+      // 强制刷新缓冲区，确保数据立即发送
+      if (typeof (res as any).flush === 'function') {
+        (res as any).flush();
+      }
     };
 
     sendEvent('user_message', userMessage);
@@ -766,15 +770,17 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       return;
     }
 
-    // 逐个调用智能体，完成后立即推送
+    // 先发送所有智能体的思考事件
     for (const agentName of agentsToRespond) {
-      const agent = agentManager.getAgent(agentName);
-      if (!agent) continue;
-
-      console.log(`[ChatStream] 调用 AI: ${agentName}`);
-
-      // 发送开始思考事件
       sendEvent('agent_thinking', { agent: agentName });
+    }
+
+    // 并发调用所有智能体，完成后立即推送
+    const agentPromises = agentsToRespond.map(async (agentName) => {
+      const agent = agentManager.getAgent(agentName);
+      if (!agent) return null;
+
+      console.log(`[ChatStream] 并发调用 AI: ${agentName}`);
 
       let aiResponse: ClaudeResult;
       try {
@@ -808,7 +814,12 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       // 立即推送该智能体的回复
       sendEvent('agent_message', aiMessage);
       console.log(`[ChatStream] ${agentName} 回复已推送`);
-    }
+
+      return aiMessage;
+    });
+
+    // 等待所有智能体完成
+    await Promise.all(agentPromises);
 
     // 发送完成事件
     sendEvent('done', { currentAgent: getUserCurrentAgent(userKey, session.id) });
@@ -1141,7 +1152,14 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, filePa
       res.end('Not Found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': contentType });
+    // 对 HTML 文件禁用缓存，确保用户总是获取最新版本
+    const headers: http.OutgoingHttpHeaders = { 'Content-Type': contentType };
+    if (contentType === 'text/html') {
+      headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+      headers['Pragma'] = 'no-cache';
+      headers['Expires'] = '0';
+    }
+    res.writeHead(200, headers);
     res.end(data);
   });
 }
