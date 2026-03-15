@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verbose 日志后台</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+    .layout { display: grid; grid-template-columns: 280px 320px 1fr; min-height: 100vh; }
+    .panel { border-right: 1px solid #334155; padding: 16px; overflow: auto; }
+    .title { font-size: 18px; margin: 0 0 12px; }
+    .item { border: 1px solid #334155; border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; background: #1e293b; }
+    .item:hover, .item.active { border-color: #38bdf8; background: #0b3b56; }
+    .meta { color: #94a3b8; font-size: 12px; margin-top: 4px; }
+    .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+    button { background: #38bdf8; border: 0; color: #06263a; padding: 6px 10px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #020617; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 16px; min-height: calc(100vh - 120px); margin: 0; }
+    .hint { color: #94a3b8; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <section class="panel">
+      <h2 class="title">智能体</h2>
+      <div class="toolbar">
+        <button onclick="loadAgents()">刷新</button>
+      </div>
+      <div id="agents"></div>
+    </section>
+    <section class="panel">
+      <h2 class="title">日志文件</h2>
+      <div id="logs" class="hint">请先选择智能体</div>
+    </section>
+    <section class="panel" style="border-right: none;">
+      <h2 class="title">日志内容</h2>
+      <div class="hint" id="current"></div>
+      <pre id="content">请选择日志文件...</pre>
+    </section>
+  </div>
+
+  <script>
+    const agentsEl = document.getElementById('agents');
+    const logsEl = document.getElementById('logs');
+    const contentEl = document.getElementById('content');
+    const currentEl = document.getElementById('current');
+
+    let selectedAgent = '';
+    let selectedFile = '';
+
+    function formatTime(ts) {
+      return new Date(ts).toLocaleString('zh-CN');
+    }
+
+    async function loadAgents() {
+      const res = await fetch('/api/verbose/agents', { credentials: 'include' });
+      if (!res.ok) throw new Error('加载智能体日志失败');
+      const data = await res.json();
+      const agents = data.agents || [];
+      if (agents.length === 0) {
+        agentsEl.innerHTML = '<div class="hint">暂无日志</div>';
+        logsEl.innerHTML = '<div class="hint">暂无日志</div>';
+        contentEl.textContent = '暂无日志';
+        return;
+      }
+
+      agentsEl.innerHTML = agents.map(agent => `
+        <div class="item ${selectedAgent === agent.agent ? 'active' : ''}" onclick="selectAgent('${agent.agent}')">
+          <div>${agent.agent}</div>
+          <div class="meta">${agent.logCount} 个文件</div>
+          <div class="meta">最新: ${formatTime(agent.latestUpdatedAt)}</div>
+        </div>
+      `).join('');
+
+      if (!selectedAgent) {
+        selectAgent(agents[0].agent);
+      }
+    }
+
+    async function selectAgent(agent) {
+      selectedAgent = agent;
+      selectedFile = '';
+      await loadLogs(agent);
+      await loadAgents();
+    }
+
+    async function loadLogs(agent) {
+      const res = await fetch(`/api/verbose/logs?agent=${encodeURIComponent(agent)}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('加载日志列表失败');
+      const data = await res.json();
+      const logs = data.logs || [];
+      if (logs.length === 0) {
+        logsEl.innerHTML = '<div class="hint">该智能体暂无日志</div>';
+        return;
+      }
+
+      logsEl.innerHTML = logs.map(log => `
+        <div class="item ${selectedFile === log.fileName ? 'active' : ''}" onclick="selectLog('${log.fileName}')">
+          <div>${log.fileName}</div>
+          <div class="meta">${(log.size / 1024).toFixed(1)} KB</div>
+          <div class="meta">${formatTime(log.updatedAt)}</div>
+        </div>
+      `).join('');
+
+      if (!selectedFile) {
+        selectLog(logs[0].fileName);
+      }
+    }
+
+    async function selectLog(fileName) {
+      selectedFile = fileName;
+      const res = await fetch(`/api/verbose/log-content?file=${encodeURIComponent(fileName)}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('加载日志内容失败');
+      const data = await res.json();
+      currentEl.textContent = `当前文件: ${data.fileName}`;
+      contentEl.textContent = data.content || '(空文件)';
+      await loadLogs(selectedAgent);
+    }
+
+    loadAgents().catch(err => {
+      contentEl.textContent = err.message;
+    });
+  </script>
+</body>
+</html>
