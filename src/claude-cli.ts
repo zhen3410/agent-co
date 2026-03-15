@@ -15,7 +15,7 @@ import { digestHistory } from './rich-digest';
 import { extractRichBlocks } from './rich-extract';
 
 // 配置
-const CLAUDE_TIMEOUT_MS = 60 * 1000; // Claude CLI 超时： 60 秒
+const CLAUDE_TIMEOUT_MS = 30 * 60 * 1000; // Claude CLI 超时：30 分钟
 const MAX_LINE_LENGTH = 10 * 1024 * 1024; // 单行最大 10MB
 const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || 'logs/claude-verbose';
 
