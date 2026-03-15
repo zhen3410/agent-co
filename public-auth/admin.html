@@ -3,443 +3,792 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>鉴权管理 - Bot Room</title>
+  <title>Bot Room 管理后台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
   <style>
+    :root {
+      /* 核心色彩 - 简洁高雅 */
+      --bg-primary: #fafafa;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #f5f5f5;
+      --text-primary: #1a1a1a;
+      --text-secondary: #525252;
+      --text-tertiary: #737373;
+      --text-muted: #a3a3a3;
+      --border-light: #e5e5e5;
+      --border-medium: #d4d4d4;
+      --accent: #2563eb;
+      --accent-light: #3b82f6;
+      --accent-subtle: rgba(37, 99, 235, 0.08);
+      --success: #16a34a;
+      --success-subtle: rgba(22, 163, 74, 0.1);
+      --warning: #d97706;
+      --warning-subtle: rgba(217, 119, 6, 0.1);
+      --danger: #dc2626;
+      --danger-subtle: rgba(220, 38, 38, 0.1);
+
+      /* 间距 */
+      --space-xs: 4px;
+      --space-sm: 8px;
+      --space-md: 16px;
+      --space-lg: 24px;
+      --space-xl: 32px;
+
+      /* 圆角 */
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+
+      /* 阴影 */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+      --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
+
+      /* 字体 */
+      --font-sans: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
     * {
-      box-sizing: border-box;
       margin: 0;
       padding: 0;
+      box-sizing: border-box;
     }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      font-family: var(--font-sans);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      font-size: 14px;
+      font-weight: 400;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ============================================
+       布局
+       ============================================ */
+
+    .admin {
       min-height: 100vh;
-      color: #e0e0e0;
-      padding: 20px;
     }
 
-    .container {
-      max-width: 900px;
-      margin: 0 auto;
-    }
-
-    .header {
-      text-align: center;
-      margin-bottom: 30px;
-    }
-
-    .header h1 {
-      font-size: 2rem;
-      color: #fff;
-      margin-bottom: 10px;
-    }
-
-    .header p {
-      color: #888;
-    }
-
-    .card {
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 12px;
-      padding: 24px;
-      margin-bottom: 20px;
-    }
-
-    .card h2 {
-      font-size: 1.2rem;
-      margin-bottom: 16px;
-      color: #fff;
+    .admin-header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-light);
+      padding: 0 var(--space-xl);
+      height: 64px;
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 10;
     }
 
-    .form-group {
-      margin-bottom: 16px;
+    .admin-header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
     }
 
-    .form-group label {
-      display: block;
-      margin-bottom: 6px;
-      color: #aaa;
-      font-size: 0.9rem;
-    }
-
-    .form-row {
+    .admin-header-meta {
       display: flex;
-      gap: 12px;
-    }
-
-    .form-row .form-group {
-      flex: 1;
-    }
-
-    input[type="text"],
-    input[type="password"],
-    textarea,
-    select {
-      width: 100%;
-      padding: 12px 16px;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      border-radius: 8px;
-      color: #fff;
-      font-size: 1rem;
-      transition: border-color 0.2s;
-    }
-
-    input:focus,
-    textarea:focus,
-    select:focus {
-      outline: none;
-      border-color: #6366f1;
-    }
-
-    input::placeholder {
-      color: #666;
-    }
-
-    .btn {
-      padding: 12px 24px;
-      border: none;
-      border-radius: 8px;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: var(--space-md);
     }
 
-    .btn-primary {
-      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-      color: #fff;
-    }
-
-    .btn-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-    }
-
-    .btn-danger {
-      background: rgba(239, 68, 68, 0.2);
-      color: #ef4444;
-      border: 1px solid rgba(239, 68, 68, 0.3);
-    }
-
-    .btn-danger:hover {
-      background: rgba(239, 68, 68, 0.3);
-    }
-
-    .btn-secondary {
-      background: rgba(255, 255, 255, 0.1);
-      color: #fff;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-    }
-
-    .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.15);
-    }
-
-    .btn-sm {
-      padding: 8px 16px;
-      font-size: 0.875rem;
-    }
-
-    .token-section {
-      margin-bottom: 20px;
-    }
-
-    .token-input {
-      display: flex;
-      gap: 12px;
-    }
-
-    .token-input input {
-      flex: 1;
-    }
-
-    .users-table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
-    .users-table th,
-    .users-table td {
-      padding: 12px 16px;
-      text-align: left;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    }
-
-    .users-table th {
-      color: #888;
-      font-weight: 500;
-      font-size: 0.85rem;
-      text-transform: uppercase;
-    }
-
-    .users-table td {
-      color: #e0e0e0;
-    }
-
-    .users-table tr:hover {
-      background: rgba(255, 255, 255, 0.03);
-    }
-
-    .actions {
-      display: flex;
-      gap: 8px;
-    }
-
-    .status {
+    .badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
       padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 0.85rem;
-    }
-
-    .status.success {
-      background: rgba(34, 197, 94, 0.2);
-      color: #22c55e;
-    }
-
-    .status.error {
-      background: rgba(239, 68, 68, 0.2);
-      color: #ef4444;
-    }
-
-    .toast {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      padding: 16px 24px;
-      border-radius: 8px;
-      color: #fff;
+      font-size: 12px;
       font-weight: 500;
-      opacity: 0;
-      transform: translateY(20px);
-      transition: all 0.3s;
-      z-index: 1000;
+      border-radius: 100px;
     }
 
-    .toast.show {
-      opacity: 1;
-      transform: translateY(0);
+    .badge-success {
+      background: var(--success-subtle);
+      color: var(--success);
     }
 
-    .toast.success {
-      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+    .badge-muted {
+      background: var(--bg-tertiary);
+      color: var(--text-tertiary);
     }
 
-    .toast.error {
-      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    .admin-content {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: var(--space-xl);
     }
 
-    .modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.7);
-      display: none;
+    /* ============================================
+       卡片
+       ============================================ */
+
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-lg);
+      margin-bottom: var(--space-lg);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: var(--space-lg);
+      border-bottom: 1px solid var(--border-light);
+      display: flex;
       align-items: center;
-      justify-content: center;
-      z-index: 1000;
+      justify-content: space-between;
     }
 
-    .modal-overlay.show {
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .card-body {
+      padding: var(--space-lg);
+    }
+
+    /* ============================================
+       Token 验证区
+       ============================================ */
+
+    .token-section {
+      background: linear-gradient(135deg, var(--accent-subtle) 0%, rgba(37, 99, 235, 0.04) 100%);
+      border-color: rgba(37, 99, 235, 0.15);
+    }
+
+    .token-input-group {
       display: flex;
+      gap: var(--space-md);
     }
 
-    .modal {
-      background: #1e1e2e;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 16px;
-      padding: 24px;
-      width: 90%;
-      max-width: 400px;
-    }
-
-    .modal h3 {
-      margin-bottom: 16px;
-      color: #fff;
-    }
-
-    .modal-actions {
-      display: flex;
-      gap: 12px;
-      margin-top: 20px;
-    }
-
-    .modal-actions .btn {
+    .token-input-group input {
       flex: 1;
     }
 
-    .empty-state {
-      text-align: center;
-      padding: 40px;
-      color: #666;
+    .info-box {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-md);
+      padding: var(--space-md);
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+      margin-top: var(--space-md);
     }
 
-    .empty-state .icon {
-      font-size: 3rem;
-      margin-bottom: 16px;
+    .info-box-icon {
+      font-size: 16px;
+      flex-shrink: 0;
     }
+
+    .info-box-content {
+      flex: 1;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .info-box code {
+      background: var(--bg-secondary);
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      border: 1px solid var(--border-light);
+    }
+
+    .info-box strong {
+      color: var(--text-primary);
+    }
+
+    /* ============================================
+       表单
+       ============================================ */
+
+    .form-group {
+      margin-bottom: var(--space-md);
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      margin-bottom: var(--space-sm);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--space-md);
+    }
+
+    input[type="text"],
+    input[type="password"],
+    select,
+    textarea {
+      width: 100%;
+      padding: var(--space-md);
+      background: var(--bg-tertiary);
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      font-size: 14px;
+      font-family: inherit;
+      color: var(--text-primary);
+      outline: none;
+      transition: all 0.15s ease;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      background: var(--bg-secondary);
+      border-color: var(--accent);
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+      color: var(--text-muted);
+    }
+
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    select {
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 40px;
+    }
+
+    /* ============================================
+       按钮
+       ============================================ */
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-sm);
+      padding: var(--space-sm) var(--space-md);
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      border-radius: var(--radius-md);
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-light);
+      border-color: var(--accent-light);
+    }
+
+    .btn-secondary {
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      border-color: var(--border-light);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-tertiary);
+      border-color: var(--border-medium);
+    }
+
+    .btn-danger {
+      background: var(--danger-subtle);
+      color: var(--danger);
+      border-color: transparent;
+    }
+
+    .btn-danger:hover {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+
+    /* ============================================
+       表格
+       ============================================ */
+
+    .table-container {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: var(--space-md);
+      text-align: left;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    th {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: var(--bg-tertiary);
+    }
+
+    td {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: var(--bg-primary);
+    }
+
+    .table-actions {
+      display: flex;
+      gap: var(--space-sm);
+    }
+
+    /* ============================================
+       空状态
+       ============================================ */
+
+    .empty-state {
+      text-align: center;
+      padding: var(--space-xl) var(--space-lg);
+      color: var(--text-tertiary);
+    }
+
+    .empty-state-icon {
+      font-size: 32px;
+      margin-bottom: var(--space-md);
+      opacity: 0.5;
+    }
+
+    .empty-state-text {
+      font-size: 14px;
+    }
+
+    /* ============================================
+       加载状态
+       ============================================ */
 
     .loading {
       text-align: center;
-      padding: 40px;
-      color: #666;
+      padding: var(--space-xl);
+      color: var(--text-tertiary);
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border-light);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+      margin-bottom: var(--space-md);
     }
 
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
 
-    .spinner {
-      width: 24px;
-      height: 24px;
-      border: 2px solid rgba(255, 255, 255, 0.1);
-      border-top-color: #6366f1;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      display: inline-block;
+    /* ============================================
+       Toast 通知
+       ============================================ */
+
+    .toast {
+      position: fixed;
+      bottom: var(--space-lg);
+      right: var(--space-lg);
+      padding: var(--space-md) var(--space-lg);
+      background: var(--text-primary);
+      color: white;
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: var(--shadow-lg);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s ease;
+      z-index: 1000;
     }
 
-    .info-box {
-      background: rgba(99, 102, 241, 0.1);
-      border: 1px solid rgba(99, 102, 241, 0.3);
-      border-radius: 8px;
-      padding: 16px;
-      margin-bottom: 20px;
-      font-size: 0.9rem;
-      color: #a5b4fc;
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
     }
 
-    .info-box code {
-      background: rgba(0, 0, 0, 0.3);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-family: monospace;
+    .toast.success {
+      background: var(--success);
     }
 
-    textarea {
-      min-height: 84px;
-      resize: vertical;
+    .toast.error {
+      background: var(--danger);
     }
 
-    .split {
+    /* ============================================
+       模态框
+       ============================================ */
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.2s ease;
+    }
+
+    .modal-overlay.show {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .modal {
+      width: 400px;
+      max-width: 90%;
+      background: var(--bg-secondary);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      padding: var(--space-xl);
+      transform: scale(0.95);
+      transition: transform 0.2s ease;
+    }
+
+    .modal-overlay.show .modal {
+      transform: scale(1);
+    }
+
+    .modal h3 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: var(--space-sm);
+    }
+
+    .modal p {
+      font-size: 13px;
+      color: var(--text-tertiary);
+      margin-bottom: var(--space-lg);
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: var(--space-md);
+      margin-top: var(--space-lg);
+    }
+
+    .modal-actions .btn {
+      flex: 1;
+      padding: var(--space-md);
+    }
+
+    /* ============================================
+       状态标签
+       ============================================ */
+
+    .status-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 500;
+      border-radius: 100px;
+    }
+
+    .status-tag.pending {
+      background: var(--warning-subtle);
+      color: var(--warning);
+    }
+
+    .status-tag.active {
+      background: var(--success-subtle);
+      color: var(--success);
+    }
+
+    /* ============================================
+       Agent 卡片
+       ============================================ */
+
+    .agent-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: var(--space-md);
     }
 
-    @media (max-width: 800px) {
-      .split {
+    .agent-card {
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: var(--space-md);
+      transition: all 0.15s ease;
+    }
+
+    .agent-card:hover {
+      border-color: var(--border-medium);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .agent-card-header {
+      display: flex;
+      align-items: center;
+      gap: var(--space-md);
+      margin-bottom: var(--space-md);
+    }
+
+    .agent-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      background: var(--bg-tertiary);
+    }
+
+    .agent-info {
+      flex: 1;
+    }
+
+    .agent-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .agent-color {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: ui-monospace, monospace;
+    }
+
+    .agent-personality {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      line-height: 1.5;
+      margin-bottom: var(--space-md);
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .agent-actions {
+      display: flex;
+      gap: var(--space-sm);
+      flex-wrap: wrap;
+    }
+
+    /* ============================================
+       响应式
+       ============================================ */
+
+    @media (max-width: 640px) {
+      .admin-header {
+        padding: 0 var(--space-md);
+      }
+
+      .admin-content {
+        padding: var(--space-md);
+      }
+
+      .form-row {
         grid-template-columns: 1fr;
+      }
+
+      .token-input-group {
+        flex-direction: column;
+      }
+
+      .agent-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-sm);
       }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>🔐 鉴权管理</h1>
-      <p>Bot Room 用户管理控制台</p>
-    </div>
-
-    <div class="card token-section">
-      <div class="form-group">
-        <label>管理员 Token</label>
-        <div class="token-input">
-          <input type="password" id="adminToken" placeholder="输入管理员 Token 以解锁管理功能">
-          <button class="btn btn-primary" onclick="verifyToken()">验证</button>
-        </div>
+  <div class="admin">
+    <!-- 头部 -->
+    <header class="admin-header">
+      <h1>Bot Room 管理后台</h1>
+      <div class="admin-header-meta">
+        <span class="badge badge-muted" id="authBadge">未验证</span>
       </div>
-      <div class="info-box" id="tokenHint" style="display: none;">
-        提示: 默认 Token 为 <code>change-me-in-production</code>，请在生产环境中修改环境变量 <code>AUTH_ADMIN_TOKEN</code>
-      </div>
-    </div>
+    </header>
 
-    <div class="card" id="addUserCard" style="display: none;">
-      <h2>➕ 添加用户</h2>
-      <div class="form-row">
-        <div class="form-group">
-          <label>用户名</label>
-          <input type="text" id="newUsername" placeholder="3-32位字母数字">
-        </div>
-        <div class="form-group">
-          <label>密码</label>
-          <input type="password" id="newPassword" placeholder="至少8位">
-        </div>
-      </div>
-      <button class="btn btn-primary" onclick="addUser()">添加用户</button>
-    </div>
-
-    <div class="card">
-      <h2>📋 用户列表</h2>
-      <div id="usersContainer">
-        <div class="loading">
-          <span class="spinner"></span>
-          <p>请先验证管理员 Token</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="card" id="agentCard" style="display: none;">
-      <h2>🤖 智能体管理</h2>
-      <div class="split">
-        <div>
-          <div class="form-group"><label>名称</label><input type="text" id="agentName" placeholder="如 ProductOwner"></div>
-          <div class="form-row">
-            <div class="form-group"><label>头像</label><input type="text" id="agentAvatar" placeholder="🤖"></div>
-            <div class="form-group"><label>颜色</label><input type="text" id="agentColor" value="#3b82f6"></div>
+    <!-- 内容区 -->
+    <main class="admin-content">
+      <!-- Token 验证 -->
+      <div class="card token-section">
+        <div class="card-body">
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label">管理员 Token</label>
+            <div class="token-input-group">
+              <input type="password" id="adminToken" placeholder="输入管理员 Token 以解锁管理功能">
+              <button class="btn btn-primary" onclick="verifyToken()">验证</button>
+            </div>
+            <div class="info-box" id="tokenHint" style="display: none;">
+              <span class="info-box-icon">ℹ️</span>
+              <div class="info-box-content">
+                提示: 默认 Token 为 <code>change-me-in-production</code>，请在生产环境中修改环境变量 <code>AUTH_ADMIN_TOKEN</code>
+              </div>
+            </div>
           </div>
-          <div class="form-group"><label>性格描述（personality）</label><textarea id="agentPersonality" placeholder="该智能体的定位与风格"></textarea></div>
-          <div class="form-group"><label>自定义提示词（systemPrompt，可选）</label><textarea id="agentPrompt" placeholder="留空则使用 personality 生成默认提示词"></textarea></div>
+        </div>
+      </div>
+
+      <!-- 添加用户 -->
+      <div class="card" id="addUserCard" style="display: none;">
+        <div class="card-header">
+          <h2 class="card-title">添加用户</h2>
+        </div>
+        <div class="card-body">
           <div class="form-row">
             <div class="form-group">
-              <label>生效策略</label>
+              <label class="form-label">用户名</label>
+              <input type="text" id="newUsername" placeholder="3-32位字母数字">
+            </div>
+            <div class="form-group">
+              <label class="form-label">密码</label>
+              <input type="password" id="newPassword" placeholder="至少8位">
+            </div>
+          </div>
+          <div style="margin-top: var(--space-md);">
+            <button class="btn btn-primary" onclick="addUser()">添加用户</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 用户列表 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">用户列表</h2>
+          <span class="status-tag active" id="userCount" style="display: none;">0 个用户</span>
+        </div>
+        <div class="card-body" style="padding: 0;" id="usersContainer">
+          <div class="loading">
+            <div class="spinner"></div>
+            <p>请先验证管理员 Token</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 添加智能体 -->
+      <div class="card" id="agentCard" style="display: none;">
+        <div class="card-header">
+          <h2 class="card-title">添加智能体</h2>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">名称</label>
+              <input type="text" id="agentName" placeholder="如 ProductOwner">
+            </div>
+            <div class="form-group">
+              <label class="form-label">颜色</label>
+              <input type="text" id="agentColor" placeholder="#3b82f6" value="#3b82f6">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">头像</label>
+              <input type="text" id="agentAvatar" placeholder="🤖">
+            </div>
+            <div class="form-group">
+              <label class="form-label">生效策略</label>
               <select id="agentApplyMode">
                 <option value="immediate">热生效（立即）</option>
                 <option value="after_chat">会话结束后生效</option>
               </select>
             </div>
-            <div class="form-group">
-              <label>操作</label>
-              <button class="btn btn-primary" onclick="submitAgentForm()" id="agentSubmitBtn">新增智能体</button>
-            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">性格描述</label>
+            <textarea id="agentPersonality" placeholder="该智能体的定位与风格"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">自定义提示词（可选）</label>
+            <textarea id="agentPrompt" placeholder="留空则使用性格描述生成默认提示词"></textarea>
+          </div>
+          <div style="margin-top: var(--space-md);">
+            <button class="btn btn-primary" onclick="submitAgentForm()" id="agentSubmitBtn">新增智能体</button>
           </div>
         </div>
-        <div>
-          <div class="info-box" id="pendingInfo" style="display:none;"></div>
-          <button class="btn btn-secondary" onclick="applyPendingAgents()">立即应用待生效配置</button>
+      </div>
+
+      <!-- 智能体列表 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">智能体列表</h2>
+          <span class="status-tag pending" id="pendingTag" style="display: none;">0 个待生效</span>
+        </div>
+        <div class="card-body" id="agentsContainer">
+          <div class="loading">
+            <p>请先验证管理员 Token</p>
+          </div>
         </div>
       </div>
-    </div>
-
-    <div class="card">
-      <h2>🧠 智能体列表</h2>
-      <div id="agentsContainer"><div class="loading"><p>请先验证管理员 Token</p></div></div>
-    </div>
+    </main>
   </div>
 
   <!-- 修改密码模态框 -->
   <div class="modal-overlay" id="passwordModal">
     <div class="modal">
-      <h3>🔑 修改密码</h3>
-      <p style="margin-bottom: 16px; color: #888;">为用户 <strong id="modalUsername"></strong> 设置新密码</p>
+      <h3>修改密码</h3>
+      <p>为用户 <strong id="modalUsername"></strong> 设置新密码</p>
       <div class="form-group">
-        <label>新密码</label>
+        <label class="form-label">新密码</label>
         <input type="password" id="modalNewPassword" placeholder="至少8位">
       </div>
       <div class="form-group">
-        <label>确认密码</label>
+        <label class="form-label">确认密码</label>
         <input type="password" id="modalConfirmPassword" placeholder="再次输入密码">
       </div>
       <div class="modal-actions">
@@ -487,7 +836,9 @@
         if (response.ok) {
           showToast('Token 验证成功');
           document.getElementById('addUserCard').style.display = 'block';
-          document.getElementById('tokenHint').style.display = 'block';
+          document.getElementById('tokenHint').style.display = 'flex';
+          document.getElementById('authBadge').className = 'badge badge-success';
+          document.getElementById('authBadge').textContent = '已验证';
           localStorage.setItem('authAdminToken', adminToken);
           loadUsers();
           loadAgents();
@@ -518,8 +869,8 @@
       } catch (error) {
         container.innerHTML = `
           <div class="empty-state">
-            <div class="icon">❌</div>
-            <p>加载用户列表失败，请验证 Token</p>
+            <div class="empty-state-icon">❌</div>
+            <p class="empty-state-text">加载用户列表失败，请验证 Token</p>
           </div>
         `;
       }
@@ -527,47 +878,54 @@
 
     function renderUsers(users) {
       const container = document.getElementById('usersContainer');
+      const countEl = document.getElementById('userCount');
 
       if (!users || users.length === 0) {
         container.innerHTML = `
           <div class="empty-state">
-            <div class="icon">👤</div>
-            <p>暂无用户</p>
+            <div class="empty-state-icon">👤</div>
+            <p class="empty-state-text">暂无用户</p>
           </div>
         `;
+        countEl.style.display = 'none';
         return;
       }
 
+      countEl.textContent = `${users.length} 个用户`;
+      countEl.style.display = 'inline-flex';
+
       container.innerHTML = `
-        <table class="users-table">
-          <thead>
-            <tr>
-              <th>用户名</th>
-              <th>创建时间</th>
-              <th>更新时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${users.map(user => `
+        <div class="table-container">
+          <table>
+            <thead>
               <tr>
-                <td><strong>${escapeHtml(user.username)}</strong></td>
-                <td>${formatTime(user.createdAt)}</td>
-                <td>${formatTime(user.updatedAt)}</td>
-                <td>
-                  <div class="actions">
-                    <button class="btn btn-secondary btn-sm" onclick="openPasswordModal('${user.username}')">
-                      改密
-                    </button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteUser('${user.username}')">
-                      删除
-                    </button>
-                  </div>
-                </td>
+                <th>用户名</th>
+                <th>创建时间</th>
+                <th>更新时间</th>
+                <th>操作</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${users.map(user => `
+                <tr>
+                  <td><strong>${escapeHtml(user.username)}</strong></td>
+                  <td>${formatTime(user.createdAt)}</td>
+                  <td>${formatTime(user.updatedAt)}</td>
+                  <td>
+                    <div class="table-actions">
+                      <button class="btn btn-secondary btn-sm" onclick="openPasswordModal('${user.username}')">
+                        改密
+                      </button>
+                      <button class="btn btn-danger btn-sm" onclick="deleteUser('${user.username}')">
+                        删除
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
       `;
     }
 
@@ -598,7 +956,6 @@
           document.getElementById('newPassword').value = '';
           localStorage.setItem('authAdminToken', adminToken);
           loadUsers();
-          loadAgents();
         } else {
           showToast(data.error || '创建失败', 'error');
         }
@@ -649,9 +1006,7 @@
         if (response.ok) {
           showToast(`用户 ${currentEditUser} 密码已更新`);
           closePasswordModal();
-          localStorage.setItem('authAdminToken', adminToken);
           loadUsers();
-          loadAgents();
         } else {
           showToast(data.error || '修改失败', 'error');
         }
@@ -675,9 +1030,7 @@
 
         if (response.ok) {
           showToast(`用户 ${username} 已删除`);
-          localStorage.setItem('authAdminToken', adminToken);
           loadUsers();
-          loadAgents();
         } else {
           showToast(data.error || '删除失败', 'error');
         }
@@ -685,7 +1038,6 @@
         showToast('请求失败: ' + error.message, 'error');
       }
     }
-
 
     async function loadAgents() {
       const container = document.getElementById('agentsContainer');
@@ -695,42 +1047,66 @@
         const data = await response.json();
         document.getElementById('agentCard').style.display = 'block';
         renderAgents(data.agents || []);
-        const pendingInfo = document.getElementById('pendingInfo');
-        if (data.pendingAgents) {
-          pendingInfo.style.display = 'block';
-          pendingInfo.innerHTML = `⏳ 存在待生效配置（${data.pendingAgents.length} 个智能体），等待当前聊天结束后生效。`;
+
+        const pendingTag = document.getElementById('pendingTag');
+        if (data.pendingAgents && data.pendingAgents.length > 0) {
+          pendingTag.textContent = `${data.pendingAgents.length} 个待生效`;
+          pendingTag.style.display = 'inline-flex';
+
+          // 添加待生效提示
+          const pendingInfo = document.createElement('div');
+          pendingInfo.className = 'info-box';
+          pendingInfo.id = 'pendingInfo';
+          pendingInfo.innerHTML = `
+            <span class="info-box-icon">⏳</span>
+            <div class="info-box-content">
+              存在 <strong>${data.pendingAgents.length} 个待生效配置</strong>，等待当前聊天结束后自动应用。
+              <button class="btn btn-secondary btn-sm" style="margin-left: 8px;" onclick="applyPendingAgents()">立即应用</button>
+            </div>
+          `;
+
+          const existingInfo = document.getElementById('pendingInfo');
+          if (existingInfo) existingInfo.remove();
+          container.appendChild(pendingInfo);
         } else {
-          pendingInfo.style.display = 'none';
+          pendingTag.style.display = 'none';
+          const existingInfo = document.getElementById('pendingInfo');
+          if (existingInfo) existingInfo.remove();
         }
       } catch (error) {
-        container.innerHTML = '<div class="empty-state"><div class="icon">❌</div><p>加载智能体失败</p></div>';
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">❌</div><p class="empty-state-text">加载智能体失败</p></div>';
       }
     }
 
     function renderAgents(agents) {
       const container = document.getElementById('agentsContainer');
+
       if (!agents.length) {
-        container.innerHTML = '<div class="empty-state"><div class="icon">🤖</div><p>暂无智能体</p></div>';
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🤖</div><p class="empty-state-text">暂无智能体</p></div>';
         return;
       }
+
       container.innerHTML = `
-        <table class="users-table">
-          <thead><tr><th>名称</th><th>性格</th><th>提示词</th><th>操作</th></tr></thead>
-          <tbody>
-            ${agents.map((agent, idx) => `
-              <tr>
-                <td><strong>${escapeHtml(agent.avatar)} ${escapeHtml(agent.name)}</strong><br><small>${escapeHtml(agent.color)}</small></td>
-                <td>${escapeHtml(agent.personality || '-')}</td>
-                <td>${escapeHtml((agent.systemPrompt || '').slice(0, 80) || '默认模板')}</td>
-                <td><div class="actions">
-                  <button class="btn btn-secondary btn-sm" data-action="edit-agent" data-index="${idx}">编辑</button>
-                  <button class="btn btn-secondary btn-sm" onclick="editPrompt('${agent.name}')">改提示词</button>
-                  <button class="btn btn-danger btn-sm" onclick="deleteAgent('${agent.name}')">删除</button>
-                </div></td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>`;
+        <div class="agent-grid">
+          ${agents.map((agent, idx) => `
+            <div class="agent-card">
+              <div class="agent-card-header">
+                <div class="agent-avatar">${escapeHtml(agent.avatar)}</div>
+                <div class="agent-info">
+                  <div class="agent-name">${escapeHtml(agent.name)}</div>
+                  <div class="agent-color">${escapeHtml(agent.color)}</div>
+                </div>
+              </div>
+              <div class="agent-personality">${escapeHtml(agent.personality || '暂无描述')}</div>
+              <div class="agent-actions">
+                <button class="btn btn-secondary btn-sm" data-action="edit-agent" data-index="${idx}">编辑</button>
+                <button class="btn btn-secondary btn-sm" onclick="editPrompt('${agent.name}')">改提示词</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteAgent('${agent.name}')">删除</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
 
       container.querySelectorAll('[data-action="edit-agent"]').forEach(btn => {
         btn.onclick = () => {
@@ -850,20 +1226,19 @@
     }
 
     function escapeHtml(text) {
+      if (!text) return '';
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
     }
 
-    // 页面加载时显示默认提示
+    // 页面加载时检查保存的 token
     document.addEventListener('DOMContentLoaded', () => {
-      // 检查是否有保存的 token
       const savedToken = localStorage.getItem('authAdminToken');
       if (savedToken) {
         document.getElementById('adminToken').value = savedToken;
       }
     });
-
   </script>
 </body>
 </html>

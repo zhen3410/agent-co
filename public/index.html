@@ -8,17 +8,21 @@
   <meta name="apple-mobile-web-app-title" content="Bot Room">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icon.svg">
-  <title>多 AI 智能体聊天室</title>
+  <title>Bot Room - 多 AI 智能体聊天室</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- 登录浮层 -->
   <div class="auth-overlay" id="authOverlay" style="display: none;">
     <div class="auth-card">
-      <h2>🔐 访问受保护</h2>
-      <p>请输入用户名和密码以进入 bot-room。</p>
+      <h2>访问验证</h2>
+      <p>请输入凭据以继续访问</p>
       <form onsubmit="submitLogin(event)">
-        <input type="text" id="usernameInput" placeholder="输入用户名" autocomplete="username" required>
-        <input type="password" id="passwordInput" placeholder="输入密码" autocomplete="current-password" required>
+        <input type="text" id="usernameInput" placeholder="用户名" autocomplete="username" required>
+        <input type="password" id="passwordInput" placeholder="密码" autocomplete="current-password" required>
         <button type="submit" id="loginBtn">登录</button>
       </form>
       <p class="auth-error" id="authError"></p>
@@ -26,36 +30,38 @@
   </div>
 
   <div class="container">
-    <!-- 标题栏 -->
-    <header class="header">
-      <h1>🤖 多 AI 智能体聊天室</h1>
-      <div class="header-actions">
-        <span class="status" id="status">已连接</span>
-        <button class="btn-clear" id="logoutBtn" onclick="logout()" style="display: none;">退出登录</button>
-        <button class="btn-clear" onclick="window.open('/verbose-logs.html', '_blank')">Verbose日志</button>
-        <button class="btn-clear" onclick="clearHistory()">清空历史</button>
-      </div>
-    </header>
+    <!-- 侧边栏 - 会话列表 -->
+    <aside class="sessions-sidebar">
+      <div class="sessions-label">会话</div>
+      <select id="sessionSelect" size="14"></select>
+      <button class="btn-session" onclick="createSession()">新建会话</button>
+      <button class="btn-session" onclick="renameSession()">重命名</button>
+      <button class="btn-session btn-session--danger" onclick="deleteSession()">删除</button>
+    </aside>
 
+    <!-- 主区域 -->
     <div class="main-layout">
-      <aside class="sessions-sidebar">
-        <span class="sessions-label">会话</span>
-        <select id="sessionSelect" size="14"></select>
-        <button class="btn-session" onclick="createSession()">新建会话</button>
-        <button class="btn-session" onclick="renameSession()">重命名</button>
-        <button class="btn-session btn-session--danger" onclick="deleteSession()">删除</button>
-      </aside>
-
       <div class="chat-panel">
-        <!-- 智能体列表 -->
-        <div class="agents-bar" id="agentsBar">
-          <span class="agents-label">智能体:</span>
+        <!-- 顶部栏 -->
+        <header class="header">
+          <h1>Bot Room</h1>
+          <div class="header-actions">
+            <span class="status" id="status">已连接</span>
+            <button class="btn-clear" id="logoutBtn" onclick="logout()" style="display: none;">退出</button>
+            <button class="btn-clear" onclick="window.open('/verbose-logs.html', '_blank')">日志</button>
+            <button class="btn-clear" onclick="clearHistory()">清空</button>
+          </div>
+        </header>
+
+        <!-- 智能体选择栏 -->
+        <div class="agents-bar">
+          <span class="agents-label">智能体</span>
           <div class="agents-list" id="agentsList"></div>
         </div>
 
-        <!-- 当前对话智能体提示 -->
+        <!-- 当前对话提示 -->
         <div class="current-agent-bar" id="currentAgentBar" style="display: none;">
-          <span class="current-agent-label">当前对话:</span>
+          <span class="current-agent-label">当前对话</span>
           <span class="current-agent-name" id="currentAgentName"></span>
           <button class="btn-switch" onclick="switchAgent()">切换</button>
         </div>
@@ -64,14 +70,14 @@
         <div class="messages" id="messages">
           <div class="welcome">
             <div class="welcome-icon">💬</div>
-            <h2>欢迎使用 AI 智能体聊天室</h2>
-            <p class="hint">点击下方智能体标签， 或使用 <code>@智能体名</code> 开始对话</p>
+            <h2>欢迎使用 Bot Room</h2>
+            <p>点击下方智能体或使用 <em>@智能体名</em> 开始对话</p>
             <div class="welcome-agents">
               <span class="welcome-agent" onclick="selectAgent('Claude')">🤖 Claude</span>
               <span class="welcome-agent" onclick="selectAgent('Alice')">👩‍💻 Alice</span>
               <span class="welcome-agent" onclick="selectAgent('Bob')">🧑‍💻 Bob</span>
             </div>
-            <p class="hint secondary">✨ @ 一次后，后续消息会自动发送给该智能体</p>
+            <p class="hint secondary">@ 一次后，后续消息会自动发送给该智能体</p>
           </div>
         </div>
 
@@ -82,7 +88,7 @@
               <input
                 type="text"
                 id="userInput"
-                placeholder="输入消息... 使用 @智能体名 来召唤 AI"
+                placeholder="输入消息... 使用 @智能体名 召唤 AI"
                 autocomplete="off"
                 autofocus
               >
@@ -102,7 +108,7 @@
     let history = [];
     let agents = [];
     let isLoading = false;
-    let currentAgent = null;  // 当前对话的智能体
+    let currentAgent = null;
     let chatSessions = [];
     let activeSessionId = null;
 
@@ -279,10 +285,9 @@
     }
 
     // ============================================
-    // 初始化
+    // 智能体管理
     // ============================================
 
-    // 加载智能体列表
     async function loadAgents() {
       try {
         const response = await fetch('/api/agents', { credentials: 'include' });
@@ -296,7 +301,6 @@
       }
     }
 
-    // 渲染智能体列表
     function renderAgentsList() {
       agentsListEl.innerHTML = agents.map(agent => `
         <span class="agent-tag" style="--agent-color: ${agent.color}" title="@${agent.name}" onclick="selectAgent('${agent.name}')">
@@ -305,7 +309,6 @@
       `).join('');
     }
 
-    // 选择智能体
     function selectAgent(name) {
       const agent = agents.find(a => a.name === name);
       if (agent) {
@@ -424,24 +427,22 @@
       applyMentionSuggestion(index);
     }
 
-    // 切换智能体
     function switchAgent() {
       currentAgent = null;
       updateCurrentAgentUI();
-      userInputEl.placeholder = '输入消息... 使用 @智能体名 来召唤 AI';
+      userInputEl.placeholder = '输入消息... 使用 @智能体名 召唤 AI';
     }
 
-    // 更新当前智能体 UI
     function updateCurrentAgentUI() {
       if (currentAgent) {
         const agent = agents.find(a => a.name === currentAgent);
         currentAgentBarEl.style.display = 'flex';
         currentAgentNameEl.textContent = `${agent ? agent.avatar : '🤖'} ${currentAgent}`;
-        currentAgentNameEl.style.color = agent ? agent.color : '#888';
-        userInputEl.placeholder = `发送消息给 ${currentAgent}... (输入 @其他智能体 可切换)`;
+        currentAgentNameEl.style.color = agent ? agent.color : 'var(--accent)';
+        userInputEl.placeholder = `发送消息给 ${currentAgent}...`;
       } else {
         currentAgentBarEl.style.display = 'none';
-        userInputEl.placeholder = '输入消息... 使用 @智能体名 来召唤 AI';
+        userInputEl.placeholder = '输入消息... 使用 @智能体名 召唤 AI';
       }
     }
 
@@ -449,34 +450,22 @@
     // 渲染函数
     // ============================================
 
-    /**
-     * 获取智能体信息
-     */
     function getAgentInfo(name) {
       return agents.find(a => a.name === name);
     }
 
-    /**
-     * 获取发送者颜色
-     */
     function getSenderColor(sender, role) {
       if (role === 'user') return null;
       const agent = getAgentInfo(sender);
       return agent ? agent.color : null;
     }
 
-    /**
-     * 获取发送者头像
-     */
     function getSenderAvatar(sender, role) {
       if (role === 'user') return '👤';
       const agent = getAgentInfo(sender);
       return agent ? agent.avatar : '🤖';
     }
 
-    /**
-     * 渲染单个 card 块
-     */
     function renderCard(block) {
       const toneClass = `card--${block.tone || 'info'}`;
       const icon = {
@@ -496,9 +485,6 @@
       `;
     }
 
-    /**
-     * 渲染单个 checklist 块
-     */
     function renderChecklist(block) {
       const items = block.items || [];
       const doneCount = items.filter(item => item.done).length;
@@ -512,7 +498,7 @@
           <ul class="checklist__items">
             ${items.map(item => `
               <li class="checklist__item ${item.done ? 'checklist__item--done' : ''}">
-                <span class="checklist__checkbox">${item.done ? '☑' : '☐'}</span>
+                <span class="checklist__checkbox">${item.done ? '✓' : ''}</span>
                 <span class="checklist__text">${escapeHtml(item.text)}</span>
               </li>
             `).join('')}
@@ -521,9 +507,6 @@
       `;
     }
 
-    /**
-     * 渲染 rich blocks
-     */
     function renderBlocks(blocks) {
       if (!blocks || blocks.length === 0) return '';
 
@@ -539,16 +522,10 @@
       }).join('');
     }
 
-    /**
-     * 高亮 @ 提及
-     */
     function highlightMentions(text) {
       return text.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
     }
 
-    /**
-     * 渲染一条消息
-     */
     function renderMessage(msg) {
       const isUser = msg.role === 'user';
       const roleClass = isUser ? 'message--user' : 'message--assistant';
@@ -577,13 +554,10 @@
       `;
     }
 
-    /**
-     * 渲染加载中状态
-     */
     function renderLoading(agentName) {
       const agent = getAgentInfo(agentName);
       const avatar = agent ? agent.avatar : '🤖';
-      const color = agent ? agent.color : '#888';
+      const color = agent ? agent.color : 'var(--accent)';
 
       return `
         <div class="message message--assistant message--loading" style="--sender-color: ${color}">
@@ -592,7 +566,7 @@
             <div class="message__sender" style="--sender-color: ${color}">${agentName}</div>
             <div class="message__text">
               <span class="loading-dots">
-                <span>.</span><span>.</span><span>.</span>
+                <span></span><span></span><span></span>
               </span>
             </div>
           </div>
@@ -600,9 +574,6 @@
       `;
     }
 
-    /**
-     * 渲染所有消息
-     */
     function renderMessages() {
       messagesEl.innerHTML = '';
       history.forEach(msg => {
@@ -611,9 +582,6 @@
       scrollToBottom();
     }
 
-    /**
-     * 添加单条消息
-     */
     function addMessage(msg) {
       const welcome = messagesEl.querySelector('.welcome');
       if (welcome) welcome.remove();
@@ -622,9 +590,6 @@
       scrollToBottom();
     }
 
-    /**
-     * 显示/隐藏加载状态
-     */
     function setLoading(loading, agentName = null) {
       isLoading = loading;
 
@@ -641,16 +606,10 @@
       }
     }
 
-    /**
-     * 滚动到底部
-     */
     function scrollToBottom() {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    /**
-     * HTML 转义
-     */
     function escapeHtml(text) {
       if (!text) return '';
       const div = document.createElement('div');
@@ -662,9 +621,6 @@
     // API 调用
     // ============================================
 
-    /**
-     * 发送消息（流式响应）
-     */
     async function sendMessage(event) {
       event.preventDefault();
 
@@ -673,10 +629,8 @@
       const text = userInputEl.value.trim();
       if (!text) return;
 
-      // 清空输入框
       userInputEl.value = '';
 
-      // 显示用户消息
       const userMsg = { role: 'user', sender: '用户', text: text };
       addMessage(userMsg);
       history.push(userMsg);
@@ -686,7 +640,6 @@
       sendBtnEl.textContent = '...';
       statusEl.textContent = '发送中...';
 
-      // 当前正在思考的智能体列表
       const thinkingAgents = new Set();
 
       try {
@@ -711,7 +664,7 @@
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
-          buffer = lines.pop() || ''; // 保留未完成的行
+          buffer = lines.pop() || '';
 
           let eventType = '';
           for (const line of lines) {
@@ -723,16 +676,13 @@
                 const data = JSON.parse(dataStr);
 
                 if (eventType === 'user_message') {
-                  // 用户消息已确认
                   statusEl.textContent = '处理中...';
                 } else if (eventType === 'agent_thinking') {
-                  // 智能体开始思考
                   const agentName = data.agent;
                   thinkingAgents.add(agentName);
                   statusEl.textContent = `${agentName} 思考中...`;
                   showThinkingIndicator(agentName);
                 } else if (eventType === 'agent_message') {
-                  // 智能体回复完成，立即显示
                   thinkingAgents.delete(data.sender);
                   hideThinkingIndicator(data.sender);
                   history.push(data);
@@ -741,7 +691,6 @@
                     ? `${Array.from(thinkingAgents).join(', ')} 思考中...`
                     : '已连接';
                 } else if (eventType === 'done') {
-                  // 所有回复完成
                   if (data.currentAgent) {
                     currentAgent = data.currentAgent;
                     updateCurrentAgentUI();
@@ -756,7 +705,7 @@
               } catch (e) {
                 console.error('解析 SSE 数据失败:', e);
               }
-              eventType = ''; // 重置事件类型
+              eventType = '';
             }
           }
         }
@@ -774,18 +723,14 @@
         isLoading = false;
         sendBtnEl.disabled = false;
         sendBtnEl.textContent = '发送';
-        // 清理所有思考指示器
         document.querySelectorAll('.message--thinking').forEach(el => el.remove());
       }
     }
 
-    /**
-     * 显示智能体思考指示器
-     */
     function showThinkingIndicator(agentName) {
       const agent = agents.find(a => a.name === agentName);
       const avatar = agent ? agent.avatar : '🤖';
-      const color = agent ? agent.color : '#888';
+      const color = agent ? agent.color : 'var(--accent)';
 
       const thinkingHtml = `
         <div class="message message--assistant message--thinking" data-agent="${agentName}" style="--sender-color: ${color}">
@@ -794,7 +739,7 @@
             <div class="message__sender" style="--sender-color: ${color}">${agentName}</div>
             <div class="message__text">
               <span class="loading-dots">
-                <span>.</span><span>.</span><span>.</span>
+                <span></span><span></span><span></span>
               </span>
             </div>
           </div>
@@ -804,17 +749,11 @@
       scrollToBottom();
     }
 
-    /**
-     * 隐藏智能体思考指示器
-     */
     function hideThinkingIndicator(agentName) {
       const thinkingEl = messagesEl.querySelector(`.message--thinking[data-agent="${agentName}"]`);
       if (thinkingEl) thinkingEl.remove();
     }
 
-    /**
-     * 加载历史记录
-     */
     async function loadHistory() {
       try {
         const response = await fetch('/api/history', { credentials: 'include' });
@@ -842,9 +781,6 @@
       }
     }
 
-    /**
-     * 清空历史
-     */
     async function clearHistory() {
       if (!confirm('确定要清空所有聊天记录吗?')) return;
 
@@ -852,18 +788,19 @@
         const response = await fetch('/api/clear', { method: 'POST', credentials: 'include' });
         const data = await response.json();
         history = [];
-        currentAgent = data.currentAgent;  // 重置为 null
+        currentAgent = data.currentAgent;
         updateCurrentAgentUI();
         messagesEl.innerHTML = `
           <div class="welcome">
-            <p>👋 欢迎来到多 AI 智能体聊天室!</p>
-            <p class="hint">试试 @ 提及来召唤 AI 智能体:</p>
-            <p class="hint examples">
-              <em>@Claude 你好</em> |
-              <em>@Alice 帮我列个待办</em> |
-              <em>@Bob 有什么建议?</em>
-            </p>
-            <p class="hint secondary">@ 一次后，后续消息会自动发送给同一个 AI</p>
+            <div class="welcome-icon">💬</div>
+            <h2>欢迎使用 Bot Room</h2>
+            <p>使用 <em>@智能体名</em> 开始对话</p>
+            <div class="welcome-agents">
+              <span class="welcome-agent" onclick="selectAgent('Claude')">🤖 Claude</span>
+              <span class="welcome-agent" onclick="selectAgent('Alice')">👩‍💻 Alice</span>
+              <span class="welcome-agent" onclick="selectAgent('Bob')">🧑‍💻 Bob</span>
+            </div>
+            <p class="hint secondary">@ 一次后，后续消息会自动发送给该智能体</p>
           </div>
         `;
       } catch (error) {
@@ -891,7 +828,6 @@
       }
     });
 
-    // 回车发送
     userInputEl.addEventListener('input', () => {
       updateMentionSuggestions();
     });
