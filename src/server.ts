@@ -48,6 +48,11 @@ interface UserChatSession {
   updatedAt: number;
 }
 
+interface AuthSession {
+  username: string;
+  expiresAt: number;
+}
+
 // ============================================
 // 修复 4: 用户隔离的聊天历史
 // ============================================
@@ -266,13 +271,61 @@ function ensureUserSessions(userKey: string): Map<string, UserChatSession> {
   return sessions;
 }
 
+function buildUserKey(username: string): string {
+  return `user:${username.trim().toLowerCase()}`;
+}
+
 function getUserKeyFromRequest(req: http.IncomingMessage): string {
   const cookies = parseCookies(req);
   const token = cookies[SESSION_COOKIE_NAME];
-  if (token && authSessions.has(token)) {
-    return `session:${token}`;
+  if (token) {
+    const session = authSessions.get(token);
+    if (session && Date.now() <= session.expiresAt) {
+      return buildUserKey(session.username);
+    }
   }
   return `ip:${getClientIP(req)}`;
+}
+
+function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<string, UserChatSession>): void {
+  for (const [sessionId, sourceSession] of source.entries()) {
+    const existing = target.get(sessionId);
+    if (!existing) {
+      target.set(sessionId, sourceSession);
+      continue;
+    }
+
+    existing.name = existing.name || sourceSession.name;
+    existing.currentAgent = existing.currentAgent || sourceSession.currentAgent;
+    existing.createdAt = Math.min(existing.createdAt, sourceSession.createdAt);
+    existing.updatedAt = Math.max(existing.updatedAt, sourceSession.updatedAt);
+    if (sourceSession.history.length > existing.history.length) {
+      existing.history = sourceSession.history;
+    }
+  }
+}
+
+function migrateLegacySessionUserData(oldUserKey: string, newUserKey: string): void {
+  if (!oldUserKey || oldUserKey === newUserKey) return;
+
+  const legacySessions = userChatSessions.get(oldUserKey);
+  if (!legacySessions) return;
+
+  const existingSessions = userChatSessions.get(newUserKey);
+  if (existingSessions) {
+    mergeSessionMaps(existingSessions, legacySessions);
+  } else {
+    userChatSessions.set(newUserKey, legacySessions);
+  }
+
+  const legacyActiveSessionId = userActiveChatSession.get(oldUserKey);
+  if (legacyActiveSessionId && ensureUserSessions(newUserKey).has(legacyActiveSessionId)) {
+    userActiveChatSession.set(newUserKey, legacyActiveSessionId);
+  }
+
+  userChatSessions.delete(oldUserKey);
+  userActiveChatSession.delete(oldUserKey);
+  schedulePersistChatSessions();
 }
 
 function resolveChatSession(req: http.IncomingMessage): { userKey: string; session: UserChatSession } {
@@ -378,7 +431,7 @@ function deleteChatSessionForUser(userKey: string, sessionId: string): { success
   return { success: true, activeSessionId: userActiveChatSession.get(userKey) || DEFAULT_CHAT_SESSION_ID };
 }
 
-const authSessions = new Map<string, number>();
+const authSessions = new Map<string, AuthSession>();
 
 // AI 智能体管理器（由共享配置文件驱动）
 let agentStore = loadAgentStore(AGENT_DATA_FILE);
@@ -513,10 +566,10 @@ function isAuthenticated(req: http.IncomingMessage): boolean {
   const token = cookies[SESSION_COOKIE_NAME];
   if (!token) return false;
 
-  const expiresAt = authSessions.get(token);
-  if (!expiresAt) return false;
+  const session = authSessions.get(token);
+  if (!session) return false;
 
-  if (Date.now() > expiresAt) {
+  if (Date.now() > session.expiresAt) {
     authSessions.delete(token);
     return false;
   }
@@ -586,8 +639,16 @@ async function handleLogin(req: http.IncomingMessage, res: http.ServerResponse):
       return;
     }
 
+    const existingToken = parseCookies(req)[SESSION_COOKIE_NAME];
     const token = issueSessionToken();
-    authSessions.set(token, Date.now() + SESSION_TTL_MS);
+    authSessions.set(token, {
+      username,
+      expiresAt: Date.now() + SESSION_TTL_MS
+    });
+    if (existingToken) {
+      migrateLegacySessionUserData(`session:${existingToken}`, buildUserKey(username));
+      authSessions.delete(existingToken);
+    }
     setSessionCookie(res, token);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, authEnabled: true }));
