@@ -1,12 +1,13 @@
 [Unit]
 Description=Bot Room Chat Service
-After=network.target bot-room-auth-admin.service
-Requires=bot-room-auth-admin.service
+After=network.target redis-server.service bot-room-auth-admin.service
+Requires=redis-server.service bot-room-auth-admin.service
 
 [Service]
 Type=simple
 WorkingDirectory=__APP_DIR__
 EnvironmentFile=-/etc/bot-room/bot-room-chat.env
+ExecStartPre=/bin/sh -c 'redis-cli -u "${BOT_ROOM_REDIS_URL:-redis://127.0.0.1:6379}" ping | grep -q PONG'
 ExecStart=/usr/bin/node __APP_DIR__/dist/server.js
 Restart=always
 RestartSec=2

@@ -9,7 +9,8 @@
     "dev": "ts-node src/server.ts",
     "start:chat": "node dist/server.js",
     "start:auth": "node dist/auth-admin-server.js",
-    "systemd:install": "bash scripts/install-systemd.sh"
+    "systemd:install": "bash scripts/install-systemd.sh",
+    "deploy:one-click": "bash scripts/one-click-deploy.sh"
   },
   "keywords": [],
   "author": "",

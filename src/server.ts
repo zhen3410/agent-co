@@ -56,6 +56,13 @@ const userActiveChatSession = new Map<string, string>();
 const redisClient = REDIS_URL ? new Redis(REDIS_URL, { lazyConnect: true }) : null;
 let persistTimer: NodeJS.Timeout | null = null;
 
+interface DependencyStatusItem {
+  name: string;
+  required: boolean;
+  healthy: boolean;
+  detail: string;
+}
+
 interface RedisPersistedState {
   version: 1;
   userChatSessions: Record<string, UserChatSession[]>;
@@ -152,8 +159,58 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
 
     console.log(`[Redis] 已恢复聊天会话数据: users=${userChatSessions.size}`);
   } catch (error) {
-    console.error('[Redis] 恢复聊天会话失败，将继续使用内存模式:', error);
+    console.error('[Redis] 恢复聊天会话失败:', error);
+    throw new Error('Redis 不可用，聊天服务启动失败');
   }
+}
+
+async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
+  const result: DependencyStatusItem[] = [];
+
+  if (redisClient) {
+    try {
+      const pong = await redisClient.ping();
+      result.push({
+        name: 'redis',
+        required: true,
+        healthy: pong === 'PONG',
+        detail: pong === 'PONG' ? 'PONG' : `返回异常: ${pong}`
+      });
+    } catch (error) {
+      const err = error as Error;
+      result.push({
+        name: 'redis',
+        required: true,
+        healthy: false,
+        detail: err.message
+      });
+    }
+  } else {
+    result.push({
+      name: 'redis',
+      required: true,
+      healthy: false,
+      detail: '未配置 BOT_ROOM_REDIS_URL'
+    });
+  }
+
+  return result;
+}
+
+function handleGetDependenciesStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
+  void collectDependencyStatus().then((dependencies) => {
+    const healthy = dependencies.every(item => !item.required || item.healthy);
+    res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      healthy,
+      checkedAt: Date.now(),
+      dependencies
+    }));
+  }).catch((error: unknown) => {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  });
 }
 
 function normalizeSessionName(name: string | undefined): string {
@@ -1320,7 +1377,8 @@ const server = http.createServer(async (req, res) => {
     '/manifest.json',
     '/service-worker.js',
     '/icon.svg',
-    '/verbose-logs.html'
+    '/verbose-logs.html',
+    '/deps-monitor.html'
   ]);
 
   if (AUTH_ENABLED && !publicPaths.has(requestUrl.pathname) && !isAuthenticated(req)) {
@@ -1352,6 +1410,8 @@ const server = http.createServer(async (req, res) => {
     await handleCreateBlock(req, res);
   } else if (requestUrl.pathname === '/api/block-status' && method === 'GET') {
     handleGetBlockStatus(req, res);
+  } else if (requestUrl.pathname === '/api/dependencies/status' && method === 'GET') {
+    handleGetDependenciesStatus(req, res);
   } else if (requestUrl.pathname === '/api/verbose/agents' && method === 'GET') {
     handleGetVerboseAgents(req, res);
   } else if (requestUrl.pathname === '/api/verbose/logs' && method === 'GET') {
@@ -1370,6 +1430,8 @@ const server = http.createServer(async (req, res) => {
     serveStatic(req, res, 'icon.svg', 'image/svg+xml');
   } else if (requestUrl.pathname === '/verbose-logs.html') {
     serveStatic(req, res, 'verbose-logs.html', 'text/html');
+  } else if (requestUrl.pathname === '/deps-monitor.html') {
+    serveStatic(req, res, 'deps-monitor.html', 'text/html');
   } else {
     res.writeHead(404);
     res.end('Not Found');
@@ -1401,6 +1463,7 @@ async function startServer(): Promise<void> {
   console.log('  GET  /api/auth-status - 鉴权状态');
   console.log('  POST /api/create-block - Route A: 创建 block');
   console.log('  GET  /api/block-status - 查看 BlockBuffer 状态');
+  console.log('  GET  /api/dependencies/status - 查看依赖服务状态');
   console.log('  GET  /api/verbose/agents - 查看 verbose 日志智能体列表');
   console.log('  GET  /api/verbose/logs?agent=xxx - 查看智能体日志文件列表');
   console.log('  GET  /api/verbose/log-content?file=xxx.log - 查看日志文件内容');
@@ -1444,4 +1507,8 @@ process.on('SIGINT', () => {
   void shutdown().finally(() => process.exit(0));
 });
 
-void startServer();
+void startServer().catch((error: unknown) => {
+  const err = error as Error;
+  console.error('❌ 服务启动失败:', err.message);
+  process.exit(1);
+});

@@ -28,6 +28,7 @@ npm run build        # 编译 TypeScript
 npm start            # 启动聊天服务器 (端口 3002)
 npm run dev          # 开发模式运行
 npm run start:auth   # 启动鉴权管理服务 (端口 3003)
+npm run deploy:one-click  # 一键部署（安装 Redis + systemd）
 ```
 
 ## 环境变量配置
@@ -72,6 +73,7 @@ npm run start:auth   # 启动鉴权管理服务 (端口 3003)
 | `/api/auth-status` | GET | 查看鉴权状态 |
 | `/api/create-block` | POST | Route A: 创建 block |
 | `/api/block-status` | GET | 查看 BlockBuffer 状态 |
+| `/api/dependencies/status` | GET | 查看依赖服务运行状态（Redis） |
 | `/api/verbose/agents` | GET | 查看 verbose 日志智能体列表 |
 | `/api/verbose/logs` | GET | 查看智能体日志文件列表 |
 | `/api/verbose/log-content` | GET | 查看日志文件内容 |
