@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>依赖服务监控</title>
+  <style>
+    body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; margin: 24px; background:#f6f8fa; color:#222; }
+    h1 { margin: 0 0 16px; }
+    .meta { color:#666; margin-bottom: 16px; }
+    .ok { color:#0a7f2e; }
+    .bad { color:#b42318; }
+    table { border-collapse: collapse; width: 100%; background: white; }
+    th, td { text-align: left; border-bottom: 1px solid #eee; padding: 10px; }
+    .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .pill.ok { background:#e7f8ee; color:#0a7f2e; }
+    .pill.bad { background:#feeceb; color:#b42318; }
+    button { margin-top: 12px; padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <h1>依赖服务监控</h1>
+  <div class="meta">实时检查 Redis 等依赖运行状态。</div>
+  <div id="summary">加载中...</div>
+  <table>
+    <thead>
+      <tr><th>依赖</th><th>必需</th><th>状态</th><th>详情</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <button id="refresh">刷新</button>
+
+  <script>
+    const summary = document.getElementById('summary');
+    const rows = document.getElementById('rows');
+    const refresh = document.getElementById('refresh');
+
+    function yn(v) { return v ? '是' : '否'; }
+    function cls(v) { return v ? 'ok' : 'bad'; }
+    function text(v) { return v ? '正常' : '异常'; }
+
+    async function loadStatus() {
+      summary.textContent = '加载中...';
+      rows.innerHTML = '';
+      try {
+        const res = await fetch('/api/dependencies/status');
+        const data = await res.json();
+        const checkedAt = data.checkedAt ? new Date(data.checkedAt).toLocaleString() : '-';
+        const healthy = !!data.healthy;
+        summary.innerHTML = `总体状态：<strong class="${cls(healthy)}">${healthy ? '健康' : '异常'}</strong>，检查时间：${checkedAt}`;
+
+        for (const item of (data.dependencies || [])) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${item.name}</td>
+            <td>${yn(item.required)}</td>
+            <td><span class="pill ${cls(item.healthy)}">${text(item.healthy)}</span></td>
+            <td>${item.detail || '-'}</td>
+          `;
+          rows.appendChild(tr);
+        }
+      } catch (error) {
+        summary.innerHTML = `<span class="bad">加载失败：${error.message}</span>`;
+      }
+    }
+
+    refresh.addEventListener('click', loadStatus);
+    loadStatus();
+    setInterval(loadStatus, 10000);
+  </script>
+</body>
+</html>

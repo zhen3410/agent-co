@@ -28,6 +28,7 @@ npm run build        # 编译 TypeScript
 npm start            # 启动聊天服务器 (端口 3002)
 npm run dev          # 开发模式运行
 npm run start:auth   # 启动鉴权管理服务 (端口 3003)
+npm run deploy:one-click  # 一键部署（安装 Redis + systemd）
 ```
 
 ## 环境变量配置
@@ -43,6 +44,16 @@ npm run start:auth   # 启动鉴权管理服务 (端口 3003)
 | `BOT_ROOM_VERBOSE_LOG_DIR` | logs/claude-verbose | verbose 日志目录 |
 | `AUTH_ADMIN_TOKEN` | - | 管理员令牌（生产环境必须） |
 | `BOT_ROOM_DEFAULT_PASSWORD` | - | 默认用户密码（生产环境必须） |
+
+### Redis 配置来源（聊天服务）
+
+聊天服务启动时默认连接 `redis://127.0.0.1:6379`，并从 `bot-room:config` 读取运行配置（例如 `chat_sessions_key`），不依赖环境变量注入 Redis 配置。
+
+可通过以下命令修改会话存储 key：
+
+```bash
+redis-cli HSET bot-room:config chat_sessions_key bot-room:chat:sessions:v1
+```
 
 ### 鉴权管理服务 (auth-admin-server.ts)
 
@@ -70,6 +81,7 @@ npm run start:auth   # 启动鉴权管理服务 (端口 3003)
 | `/api/auth-status` | GET | 查看鉴权状态 |
 | `/api/create-block` | POST | Route A: 创建 block |
 | `/api/block-status` | GET | 查看 BlockBuffer 状态 |
+| `/api/dependencies/status` | GET | 查看依赖服务运行状态（Redis） |
 | `/api/verbose/agents` | GET | 查看 verbose 日志智能体列表 |
 | `/api/verbose/logs` | GET | 查看智能体日志文件列表 |
 | `/api/verbose/log-content` | GET | 查看日志文件内容 |

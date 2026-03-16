@@ -52,11 +52,6 @@ if [[ ! -f "$ENV_DIR/bot-room-auth-admin.env" ]]; then
   echo "已生成 $ENV_DIR/bot-room-auth-admin.env，请修改默认密钥后继续。"
 fi
 
-if [[ ! -f "$ENV_DIR/bot-room-chat.env" ]]; then
-  install -m 0640 "$APP_DIR/systemd/bot-room-chat.env.example" "$ENV_DIR/bot-room-chat.env"
-  echo "已生成 $ENV_DIR/bot-room-chat.env。"
-fi
-
 systemctl daemon-reload
 systemctl enable --now bot-room-auth-admin.service
 systemctl enable --now bot-room-chat.service
