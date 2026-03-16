@@ -44,8 +44,16 @@ npm run deploy:one-click  # 一键部署（安装 Redis + systemd）
 | `BOT_ROOM_VERBOSE_LOG_DIR` | logs/claude-verbose | verbose 日志目录 |
 | `AUTH_ADMIN_TOKEN` | - | 管理员令牌（生产环境必须） |
 | `BOT_ROOM_DEFAULT_PASSWORD` | - | 默认用户密码（生产环境必须） |
-| `BOT_ROOM_REDIS_URL` | - | Redis 连接串（配置后启用聊天会话持久化） |
-| `BOT_ROOM_REDIS_CHAT_SESSIONS_KEY` | bot-room:chat:sessions:v1 | Redis 中保存会话数据的 key |
+
+### Redis 配置来源（聊天服务）
+
+聊天服务启动时默认连接 `redis://127.0.0.1:6379`，并从 `bot-room:config` 读取运行配置（例如 `chat_sessions_key`），不依赖环境变量注入 Redis 配置。
+
+可通过以下命令修改会话存储 key：
+
+```bash
+redis-cli HSET bot-room:config chat_sessions_key bot-room:chat:sessions:v1
+```
 
 ### 鉴权管理服务 (auth-admin-server.ts)
 

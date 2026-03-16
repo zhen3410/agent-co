@@ -28,8 +28,9 @@ const SESSION_COOKIE_NAME = 'bot_room_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 天
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
 const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || path.join(process.cwd(), 'logs', 'claude-verbose');
-const REDIS_URL = process.env.BOT_ROOM_REDIS_URL || '';
-const REDIS_CHAT_SESSIONS_KEY = process.env.BOT_ROOM_REDIS_CHAT_SESSIONS_KEY || 'bot-room:chat:sessions:v1';
+const DEFAULT_REDIS_URL = 'redis://127.0.0.1:6379';
+const REDIS_CONFIG_KEY = 'bot-room:config';
+const DEFAULT_REDIS_CHAT_SESSIONS_KEY = 'bot-room:chat:sessions:v1';
 const REDIS_PERSIST_DEBOUNCE_MS = 500;
 
 // 速率限制配置
@@ -53,8 +54,14 @@ interface UserChatSession {
 // 改为按用户/会话存储
 const userChatSessions = new Map<string, Map<string, UserChatSession>>();
 const userActiveChatSession = new Map<string, string>();
-const redisClient = REDIS_URL ? new Redis(REDIS_URL, { lazyConnect: true }) : null;
+const redisClient = new Redis(DEFAULT_REDIS_URL, { lazyConnect: true });
+let redisChatSessionsKey = DEFAULT_REDIS_CHAT_SESSIONS_KEY;
 let persistTimer: NodeJS.Timeout | null = null;
+
+redisClient.on('error', (error: unknown) => {
+  const err = error as Error;
+  console.error('[Redis] 连接异常:', err.message);
+});
 
 interface DependencyStatusItem {
   name: string;
@@ -67,6 +74,20 @@ interface RedisPersistedState {
   version: 1;
   userChatSessions: Record<string, UserChatSession[]>;
   userActiveChatSession: Record<string, string>;
+}
+
+async function loadRuntimeConfigFromRedis(): Promise<void> {
+  try {
+    const config = await redisClient.hgetall(REDIS_CONFIG_KEY);
+    const configuredKey = (config.chat_sessions_key || '').trim();
+    if (configuredKey) {
+      redisChatSessionsKey = configuredKey;
+    }
+    console.log(`[Redis] 已加载运行配置 key=${REDIS_CONFIG_KEY}, chat_sessions_key=${redisChatSessionsKey}`);
+  } catch (error) {
+    console.error('[Redis] 读取运行配置失败:', error);
+    throw new Error('Redis 配置读取失败，聊天服务启动失败');
+  }
 }
 
 function serializeChatSessionsState(): RedisPersistedState {
@@ -92,7 +113,7 @@ async function persistChatSessionsToRedis(): Promise<void> {
 
   try {
     const payload = JSON.stringify(serializeChatSessionsState());
-    await redisClient.set(REDIS_CHAT_SESSIONS_KEY, payload);
+    await redisClient.set(redisChatSessionsKey, payload);
   } catch (error) {
     console.error('[Redis] 持久化聊天会话失败:', error);
   }
@@ -116,9 +137,10 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
 
   try {
     await redisClient.connect();
-    const raw = await redisClient.get(REDIS_CHAT_SESSIONS_KEY);
+    await loadRuntimeConfigFromRedis();
+    const raw = await redisClient.get(redisChatSessionsKey);
     if (!raw) {
-      console.log(`[Redis] 未发现历史会话缓存 key=${REDIS_CHAT_SESSIONS_KEY}`);
+      console.log(`[Redis] 未发现历史会话缓存 key=${redisChatSessionsKey}`);
       return;
     }
 
@@ -167,30 +189,21 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
 async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
   const result: DependencyStatusItem[] = [];
 
-  if (redisClient) {
-    try {
-      const pong = await redisClient.ping();
-      result.push({
-        name: 'redis',
-        required: true,
-        healthy: pong === 'PONG',
-        detail: pong === 'PONG' ? 'PONG' : `返回异常: ${pong}`
-      });
-    } catch (error) {
-      const err = error as Error;
-      result.push({
-        name: 'redis',
-        required: true,
-        healthy: false,
-        detail: err.message
-      });
-    }
-  } else {
+  try {
+    const pong = await redisClient.ping();
+    result.push({
+      name: 'redis',
+      required: true,
+      healthy: pong === 'PONG',
+      detail: pong === 'PONG' ? 'PONG' : `返回异常: ${pong}`
+    });
+  } catch (error) {
+    const err = error as Error;
     result.push({
       name: 'redis',
       required: true,
       healthy: false,
-      detail: '未配置 BOT_ROOM_REDIS_URL'
+      detail: err.message
     });
   }
 
@@ -1479,11 +1492,7 @@ async function startServer(): Promise<void> {
   } else {
     console.log('🔓 鉴权未启用: 设置 BOT_ROOM_AUTH_ENABLED=false');
   }
-  if (redisClient) {
-    console.log(`🧠 Redis 会话持久化已启用: key=${REDIS_CHAT_SESSIONS_KEY}`);
-  } else {
-    console.log('🧠 Redis 会话持久化未启用: 设置 BOT_ROOM_REDIS_URL 可开启');
-  }
+  console.log(`🧠 Redis 会话持久化已启用: url=${DEFAULT_REDIS_URL}, key=${redisChatSessionsKey}`);
   console.log('='.repeat(60));
   });
 }
@@ -1494,9 +1503,7 @@ async function shutdown(): Promise<void> {
     persistTimer = null;
   }
   await persistChatSessionsToRedis();
-  if (redisClient) {
-    await redisClient.quit();
-  }
+  await redisClient.quit();
 }
 
 process.on('SIGTERM', () => {

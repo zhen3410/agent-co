@@ -32,6 +32,9 @@ if ! redis-cli ping | grep -q PONG; then
   exit 1
 fi
 
+# 初始化运行配置（可按需调整）
+redis-cli HSET bot-room:config chat_sessions_key bot-room:chat:sessions:v1 >/dev/null
+
 echo "[4/6] 安装依赖并构建..."
 cd "$APP_DIR"
 npm install
