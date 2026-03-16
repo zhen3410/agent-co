@@ -8,6 +8,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import Redis from 'ioredis';
 import { Message, AIAgentConfig, ChatRequest, RichBlock } from './types';
 import { AgentManager } from './agent-manager';
 import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
@@ -27,6 +28,9 @@ const SESSION_COOKIE_NAME = 'bot_room_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 天
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
 const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || path.join(process.cwd(), 'logs', 'claude-verbose');
+const REDIS_URL = process.env.BOT_ROOM_REDIS_URL || '';
+const REDIS_CHAT_SESSIONS_KEY = process.env.BOT_ROOM_REDIS_CHAT_SESSIONS_KEY || 'bot-room:chat:sessions:v1';
+const REDIS_PERSIST_DEBOUNCE_MS = 500;
 
 // 速率限制配置
 const RATE_LIMIT_MAX_REQUESTS = 100; // 每分钟最多 100 次请求
@@ -49,6 +53,108 @@ interface UserChatSession {
 // 改为按用户/会话存储
 const userChatSessions = new Map<string, Map<string, UserChatSession>>();
 const userActiveChatSession = new Map<string, string>();
+const redisClient = REDIS_URL ? new Redis(REDIS_URL, { lazyConnect: true }) : null;
+let persistTimer: NodeJS.Timeout | null = null;
+
+interface RedisPersistedState {
+  version: 1;
+  userChatSessions: Record<string, UserChatSession[]>;
+  userActiveChatSession: Record<string, string>;
+}
+
+function serializeChatSessionsState(): RedisPersistedState {
+  const serializedSessions: Record<string, UserChatSession[]> = {};
+  for (const [userKey, sessions] of userChatSessions.entries()) {
+    serializedSessions[userKey] = Array.from(sessions.values());
+  }
+
+  const serializedActive: Record<string, string> = {};
+  for (const [userKey, sessionId] of userActiveChatSession.entries()) {
+    serializedActive[userKey] = sessionId;
+  }
+
+  return {
+    version: 1,
+    userChatSessions: serializedSessions,
+    userActiveChatSession: serializedActive
+  };
+}
+
+async function persistChatSessionsToRedis(): Promise<void> {
+  if (!redisClient) return;
+
+  try {
+    const payload = JSON.stringify(serializeChatSessionsState());
+    await redisClient.set(REDIS_CHAT_SESSIONS_KEY, payload);
+  } catch (error) {
+    console.error('[Redis] 持久化聊天会话失败:', error);
+  }
+}
+
+function schedulePersistChatSessions(): void {
+  if (!redisClient) return;
+
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+  }
+
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void persistChatSessionsToRedis();
+  }, REDIS_PERSIST_DEBOUNCE_MS);
+}
+
+async function hydrateChatSessionsFromRedis(): Promise<void> {
+  if (!redisClient) return;
+
+  try {
+    await redisClient.connect();
+    const raw = await redisClient.get(REDIS_CHAT_SESSIONS_KEY);
+    if (!raw) {
+      console.log(`[Redis] 未发现历史会话缓存 key=${REDIS_CHAT_SESSIONS_KEY}`);
+      return;
+    }
+
+    const parsed = JSON.parse(raw) as RedisPersistedState;
+    if (parsed.version !== 1 || !parsed.userChatSessions || !parsed.userActiveChatSession) {
+      console.warn('[Redis] 会话缓存结构不兼容，跳过恢复');
+      return;
+    }
+
+    userChatSessions.clear();
+    for (const [userKey, sessions] of Object.entries(parsed.userChatSessions)) {
+      const sessionMap = new Map<string, UserChatSession>();
+      for (const session of sessions) {
+        if (!session?.id) continue;
+        sessionMap.set(session.id, {
+          id: session.id,
+          name: normalizeSessionName(session.name),
+          history: Array.isArray(session.history) ? session.history : [],
+          currentAgent: session.currentAgent || null,
+          createdAt: Number(session.createdAt) || Date.now(),
+          updatedAt: Number(session.updatedAt) || Date.now()
+        });
+      }
+
+      if (sessionMap.size === 0) {
+        const fallback = createUserSession(DEFAULT_CHAT_SESSION_NAME);
+        fallback.id = DEFAULT_CHAT_SESSION_ID;
+        sessionMap.set(fallback.id, fallback);
+      }
+
+      userChatSessions.set(userKey, sessionMap);
+    }
+
+    userActiveChatSession.clear();
+    for (const [userKey, sessionId] of Object.entries(parsed.userActiveChatSession)) {
+      userActiveChatSession.set(userKey, sessionId);
+    }
+
+    console.log(`[Redis] 已恢复聊天会话数据: users=${userChatSessions.size}`);
+  } catch (error) {
+    console.error('[Redis] 恢复聊天会话失败，将继续使用内存模式:', error);
+  }
+}
 
 function normalizeSessionName(name: string | undefined): string {
   const trimmed = (name || '').trim();
@@ -85,6 +191,7 @@ function ensureUserSessions(userKey: string): Map<string, UserChatSession> {
     sessions = new Map([[defaultSession.id, defaultSession]]);
     userChatSessions.set(userKey, sessions);
     userActiveChatSession.set(userKey, defaultSession.id);
+    schedulePersistChatSessions();
   }
   return sessions;
 }
@@ -132,6 +239,7 @@ function getSessionSummaries(userKey: string): Array<{ id: string; name: string;
 
 function touchSession(session: UserChatSession): void {
   session.updatedAt = Date.now();
+  schedulePersistChatSessions();
 }
 
 function getUserHistory(userKey: string, sessionId: string): Message[] {
@@ -161,6 +269,7 @@ function setActiveChatSession(userKey: string, sessionId: string): boolean {
   const sessions = ensureUserSessions(userKey);
   if (!sessions.has(sessionId)) return false;
   userActiveChatSession.set(userKey, sessionId);
+  schedulePersistChatSessions();
   return true;
 }
 
@@ -169,6 +278,7 @@ function createChatSessionForUser(userKey: string, name?: string): UserChatSessi
   const newSession = createUserSession(name);
   sessions.set(newSession.id, newSession);
   userActiveChatSession.set(userKey, newSession.id);
+  schedulePersistChatSessions();
   return newSession;
 }
 
@@ -192,6 +302,8 @@ function deleteChatSessionForUser(userKey: string, sessionId: string): { success
     const fallback = sessions.values().next().value as UserChatSession;
     userActiveChatSession.set(userKey, fallback.id);
   }
+
+  schedulePersistChatSessions();
 
   return { success: true, activeSessionId: userActiveChatSession.get(userKey) || DEFAULT_CHAT_SESSION_ID };
 }
@@ -1264,7 +1376,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+async function startServer(): Promise<void> {
+  await hydrateChatSessionsFromRedis();
+
+  server.listen(PORT, () => {
   console.log('='.repeat(60));
   console.log('🚀 多 AI 智能体聊天室已启动');
   console.log('='.repeat(60));
@@ -1301,5 +1416,32 @@ server.listen(PORT, () => {
   } else {
     console.log('🔓 鉴权未启用: 设置 BOT_ROOM_AUTH_ENABLED=false');
   }
+  if (redisClient) {
+    console.log(`🧠 Redis 会话持久化已启用: key=${REDIS_CHAT_SESSIONS_KEY}`);
+  } else {
+    console.log('🧠 Redis 会话持久化未启用: 设置 BOT_ROOM_REDIS_URL 可开启');
+  }
   console.log('='.repeat(60));
+  });
+}
+
+async function shutdown(): Promise<void> {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  await persistChatSessionsToRedis();
+  if (redisClient) {
+    await redisClient.quit();
+  }
+}
+
+process.on('SIGTERM', () => {
+  void shutdown().finally(() => process.exit(0));
 });
+
+process.on('SIGINT', () => {
+  void shutdown().finally(() => process.exit(0));
+});
+
+void startServer();

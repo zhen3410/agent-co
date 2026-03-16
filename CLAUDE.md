@@ -43,6 +43,8 @@ npm run start:auth   # 启动鉴权管理服务 (端口 3003)
 | `BOT_ROOM_VERBOSE_LOG_DIR` | logs/claude-verbose | verbose 日志目录 |
 | `AUTH_ADMIN_TOKEN` | - | 管理员令牌（生产环境必须） |
 | `BOT_ROOM_DEFAULT_PASSWORD` | - | 默认用户密码（生产环境必须） |
+| `BOT_ROOM_REDIS_URL` | - | Redis 连接串（配置后启用聊天会话持久化） |
+| `BOT_ROOM_REDIS_CHAT_SESSIONS_KEY` | bot-room:chat:sessions:v1 | Redis 中保存会话数据的 key |
 
 ### 鉴权管理服务 (auth-admin-server.ts)
 
