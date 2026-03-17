@@ -28,6 +28,23 @@ export function createDefaultAgentStore(): AgentStore {
   };
 }
 
+function mergeWithDefaultAgents(agents: AIAgentConfig[]): AIAgentConfig[] {
+  const merged = new Map<string, AIAgentConfig>();
+
+  for (const agent of DEFAULT_AGENTS) {
+    merged.set(agent.name, { ...agent });
+  }
+
+  for (const agent of agents) {
+    if (!agent || typeof agent.name !== 'string' || !agent.name.trim()) {
+      continue;
+    }
+    merged.set(agent.name, agent);
+  }
+
+  return Array.from(merged.values());
+}
+
 export function loadAgentStore(filePath: string): AgentStore {
   ensureDataDirExists(filePath);
 
@@ -41,12 +58,16 @@ export function loadAgentStore(filePath: string): AgentStore {
   const parsed = raw ? JSON.parse(raw) as Partial<AgentStore> : {};
 
   const activeAgents = Array.isArray(parsed.activeAgents) && parsed.activeAgents.length > 0
-    ? parsed.activeAgents
+    ? mergeWithDefaultAgents(parsed.activeAgents)
     : [...DEFAULT_AGENTS];
+
+  const pendingAgents = Array.isArray(parsed.pendingAgents) && parsed.pendingAgents.length > 0
+    ? mergeWithDefaultAgents(parsed.pendingAgents)
+    : null;
 
   return {
     activeAgents,
-    pendingAgents: Array.isArray(parsed.pendingAgents) ? parsed.pendingAgents : null,
+    pendingAgents,
     pendingReason: typeof parsed.pendingReason === 'string' ? parsed.pendingReason : null,
     updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
     pendingUpdatedAt: typeof parsed.pendingUpdatedAt === 'number' ? parsed.pendingUpdatedAt : null
