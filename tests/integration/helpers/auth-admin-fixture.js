@@ -1,4 +1,4 @@
-const { mkdtempSync, rmSync } = require('node:fs');
+const { mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { spawn } = require('node:child_process');
@@ -33,6 +33,11 @@ async function createAuthAdminFixture(options = {}) {
   const adminToken = options.adminToken || 'integration-test-admin-token-1234567890';
   const usersFile = join(tempDir, 'users.json');
   const agentsFile = join(tempDir, 'agents.json');
+
+
+  if (options.initialAgentStore) {
+    writeFileSync(agentsFile, JSON.stringify(options.initialAgentStore, null, 2), 'utf-8');
+  }
 
   const child = spawn('node', ['dist/auth-admin-server.js'], {
     cwd: process.cwd(),

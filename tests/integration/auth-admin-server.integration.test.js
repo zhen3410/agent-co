@@ -156,3 +156,33 @@ test('智能体配置支持延迟生效并可显式应用', async () => {
   assert.equal(after.body.pendingAgents, null);
   assert.equal(after.body.agents.some(agent => agent.name === 'Planner'), true);
 });
+
+
+test('智能体列表会补齐内置智能体，并保留手动添加的智能体', async () => {
+  await fixture.cleanup();
+  fixture = await createAuthAdminFixture({
+    initialAgentStore: {
+      activeAgents: [
+        {
+          name: 'ManualOnly',
+          avatar: '🛠️',
+          color: '#0ea5e9',
+          personality: '手动添加的智能体'
+        }
+      ],
+      pendingAgents: null,
+      pendingReason: null,
+      updatedAt: Date.now(),
+      pendingUpdatedAt: null
+    }
+  });
+
+  const headers = { 'x-admin-token': fixture.adminToken };
+  const list = await fixture.request('/api/agents', { headers });
+
+  assert.equal(list.status, 200);
+  const names = list.body.agents.map(agent => agent.name);
+  assert.equal(names.includes('Codex架构师'), true);
+  assert.equal(names.includes('Claude'), true);
+  assert.equal(names.includes('ManualOnly'), true);
+});
