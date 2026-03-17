@@ -738,6 +738,19 @@ function handleAuthStatus(req: http.IncomingMessage, res: http.ServerResponse): 
   }));
 }
 
+function requiresAuthentication(pathname: string): boolean {
+  if (!AUTH_ENABLED) return false;
+
+  const publicPaths = new Set([
+    '/api/login',
+    '/api/logout',
+    '/api/auth-status',
+    '/api/dependencies/status'
+  ]);
+
+  return pathname.startsWith('/api/') && !publicPaths.has(pathname);
+}
+
 function verifyCredentials(username: string, password: string): Promise<{ success: boolean; error?: string }> {
   return new Promise((resolve, reject) => {
     const targetUrl = new URL('/api/auth/verify', AUTH_ADMIN_BASE_URL);
@@ -1513,13 +1526,7 @@ const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(url, `http://${req.headers.host || '127.0.0.1'}`);
   ensureVisitorId(req, res);
 
-  const protectedPaths = new Set([
-    '/api/verbose/agents',
-    '/api/verbose/logs',
-    '/api/verbose/log-content'
-  ]);
-
-  if (AUTH_ENABLED && protectedPaths.has(requestUrl.pathname) && !isAuthenticated(req)) {
+  if (requiresAuthentication(requestUrl.pathname) && !isAuthenticated(req)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: '未授权，请先登录' }));
     return;

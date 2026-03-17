@@ -2,10 +2,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
-test('会话接口支持创建、切换、重命名与删除', async () => {
+test('会话接口支持创建、切换、重命名与删除（需先登录）', async () => {
   const fixture = await createChatServerFixture();
 
   try {
+    const unauthorizedHistory = await fixture.request('/api/history');
+    assert.equal(unauthorizedHistory.status, 401);
+
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
     const initialHistory = await fixture.request('/api/history');
     assert.equal(initialHistory.status, 200);
     assert.equal(Array.isArray(initialHistory.body.chatSessions), true);
@@ -60,10 +66,19 @@ test('会话接口支持创建、切换、重命名与删除', async () => {
   }
 });
 
-test('block 接口支持校验入参与状态查询', async () => {
+test('block 接口支持校验入参与状态查询（需先登录）', async () => {
   const fixture = await createChatServerFixture();
 
   try {
+    const unauthorizedCreate = await fixture.request('/api/create-block', {
+      method: 'POST',
+      body: { sessionId: 's1' }
+    });
+    assert.equal(unauthorizedCreate.status, 401);
+
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
     const missingBlock = await fixture.request('/api/create-block', {
       method: 'POST',
       body: { sessionId: 's1' }

@@ -170,6 +170,7 @@
     };
 
     let authEnabled = false;
+    let isAuthenticated = false;
 
     async function checkAuthStatus() {
       const response = await fetch('/api/auth-status', { credentials: 'include', cache: 'no-store' });
@@ -178,10 +179,14 @@
       }
       const data = await response.json();
       authEnabled = data.authEnabled;
-      const authenticated = data.authenticated;
-      authOverlayEl.style.display = 'none';
-      logoutBtnEl.style.display = authEnabled && authenticated ? 'inline-flex' : 'none';
-      loginBtnHeaderEl.style.display = authEnabled && !authenticated ? 'inline-flex' : 'none';
+      isAuthenticated = !!data.authenticated;
+      logoutBtnEl.style.display = authEnabled && isAuthenticated ? 'inline-flex' : 'none';
+      loginBtnHeaderEl.style.display = authEnabled && !isAuthenticated ? 'inline-flex' : 'none';
+      if (authEnabled && !isAuthenticated) {
+        showLoginOverlay();
+      } else {
+        authOverlayEl.style.display = 'none';
+      }
       return true;
     }
 
@@ -217,6 +222,7 @@
         authOverlayEl.style.display = 'none';
         logoutBtnEl.style.display = 'inline-flex';
         loginBtnHeaderEl.style.display = 'none';
+        isAuthenticated = true;
         await loadAgents();
         await loadHistory();
       } catch (error) {
@@ -227,6 +233,14 @@
     async function logout() {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' });
       await checkAuthStatus();
+      if (authEnabled && !isAuthenticated) {
+        history = [];
+        chatSessions = [];
+        activeSessionId = null;
+        renderSessionList();
+        renderMessages();
+        return;
+      }
       await loadHistory();
     }
 
@@ -703,6 +717,11 @@
     async function sendMessage(event) {
       event.preventDefault();
 
+      if (authEnabled && !isAuthenticated) {
+        showLoginOverlay();
+        return;
+      }
+
       if (isLoading) return;
 
       const text = userInputEl.value.trim();
@@ -895,8 +914,10 @@
 
     window.addEventListener('load', async () => {
       await checkAuthStatus().catch(() => {});
-      await loadAgents();
-      await loadHistory();
+      if (!authEnabled || isAuthenticated) {
+        await loadAgents();
+        await loadHistory();
+      }
       userInputEl.focus();
 
       if ('serviceWorker' in navigator) {
