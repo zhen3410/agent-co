@@ -60,6 +60,12 @@ function buildPrompt(userMessage: string, agent: AIAgent, history: Message[], in
     parts.push('--- 历史结束 ---\n');
   }
 
+  if (!includeHistory) {
+    parts.push('你当前只收到了用户最新一条消息。请先调用 bot_room_get_context 获取完整会话历史，再继续处理任务。');
+    parts.push('当你需要向聊天室展示内容时，调用 bot_room_post_message 发送最终可见消息。');
+    parts.push('不要把思考过程直接输出给用户。');
+  }
+
   parts.push(`用户: ${userMessage}`);
   parts.push(`${agent.name}:`);
 
@@ -70,15 +76,55 @@ function resolveCli(agent: AIAgent): CliKind {
   return agent.cli === 'codex' ? 'codex' : 'claude';
 }
 
+
+function buildMcpConfig(extraEnv: Record<string, string>): { mcpConfig: string; allowedTools: string } | null {
+  const apiUrl = extraEnv.BOT_ROOM_API_URL;
+  const sessionId = extraEnv.BOT_ROOM_SESSION_ID;
+  if (!apiUrl || !sessionId) {
+    return null;
+  }
+
+  const callbackToken = extraEnv.BOT_ROOM_CALLBACK_TOKEN || process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
+  const agentName = extraEnv.BOT_ROOM_AGENT_NAME || process.env.BOT_ROOM_AGENT_NAME || 'AI';
+  const mcpServerScript = join(process.cwd(), 'dist', 'bot-room-mcp-server.js');
+
+  const mcpConfig = JSON.stringify({
+    mcpServers: {
+      'bot-room': {
+        command: 'node',
+        args: [mcpServerScript],
+        env: {
+          BOT_ROOM_API_URL: apiUrl,
+          BOT_ROOM_SESSION_ID: sessionId,
+          BOT_ROOM_CALLBACK_TOKEN: callbackToken,
+          BOT_ROOM_AGENT_NAME: agentName
+        }
+      }
+    }
+  });
+
+  return {
+    mcpConfig,
+    allowedTools: 'mcp__bot-room__bot_room_post_message,mcp__bot-room__bot_room_get_context'
+  };
+}
+
 function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, string>): { command: string; args: string[]; env: Record<string, string> } {
   const env = { ...process.env, ...extraEnv } as Record<string, string>;
 
   if (cli === 'claude') {
     delete (env as Record<string, unknown>).CLAUDECODE;
     delete (env as Record<string, unknown>).CLAUDE_SESSION_ID;
+
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
+    const mcp = buildMcpConfig(extraEnv);
+    if (mcp) {
+      args.push('--mcp-config', mcp.mcpConfig, '--allowedTools', mcp.allowedTools);
+    }
+
     return {
       command: 'claude',
-      args: ['-p', prompt, '--output-format', 'stream-json', '--verbose'],
+      args,
       env
     };
   }
