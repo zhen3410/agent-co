@@ -10,7 +10,9 @@
     "start:chat": "node dist/server.js",
     "start:auth": "node dist/auth-admin-server.js",
     "systemd:install": "bash scripts/install-systemd.sh",
-    "deploy:one-click": "bash scripts/one-click-deploy.sh"
+    "deploy:one-click": "bash scripts/one-click-deploy.sh",
+    "test": "npm run test:integration",
+    "test:integration": "npm run build && node --test tests/integration"
   },
   "keywords": [],
   "author": "",

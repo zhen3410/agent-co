@@ -1,0 +1,138 @@
+const { test, beforeEach, afterEach } = require('node:test');
+const assert = require('node:assert/strict');
+const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
+
+let fixture;
+
+beforeEach(async () => {
+  fixture = await createAuthAdminFixture();
+});
+
+afterEach(async () => {
+  if (fixture) {
+    await fixture.cleanup();
+    fixture = null;
+  }
+});
+
+test('默认账号可登录，错误密码会被拒绝', async () => {
+  const ok = await fixture.request('/api/auth/verify', {
+    method: 'POST',
+    body: { username: 'admin', password: 'Admin1234!@#' }
+  });
+
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.success, true);
+  assert.equal(ok.body.username, 'admin');
+
+  const denied = await fixture.request('/api/auth/verify', {
+    method: 'POST',
+    body: { username: 'admin', password: 'wrong-password' }
+  });
+
+  assert.equal(denied.status, 401);
+  assert.equal(denied.body.success, false);
+});
+
+test('管理端点要求 x-admin-token', async () => {
+  const withoutToken = await fixture.request('/api/users');
+  assert.equal(withoutToken.status, 401);
+  assert.match(withoutToken.body.error, /未授权/);
+
+  const withToken = await fixture.request('/api/users', {
+    headers: { 'x-admin-token': fixture.adminToken }
+  });
+  assert.equal(withToken.status, 200);
+  assert.ok(Array.isArray(withToken.body.users));
+  assert.equal(withToken.body.users.length, 1);
+});
+
+test('用户管理集成流程：创建、改密、登录校验、删除', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const create = await fixture.request('/api/users', {
+    method: 'POST',
+    headers,
+    body: { username: 'tester', password: 'Password123!' }
+  });
+  assert.equal(create.status, 201);
+
+  const list = await fixture.request('/api/users', { headers });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.users.some(user => user.username === 'tester'), true);
+
+  const updatePassword = await fixture.request('/api/users/tester/password', {
+    method: 'PUT',
+    headers,
+    body: { password: 'NewPassword123!' }
+  });
+  assert.equal(updatePassword.status, 200);
+
+  const oldPasswordRejected = await fixture.request('/api/auth/verify', {
+    method: 'POST',
+    body: { username: 'tester', password: 'Password123!' }
+  });
+  assert.equal(oldPasswordRejected.status, 401);
+
+  const newPasswordAccepted = await fixture.request('/api/auth/verify', {
+    method: 'POST',
+    body: { username: 'tester', password: 'NewPassword123!' }
+  });
+  assert.equal(newPasswordAccepted.status, 200);
+
+  const removed = await fixture.request('/api/users/tester', {
+    method: 'DELETE',
+    headers
+  });
+  assert.equal(removed.status, 200);
+
+  const deletedUserDenied = await fixture.request('/api/auth/verify', {
+    method: 'POST',
+    body: { username: 'tester', password: 'NewPassword123!' }
+  });
+  assert.equal(deletedUserDenied.status, 401);
+});
+
+test('智能体配置支持延迟生效并可显式应用', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const before = await fixture.request('/api/agents', { headers });
+  assert.equal(before.status, 200);
+  const activeCount = before.body.agents.length;
+
+  const addPending = await fixture.request('/api/agents', {
+    method: 'POST',
+    headers,
+    body: {
+      applyMode: 'after_chat',
+      agent: {
+        name: 'Planner',
+        avatar: '🗂️',
+        color: '#7c3aed',
+        personality: '擅长整理需求和给出计划。'
+      }
+    }
+  });
+
+  assert.equal(addPending.status, 201);
+  assert.equal(addPending.body.applyMode, 'after_chat');
+
+  const mid = await fixture.request('/api/agents', { headers });
+  assert.equal(mid.status, 200);
+  assert.equal(mid.body.agents.length, activeCount);
+  assert.equal(Array.isArray(mid.body.pendingAgents), true);
+  assert.equal(mid.body.pendingAgents.some(agent => agent.name === 'Planner'), true);
+
+  const applied = await fixture.request('/api/agents/apply-pending', {
+    method: 'POST',
+    headers
+  });
+
+  assert.equal(applied.status, 200);
+  assert.equal(applied.body.agents.some(agent => agent.name === 'Planner'), true);
+
+  const after = await fixture.request('/api/agents', { headers });
+  assert.equal(after.status, 200);
+  assert.equal(after.body.pendingAgents, null);
+  assert.equal(after.body.agents.some(agent => agent.name === 'Planner'), true);
+});
