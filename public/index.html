@@ -47,12 +47,21 @@
           <h1>Bot Room</h1>
           <div class="header-actions">
             <span class="status" id="status">已连接</span>
+            <button class="btn-clear btn-mobile-session" onclick="openSessionManager()">会话</button>
             <button class="btn-clear" id="loginBtnHeader" onclick="showLoginOverlay()" style="display: none;">登录</button>
             <button class="btn-clear" id="logoutBtn" onclick="logout()" style="display: none;">退出</button>
             <button class="btn-clear" onclick="window.open('/verbose-logs.html', '_blank')">日志</button>
             <button class="btn-clear" onclick="clearHistory()">清空</button>
           </div>
         </header>
+
+        <div class="pwa-banner" id="pwaBanner" style="display: none;">
+          <span id="pwaBannerText">安装 Bot Room 到主屏幕，获得更好的 iOS 全屏体验。</span>
+          <div class="pwa-banner__actions">
+            <button class="btn-clear" id="pwaInstallBtn" style="display: none;">安装</button>
+            <button class="btn-clear" onclick="dismissPwaBanner()">关闭</button>
+          </div>
+        </div>
 
         <!-- 智能体选择栏 -->
         <div class="agents-bar">
@@ -102,6 +111,21 @@
     </div>
   </div>
 
+  <div class="session-sheet-backdrop" id="sessionSheetBackdrop" style="display: none;" onclick="closeSessionManager(event)">
+    <aside class="session-sheet" role="dialog" aria-label="会话管理">
+      <div class="session-sheet__header">
+        <h2>会话管理</h2>
+        <button class="btn-clear" onclick="closeSessionManager()">完成</button>
+      </div>
+      <select id="sessionSelectMobile" size="10"></select>
+      <div class="session-sheet__actions">
+        <button class="btn-session" onclick="createSession()">新建会话</button>
+        <button class="btn-session" onclick="renameSession()">重命名</button>
+        <button class="btn-session btn-session--danger" onclick="deleteSession()">删除会话</button>
+      </div>
+    </aside>
+  </div>
+
   <script>
     // ============================================
     // 状态管理
@@ -129,6 +153,13 @@
     const loginBtnHeaderEl = document.getElementById('loginBtnHeader');
     const mentionSuggestionsEl = document.getElementById('mentionSuggestions');
     const sessionSelectEl = document.getElementById('sessionSelect');
+    const sessionSelectMobileEl = document.getElementById('sessionSelectMobile');
+    const sessionSheetBackdropEl = document.getElementById('sessionSheetBackdrop');
+    const pwaBannerEl = document.getElementById('pwaBanner');
+    const pwaBannerTextEl = document.getElementById('pwaBannerText');
+    const pwaInstallBtnEl = document.getElementById('pwaInstallBtn');
+
+    let deferredInstallPrompt = null;
 
     let mentionState = {
       visible: false,
@@ -199,11 +230,25 @@
     }
 
     function renderSessionList() {
-      sessionSelectEl.innerHTML = chatSessions.map(session => `
+      const optionsHtml = chatSessions.map(session => `
         <option value="${session.id}" ${session.id === activeSessionId ? 'selected' : ''}>
           ${escapeHtml(session.name)} (${session.messageCount})
         </option>
       `).join('');
+
+      sessionSelectEl.innerHTML = optionsHtml;
+      sessionSelectMobileEl.innerHTML = optionsHtml;
+    }
+
+    function openSessionManager() {
+      sessionSheetBackdropEl.style.display = 'flex';
+      document.body.classList.add('sheet-open');
+    }
+
+    function closeSessionManager(event) {
+      if (event && event.target !== sessionSheetBackdropEl) return;
+      sessionSheetBackdropEl.style.display = 'none';
+      document.body.classList.remove('sheet-open');
     }
 
     async function switchSession(sessionId) {
@@ -227,6 +272,7 @@
       renderSessionList();
       updateCurrentAgentUI();
       renderMessages();
+      closeSessionManager();
     }
 
     async function createSession() {
@@ -290,6 +336,30 @@
       renderSessionList();
       updateCurrentAgentUI();
       renderMessages();
+      closeSessionManager();
+    }
+
+    function isStandaloneMode() {
+      return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    }
+
+    function isIOS() {
+      return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
+    function setupPwaBanner() {
+      if (localStorage.getItem('pwa-banner-dismissed') === '1' || isStandaloneMode()) return;
+
+      pwaBannerEl.style.display = 'flex';
+      if (isIOS()) {
+        pwaBannerTextEl.textContent = 'iOS 安装提示：点击浏览器分享按钮，再选择“添加到主屏幕”。';
+      }
+    }
+
+    function dismissPwaBanner() {
+      localStorage.setItem('pwa-banner-dismissed', '1');
+      pwaBannerEl.style.display = 'none';
     }
 
     // ============================================
@@ -832,6 +902,27 @@
           console.warn('Service Worker 注册失败', err);
         });
       }
+
+      setupPwaBanner();
+
+      if (isStandaloneMode()) {
+        document.body.classList.add('is-standalone');
+      }
+    });
+
+    window.addEventListener('beforeinstallprompt', (event) => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      pwaInstallBtnEl.style.display = 'inline-flex';
+      setupPwaBanner();
+    });
+
+    pwaInstallBtnEl.addEventListener('click', async () => {
+      if (!deferredInstallPrompt) return;
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      pwaInstallBtnEl.style.display = 'none';
     });
 
     userInputEl.addEventListener('input', () => {
@@ -878,6 +969,10 @@
     });
 
     sessionSelectEl.addEventListener('change', (e) => {
+      switchSession(e.target.value);
+    });
+
+    sessionSelectMobileEl.addEventListener('change', (e) => {
       switchSession(e.target.value);
     });
   </script>

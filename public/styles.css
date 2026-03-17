@@ -74,6 +74,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+body.sheet-open {
+  overflow: hidden;
+}
+
 /* ============================================
    登录浮层
    ============================================ */
@@ -172,6 +176,7 @@ body {
 .container {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   max-width: 1440px;
   margin: 0 auto;
   background: var(--bg-secondary);
@@ -340,6 +345,28 @@ body {
 .btn-clear:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+.btn-mobile-session {
+  display: none;
+}
+
+.pwa-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border-light);
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.pwa-banner__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
 }
 
 /* ============================================
@@ -938,6 +965,56 @@ body {
   color: var(--text-muted);
 }
 
+.session-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.3);
+  z-index: 90;
+  display: none;
+  align-items: flex-end;
+}
+
+.session-sheet {
+  width: 100%;
+  max-height: min(76vh, 680px);
+  background: var(--bg-secondary);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  padding: var(--space-md);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.session-sheet__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.session-sheet__header h2 {
+  font-size: 15px;
+}
+
+#sessionSelectMobile {
+  width: 100%;
+  min-height: 220px;
+  padding: var(--space-sm);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  font-family: inherit;
+}
+
+#sessionSelectMobile option {
+  padding: var(--space-md);
+}
+
+.session-sheet__actions {
+  display: flex;
+  flex-direction: column;
+}
+
 /* ============================================
    响应式
    ============================================ */
@@ -945,6 +1022,8 @@ body {
 @media (max-width: 768px) {
   .container {
     border: none;
+    max-width: none;
+    height: 100dvh;
   }
 
   .sessions-sidebar {
@@ -952,20 +1031,41 @@ body {
   }
 
   .header {
-    padding: 0 var(--space-md);
+    padding: max(var(--space-sm), env(safe-area-inset-top)) var(--space-md) var(--space-sm);
+    height: auto;
+    align-items: flex-start;
   }
 
   .header h1 {
     font-size: 14px;
+    padding-top: 4px;
   }
 
   .header-actions {
     gap: var(--space-xs);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .status {
+    display: none;
+  }
+
+  .btn-mobile-session {
+    display: inline-flex;
+    background: var(--accent-subtle);
+    color: var(--accent);
   }
 
   .btn-clear {
     padding: var(--space-xs) var(--space-sm);
     font-size: 12px;
+  }
+
+  .pwa-banner {
+    padding: var(--space-sm) var(--space-md);
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .agents-bar {
@@ -1009,7 +1109,7 @@ body {
   }
 
   .input-area {
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-sm) var(--space-md) calc(var(--space-sm) + env(safe-area-inset-bottom));
   }
 
   .input-area form {
