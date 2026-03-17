@@ -928,7 +928,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
         aiResponse = await callClaudeCLI(message, agent, userHistory);
       } catch (error: unknown) {
         const err = error as Error;
-        console.log(`[Chat] Claude CLI 不可用: ${err.message}`);
+        console.log(`[Chat] AI CLI 不可用: ${err.message}`);
         console.log('[Chat] 使用模拟回复');
         const mockText = generateMockReply(message, agentName);
         const extracted = extractRichBlocks(mockText);
@@ -1092,7 +1092,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
         aiResponse = await callClaudeCLI(message, agent, userHistory);
       } catch (error: unknown) {
         const err = error as Error;
-        console.log(`[ChatStream] Claude CLI 不可用: ${err.message}`);
+        console.log(`[ChatStream] AI CLI 不可用: ${err.message}`);
         const mockText = generateMockReply(message, agentName);
         const extracted = extractRichBlocks(mockText);
         aiResponse = { text: extracted.cleanText, blocks: extracted.blocks };
@@ -1602,10 +1602,11 @@ async function startServer(): Promise<void> {
   console.log('');
   console.log('使用方式:');
   console.log('  - 输入 @Claude 可以召唤 Claude');
+  console.log('  - 输入 @Codex架构师 可以召唤 Codex 架构师');
   console.log('  - 输入 @Alice 可以召唤 Alice');
   console.log('  - 输入 @Bob 可以召唤 Bob');
   console.log('');
-  console.log('💡 提示: 如果 Claude CLI 不可用,会自动使用模拟回复');
+  console.log('💡 提示: 如果 Claude/Codex CLI 不可用,会自动使用模拟回复');
   if (AUTH_ENABLED) {
     console.log(`🔐 鉴权已启用: 依赖独立鉴权服务 ${AUTH_ADMIN_BASE_URL}`);
   } else {

@@ -6,25 +6,55 @@
 
 import { AIAgent, AIAgentConfig } from './types';
 
+const CODEX_ARCHITECT_PROMPT = `你是 Codex，一名经验丰富的软件架构师与工程教练。
+
+你的核心目标：
+1. 给出可落地、可维护、可扩展的方案。
+2. 始终坚持高内聚、低耦合、单一职责、明确边界。
+3. 优先考虑长期维护成本，而不仅是短期实现速度。
+
+回答要求：
+- 先澄清问题背景与约束，再给方案。
+- 方案默认包含：架构分层、关键模块职责、接口边界、数据流、异常处理、测试策略。
+- 面对实现问题时，给出「最小可行实现（MVP）」和「演进路线」。
+- 对潜在风险（性能、并发、安全、可观测性）做显式提示。
+- 如果需求不完整，先列出假设，并给出需要确认的问题清单。
+
+输出风格：
+- 结构化、简洁、专业。
+- 对复杂主题优先使用分点和小标题。
+- 在结论前给出权衡（trade-off），说明为什么这样设计。`;
+
 // 预设的智能体配置
 export const DEFAULT_AGENTS: AIAgentConfig[] = [
   {
     name: 'Claude',
     avatar: '🤖',
     personality: '你是一个友好的 AI 助手，回答简洁准确。擅长技术问题和编程。',
-    color: '#3b82f6'
+    color: '#3b82f6',
+    cli: 'claude'
+  },
+  {
+    name: 'Codex架构师',
+    avatar: '🏗️',
+    personality: '资深架构师，强调高内聚低耦合、可维护性与工程实践。',
+    color: '#8b5cf6',
+    cli: 'codex',
+    systemPrompt: CODEX_ARCHITECT_PROMPT
   },
   {
     name: 'Alice',
     avatar: '👩‍💻',
     personality: '你是一个富有创造力的 AI 助手，喜欢用生动的语言回答问题。擅长艺术和设计。',
-    color: '#22c55e'
+    color: '#22c55e',
+    cli: 'claude'
   },
   {
     name: 'Bob',
     avatar: '🧑‍💻',
     personality: '你是一个务实的 AI 助手，喜欢用简单直接的方式解决问题。擅长工程实践。',
-    color: '#f97316'
+    color: '#f97316',
+    cli: 'claude'
   }
 ];
 
@@ -58,7 +88,8 @@ export class AgentManager {
       name: config.name,
       avatar: config.avatar,
       systemPrompt,
-      color: config.color
+      color: config.color,
+      cli: config.cli || 'claude'
     };
     this.agents.set(config.name, agent);
     this.agentConfigs.set(config.name, config);

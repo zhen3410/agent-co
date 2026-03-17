@@ -358,7 +358,7 @@ const server = http.createServer(async (req, res) => {
           throw new Error('新的智能体名称已存在');
         }
         const cloned = [...agents];
-        cloned[index] = normalized;
+        cloned[index] = { ...agents[index], ...normalized };
         return cloned;
       });
       saveAgentStore(AGENT_DATA_FILE, next);
