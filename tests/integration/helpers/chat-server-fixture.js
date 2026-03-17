@@ -2,6 +2,7 @@ const { mkdtempSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { spawn } = require('node:child_process');
+const { createAuthAdminFixture } = require('./auth-admin-fixture');
 
 function getRandomPort() {
   return Math.floor(Math.random() * 10000) + 30000;
@@ -40,6 +41,7 @@ async function createChatServerFixture() {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-it-'));
   const port = getRandomPort();
   const agentDataFile = join(tempDir, 'agents.json');
+  const authFixture = await createAuthAdminFixture();
 
   const child = spawn('node', ['dist/server.js'], {
     cwd: process.cwd(),
@@ -50,7 +52,8 @@ async function createChatServerFixture() {
       BOT_ROOM_AUTH_ENABLED: 'true',
       BOT_ROOM_REDIS_REQUIRED: 'false',
       AGENT_DATA_FILE: agentDataFile,
-      AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890'
+      AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
+      AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -64,6 +67,7 @@ async function createChatServerFixture() {
     await waitForServer(port);
   } catch (error) {
     child.kill('SIGKILL');
+    await authFixture.cleanup();
     throw new Error(`${error.message}\n${stderr}`);
   }
 
@@ -111,15 +115,24 @@ async function createChatServerFixture() {
     return { status: response.status, body: json, text };
   }
 
+  async function login(username = 'admin', password = 'Admin1234!@#') {
+    return request('/api/login', {
+      method: 'POST',
+      body: { username, password }
+    });
+  }
+
   return {
     port,
     request,
+    login,
     async cleanup() {
       if (!child.killed) {
         child.kill('SIGTERM');
         await new Promise(resolve => setTimeout(resolve, 150));
         if (!child.killed) child.kill('SIGKILL');
       }
+      await authFixture.cleanup();
       rmSync(tempDir, { recursive: true, force: true });
     }
   };
