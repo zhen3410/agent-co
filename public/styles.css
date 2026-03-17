@@ -1143,3 +1143,94 @@ body.sheet-open {
     height: auto;
   }
 }
+
+/* ============================================
+   Blueprint Theme Overrides
+   ============================================ */
+:root {
+  --bg-primary: #061a2f;
+  --bg-secondary: #0b2743;
+  --bg-tertiary: #0f3357;
+  --text-primary: #d8efff;
+  --text-secondary: #9cd2ff;
+  --text-tertiary: #6da9db;
+  --text-muted: #4b7ca5;
+  --border-light: rgba(116, 182, 255, 0.35);
+  --border-medium: rgba(116, 182, 255, 0.55);
+  --accent: #66c2ff;
+  --accent-light: #88d1ff;
+  --accent-subtle: rgba(102, 194, 255, 0.15);
+}
+
+body {
+  background-color: var(--bg-primary);
+  background-image:
+    linear-gradient(rgba(94, 171, 235, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(94, 171, 235, 0.08) 1px, transparent 1px),
+    radial-gradient(circle at 20% 20%, rgba(122, 194, 255, 0.18), transparent 30%);
+  background-size: 28px 28px, 28px 28px, auto;
+}
+
+.container,
+.sessions-sidebar,
+.chat-panel,
+.header,
+.agents-bar,
+.input-area,
+.message,
+.auth-card,
+.session-sheet,
+.pwa-banner,
+.current-agent-bar {
+  border-color: var(--border-light);
+  box-shadow: inset 0 0 0 1px rgba(150, 215, 255, 0.1);
+  background: rgba(7, 34, 61, 0.88);
+  backdrop-filter: blur(2px);
+}
+
+h1, h2, .sessions-label, .agents-label {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.btn-clear,
+.btn-session,
+.btn-switch,
+#sendBtn,
+.auth-card button {
+  border: 1px solid rgba(133, 202, 255, 0.7);
+  background: rgba(17, 67, 110, 0.7);
+  color: var(--text-primary);
+}
+
+.btn-clear:hover,
+.btn-session:hover,
+.btn-switch:hover,
+#sendBtn:hover,
+.auth-card button:hover {
+  background: rgba(22, 86, 142, 0.95);
+  box-shadow: 0 0 0 2px rgba(102, 194, 255, 0.2);
+}
+
+.message__avatar,
+.welcome-agent,
+.agent-tag {
+  border: 1px solid rgba(133, 202, 255, 0.65);
+  background: rgba(14, 55, 92, 0.85);
+}
+
+.message__text,
+.message__sender,
+.welcome p,
+.hint,
+.status {
+  color: var(--text-secondary);
+}
+
+#userInput,
+.auth-card input,
+select {
+  border: 1px solid rgba(133, 202, 255, 0.6);
+  background: rgba(8, 40, 70, 0.85);
+  color: var(--text-primary);
+}
