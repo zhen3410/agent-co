@@ -47,6 +47,7 @@
           <h1>Bot Room</h1>
           <div class="header-actions">
             <span class="status" id="status">已连接</span>
+            <button class="btn-clear" id="loginBtnHeader" onclick="showLoginOverlay()" style="display: none;">登录</button>
             <button class="btn-clear" id="logoutBtn" onclick="logout()" style="display: none;">退出</button>
             <button class="btn-clear" onclick="window.open('/verbose-logs.html', '_blank')">日志</button>
             <button class="btn-clear" onclick="clearHistory()">清空</button>
@@ -125,6 +126,7 @@
     const passwordInputEl = document.getElementById('passwordInput');
     const authErrorEl = document.getElementById('authError');
     const logoutBtnEl = document.getElementById('logoutBtn');
+    const loginBtnHeaderEl = document.getElementById('loginBtnHeader');
     const mentionSuggestionsEl = document.getElementById('mentionSuggestions');
     const sessionSelectEl = document.getElementById('sessionSelect');
 
@@ -145,9 +147,17 @@
       const data = await response.json();
       authEnabled = data.authEnabled;
       const authenticated = data.authenticated;
-      authOverlayEl.style.display = authEnabled && !authenticated ? 'flex' : 'none';
+      authOverlayEl.style.display = 'none';
       logoutBtnEl.style.display = authEnabled && authenticated ? 'inline-flex' : 'none';
-      return !authEnabled || authenticated;
+      loginBtnHeaderEl.style.display = authEnabled && !authenticated ? 'inline-flex' : 'none';
+      return true;
+    }
+
+    function showLoginOverlay() {
+      if (!authEnabled) return;
+      authErrorEl.textContent = '';
+      authOverlayEl.style.display = 'flex';
+      usernameInputEl.focus();
     }
 
     async function submitLogin(event) {
@@ -174,6 +184,7 @@
         passwordInputEl.value = '';
         authOverlayEl.style.display = 'none';
         logoutBtnEl.style.display = 'inline-flex';
+        loginBtnHeaderEl.style.display = 'none';
         await loadAgents();
         await loadHistory();
       } catch (error) {
@@ -183,11 +194,8 @@
 
     async function logout() {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' });
-      history = [];
-      chatSessions = [];
-      activeSessionId = null;
-      messagesEl.innerHTML = '';
       await checkAuthStatus();
+      await loadHistory();
     }
 
     function renderSessionList() {
@@ -814,11 +822,9 @@
     // ============================================
 
     window.addEventListener('load', async () => {
-      const canAccess = await checkAuthStatus().catch(() => false);
-      if (canAccess) {
-        await loadAgents();
-        await loadHistory();
-      }
+      await checkAuthStatus().catch(() => {});
+      await loadAgents();
+      await loadHistory();
       userInputEl.focus();
 
       if ('serviceWorker' in navigator) {
