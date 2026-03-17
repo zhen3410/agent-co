@@ -25,6 +25,7 @@ const DEFAULT_USER_NAME = '用户';
 const AUTH_ENABLED = process.env.BOT_ROOM_AUTH_ENABLED !== 'false';
 const AUTH_ADMIN_BASE_URL = process.env.AUTH_ADMIN_BASE_URL || 'http://127.0.0.1:3003';
 const SESSION_COOKIE_NAME = 'bot_room_session';
+const CHAT_VISITOR_COOKIE_NAME = 'bot_room_visitor';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 天
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
 const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || path.join(process.cwd(), 'logs', 'claude-verbose');
@@ -32,6 +33,7 @@ const DEFAULT_REDIS_URL = 'redis://127.0.0.1:6379';
 const REDIS_CONFIG_KEY = 'bot-room:config';
 const DEFAULT_REDIS_CHAT_SESSIONS_KEY = 'bot-room:chat:sessions:v1';
 const REDIS_PERSIST_DEBOUNCE_MS = 500;
+const REDIS_REQUIRED = process.env.BOT_ROOM_REDIS_REQUIRED !== 'false';
 
 // 速率限制配置
 const RATE_LIMIT_MAX_REQUESTS = 100; // 每分钟最多 100 次请求
@@ -62,6 +64,7 @@ const userActiveChatSession = new Map<string, string>();
 const redisClient = new Redis(DEFAULT_REDIS_URL, { lazyConnect: true });
 let redisChatSessionsKey = DEFAULT_REDIS_CHAT_SESSIONS_KEY;
 let persistTimer: NodeJS.Timeout | null = null;
+let redisReady = false;
 
 redisClient.on('error', (error: unknown) => {
   const err = error as Error;
@@ -91,7 +94,10 @@ async function loadRuntimeConfigFromRedis(): Promise<void> {
     console.log(`[Redis] 已加载运行配置 key=${REDIS_CONFIG_KEY}, chat_sessions_key=${redisChatSessionsKey}`);
   } catch (error) {
     console.error('[Redis] 读取运行配置失败:', error);
-    throw new Error('Redis 配置读取失败，聊天服务启动失败');
+    if (REDIS_REQUIRED) {
+      throw new Error('Redis 配置读取失败，聊天服务启动失败');
+    }
+    console.warn('[Redis] 继续使用默认配置（非阻塞模式）');
   }
 }
 
@@ -114,7 +120,7 @@ function serializeChatSessionsState(): RedisPersistedState {
 }
 
 async function persistChatSessionsToRedis(): Promise<void> {
-  if (!redisClient) return;
+  if (!redisClient || !redisReady) return;
 
   try {
     const payload = JSON.stringify(serializeChatSessionsState());
@@ -125,7 +131,7 @@ async function persistChatSessionsToRedis(): Promise<void> {
 }
 
 function schedulePersistChatSessions(): void {
-  if (!redisClient) return;
+  if (!redisClient || !redisReady) return;
 
   if (persistTimer) {
     clearTimeout(persistTimer);
@@ -142,6 +148,7 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
 
   try {
     await redisClient.connect();
+    redisReady = true;
     await loadRuntimeConfigFromRedis();
     const raw = await redisClient.get(redisChatSessionsKey);
     if (!raw) {
@@ -186,8 +193,12 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
 
     console.log(`[Redis] 已恢复聊天会话数据: users=${userChatSessions.size}`);
   } catch (error) {
+    redisReady = false;
     console.error('[Redis] 恢复聊天会话失败:', error);
-    throw new Error('Redis 不可用，聊天服务启动失败');
+    if (REDIS_REQUIRED) {
+      throw new Error('Redis 不可用，聊天服务启动失败');
+    }
+    console.warn('[Redis] 将使用内存态会话（重启后丢失）');
   }
 }
 
@@ -198,7 +209,7 @@ async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
     const pong = await redisClient.ping();
     result.push({
       name: 'redis',
-      required: true,
+      required: REDIS_REQUIRED,
       healthy: pong === 'PONG',
       detail: pong === 'PONG' ? 'PONG' : `返回异常: ${pong}`
     });
@@ -206,7 +217,7 @@ async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
     const err = error as Error;
     result.push({
       name: 'redis',
-      required: true,
+      required: REDIS_REQUIRED,
       healthy: false,
       detail: err.message
     });
@@ -276,6 +287,7 @@ function buildUserKey(username: string): string {
 }
 
 function getUserKeyFromRequest(req: http.IncomingMessage): string {
+  const visitorId = getChatVisitorIdFromRequest(req);
   const cookies = parseCookies(req);
   const token = cookies[SESSION_COOKIE_NAME];
   if (token) {
@@ -283,6 +295,9 @@ function getUserKeyFromRequest(req: http.IncomingMessage): string {
     if (session && Date.now() <= session.expiresAt) {
       return buildUserKey(session.username);
     }
+  }
+  if (visitorId) {
+    return `visitor:${visitorId}`;
   }
   return `ip:${getClientIP(req)}`;
 }
@@ -559,6 +574,46 @@ function issueSessionToken(): string {
   return crypto.randomBytes(24).toString('hex');
 }
 
+function issueVisitorId(): string {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function setVisitorCookie(res: http.ServerResponse, visitorId: string): void {
+  const attrs = [
+    `${CHAT_VISITOR_COOKIE_NAME}=${encodeURIComponent(visitorId)}`,
+    'Path=/',
+    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+    'HttpOnly',
+    'SameSite=Lax'
+  ].join('; ');
+
+  const existing = res.getHeader('Set-Cookie');
+  if (!existing) {
+    res.setHeader('Set-Cookie', attrs);
+    return;
+  }
+
+  const values = Array.isArray(existing) ? existing : [String(existing)];
+  values.push(attrs);
+  res.setHeader('Set-Cookie', values);
+}
+
+function getChatVisitorIdFromRequest(req: http.IncomingMessage): string | null {
+  const cookies = parseCookies(req);
+  const visitorId = cookies[CHAT_VISITOR_COOKIE_NAME];
+  if (!visitorId) return null;
+  if (!/^[a-f0-9]{32}$/i.test(visitorId)) return null;
+  return visitorId.toLowerCase();
+}
+
+function ensureVisitorId(req: http.IncomingMessage, res: http.ServerResponse): string {
+  const existing = getChatVisitorIdFromRequest(req);
+  if (existing) return existing;
+  const visitorId = issueVisitorId();
+  setVisitorCookie(res, visitorId);
+  return visitorId;
+}
+
 function isAuthenticated(req: http.IncomingMessage): boolean {
   if (!AUTH_ENABLED) return true;
 
@@ -640,15 +695,14 @@ async function handleLogin(req: http.IncomingMessage, res: http.ServerResponse):
     }
 
     const existingToken = parseCookies(req)[SESSION_COOKIE_NAME];
+    const visitorId = ensureVisitorId(req, res);
     const token = issueSessionToken();
     authSessions.set(token, {
       username,
       expiresAt: Date.now() + SESSION_TTL_MS
     });
-    if (existingToken) {
-      migrateLegacySessionUserData(`session:${existingToken}`, buildUserKey(username));
-      authSessions.delete(existingToken);
-    }
+    migrateLegacySessionUserData(`visitor:${visitorId}`, buildUserKey(username));
+    if (existingToken) authSessions.delete(existingToken);
     setSessionCookie(res, token);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, authEnabled: true }));
@@ -662,13 +716,21 @@ async function handleLogin(req: http.IncomingMessage, res: http.ServerResponse):
 function handleLogout(req: http.IncomingMessage, res: http.ServerResponse): void {
   const cookies = parseCookies(req);
   const token = cookies[SESSION_COOKIE_NAME];
-  if (token) authSessions.delete(token);
+  const visitorId = ensureVisitorId(req, res);
+  if (token) {
+    const session = authSessions.get(token);
+    if (session) {
+      migrateLegacySessionUserData(buildUserKey(session.username), `visitor:${visitorId}`);
+    }
+    authSessions.delete(token);
+  }
   clearSessionCookie(res);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ success: true }));
 }
 
 function handleAuthStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
+  ensureVisitorId(req, res);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
     authEnabled: AUTH_ENABLED,
@@ -1443,19 +1505,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   const requestUrl = new URL(url, `http://${req.headers.host || '127.0.0.1'}`);
+  ensureVisitorId(req, res);
 
-  const publicPaths = new Set([
-    '/',
-    '/index.html',
-    '/styles.css',
-    '/manifest.json',
-    '/service-worker.js',
-    '/icon.svg',
-    '/verbose-logs.html',
-    '/deps-monitor.html'
+  const protectedPaths = new Set([
+    '/api/verbose/agents',
+    '/api/verbose/logs',
+    '/api/verbose/log-content'
   ]);
 
-  if (AUTH_ENABLED && !publicPaths.has(requestUrl.pathname) && !isAuthenticated(req)) {
+  if (AUTH_ENABLED && protectedPaths.has(requestUrl.pathname) && !isAuthenticated(req)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: '未授权，请先登录' }));
     return;
@@ -1564,7 +1622,9 @@ async function shutdown(): Promise<void> {
     persistTimer = null;
   }
   await persistChatSessionsToRedis();
-  await redisClient.quit();
+  if (redisReady) {
+    await redisClient.quit();
+  }
 }
 
 process.on('SIGTERM', () => {

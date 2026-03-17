@@ -4,8 +4,10 @@
 
 ## 结构
 
-- `integration/auth-admin-server.integration.test.js`：核心集成用例。
-- `integration/helpers/auth-admin-fixture.js`：测试夹具（环境搭建、服务拉起、HTTP 请求封装、资源清理）。
+- `integration/auth-admin-server.integration.test.js`：鉴权管理服务核心集成用例。
+- `integration/chat-server.integration.test.js`：聊天室服务集成用例（含未登录交流场景）。
+- `integration/helpers/auth-admin-fixture.js`：鉴权服务测试夹具。
+- `integration/helpers/chat-server-fixture.js`：聊天室服务测试夹具。
 
 ## 运行方式
 
