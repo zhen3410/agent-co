@@ -172,7 +172,7 @@
     let authEnabled = false;
 
     async function checkAuthStatus() {
-      const response = await fetch('/api/auth-status', { credentials: 'include' });
+      const response = await fetch('/api/auth-status', { credentials: 'include', cache: 'no-store' });
       if (!response.ok) {
         throw new Error('鉴权状态检查失败');
       }
@@ -369,7 +369,7 @@
 
     async function loadAgents() {
       try {
-        const response = await fetch('/api/agents', { credentials: 'include' });
+        const response = await fetch('/api/agents', { credentials: 'include', cache: 'no-store' });
         if (response.ok) {
           const data = await response.json();
           agents = data.agents || [];
@@ -835,7 +835,7 @@
 
     async function loadHistory() {
       try {
-        const response = await fetch('/api/history', { credentials: 'include' });
+        const response = await fetch('/api/history', { credentials: 'include', cache: 'no-store' });
         if (response.ok) {
           const data = await response.json();
           history = data.messages || [];
