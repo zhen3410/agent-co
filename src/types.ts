@@ -57,6 +57,7 @@ export interface AIAgent {
   avatar: string;
   systemPrompt: string;
   color: string;  // 用于前端显示
+  cli?: 'claude' | 'codex';
 }
 
 export interface AIAgentConfig {
@@ -65,6 +66,7 @@ export interface AIAgentConfig {
   personality: string;
   color: string;
   systemPrompt?: string;
+  cli?: 'claude' | 'codex';
 }
 
 // ============================================

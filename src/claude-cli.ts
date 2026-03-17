@@ -1,7 +1,7 @@
 /**
  * claude-cli.ts
  *
- * 功能：调用 Claude CLI
+ * 功能：调用 Claude CLI / Codex CLI
  * 参考 minimal-claude.js 实现
  */
 
@@ -11,19 +11,19 @@ import { join } from 'path';
 import * as readline from 'readline';
 import { AIAgent, Message } from './types';
 import { digestHistory } from './rich-digest';
-
 import { extractRichBlocks } from './rich-extract';
 
-// 配置
-const CLAUDE_TIMEOUT_MS = 30 * 60 * 1000; // Claude CLI 超时：30 分钟
-const MAX_LINE_LENGTH = 10 * 1024 * 1024; // 单行最大 10MB
-const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || 'logs/claude-verbose';
+const CLI_TIMEOUT_MS = 30 * 60 * 1000;
+const MAX_LINE_LENGTH = 10 * 1024 * 1024;
+const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || 'logs/ai-cli-verbose';
 
-function createVerboseLogger(agentName: string): (channel: 'stdout' | 'stderr' | 'meta', content: string) => void {
+type CliKind = 'claude' | 'codex';
+
+function createVerboseLogger(agentName: string, cli: CliKind): (channel: 'stdout' | 'stderr' | 'meta', content: string) => void {
   mkdirSync(VERBOSE_LOG_DIR, { recursive: true });
   const safeAgentName = agentName.replace(/[^a-zA-Z0-9-_]/g, '_');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const logPath = join(VERBOSE_LOG_DIR, `${timestamp}-${safeAgentName}.log`);
+  const logPath = join(VERBOSE_LOG_DIR, `${timestamp}-${cli}-${safeAgentName}.log`);
 
   return (channel: 'stdout' | 'stderr' | 'meta', content: string) => {
     const line = `[${new Date().toISOString()}] [${channel}] ${content}`;
@@ -36,13 +36,9 @@ export interface ClaudeResult {
   blocks: Array<{ id: string; kind: string; title?: string; body?: string; tone?: string; items?: Array<{ text: string; done: boolean }> }>;
 }
 
-/**
- * 构建完整的 prompt（包含系统提示词和历史）
- */
 function buildPrompt(userMessage: string, agent: AIAgent, history: Message[]): string {
   const parts: string[] = [agent.systemPrompt];
 
-  // 添加历史消息
   if (history && history.length > 0) {
     parts.push('\n--- 对话历史 ---');
     for (const msg of history) {
@@ -59,62 +55,66 @@ function buildPrompt(userMessage: string, agent: AIAgent, history: Message[]): s
     parts.push('--- 历史结束 ---\n');
   }
 
-  // 添加当前用户消息
   parts.push(`用户: ${userMessage}`);
   parts.push(`${agent.name}:`);
 
   return parts.join('\n');
 }
 
-/**
- * 调用 Claude CLI
- */
-export async function callClaudeCLI(
-  userMessage: string,
-  agent: AIAgent,
-  history: Message[]
-): Promise<ClaudeResult> {
+function resolveCli(agent: AIAgent): CliKind {
+  return agent.cli === 'codex' ? 'codex' : 'claude';
+}
+
+function buildCliCommand(cli: CliKind, prompt: string): { command: string; args: string[]; env: Record<string, string> } {
+  const env = { ...process.env } as Record<string, string>;
+
+  if (cli === 'claude') {
+    delete (env as Record<string, unknown>).CLAUDECODE;
+    delete (env as Record<string, unknown>).CLAUDE_SESSION_ID;
+    return {
+      command: 'claude',
+      args: ['-p', prompt, '--output-format', 'stream-json', '--verbose'],
+      env
+    };
+  }
+
+  delete (env as Record<string, unknown>).CODEX_SESSION_ID;
+  return {
+    command: 'codex',
+    args: ['exec', prompt, '--json'],
+    env
+  };
+}
+
+export async function callClaudeCLI(userMessage: string, agent: AIAgent, history: Message[]): Promise<ClaudeResult> {
   return new Promise((resolve, reject) => {
     const prompt = buildPrompt(userMessage, agent, history);
-    console.log(`\n[Claude CLI] Agent: ${agent.name}, Prompt length: ${prompt.length}`);
-    const logVerbose = createVerboseLogger(agent.name);
+    const cli = resolveCli(agent);
+    console.log(`\n[${cli.toUpperCase()} CLI] Agent: ${agent.name}, Prompt length: ${prompt.length}`);
+    const logVerbose = createVerboseLogger(agent.name, cli);
     logVerbose('meta', `Prompt length: ${prompt.length}`);
 
-    // 启动 Claude CLI 子进程
-    // 注意: 需要 unset CLAUDECODE 以避免嵌套会话检测
-    const env = { ...process.env };
-    delete (env as Record<string, unknown>).CLAUDECODE;
-
-    delete (env as Record<string, unknown>).CLAUDE_SESSION_ID;
-
-    const child = spawn('claude', [
-      '-p', prompt,
-      '--output-format', 'stream-json',
-      '--verbose'
-    ], {
+    const cliCommand = buildCliCommand(cli, prompt);
+    const child = spawn(cliCommand.command, cliCommand.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: env as Record<string, string>
+      env: cliCommand.env
     });
 
     let result = '';
     let finalResult = '';
     let stderrData = '';
-    let timeoutId: NodeJS.Timeout | null;
 
-    // 设置超时
-    timeoutId = setTimeout(() => {
-      console.error('[Claude CLI] 超时，正在终止...');
+    const timeoutId = setTimeout(() => {
+      console.error(`[${cli.toUpperCase()} CLI] 超时，正在终止...`);
       child.kill('SIGTERM');
-    }, CLAUDE_TIMEOUT_MS);
+    }, CLI_TIMEOUT_MS);
 
-    // 收集 stderr 用于调试
     child.stderr?.on('data', (data) => {
       const content = data.toString();
       stderrData += content;
       logVerbose('stderr', content.trimEnd());
     });
 
-    // 逐行解析 JSON 输出
     const rl = readline.createInterface({
       input: child.stdout!,
       crlfDelay: Infinity
@@ -124,7 +124,6 @@ export async function callClaudeCLI(
       if (!line.trim()) return;
       logVerbose('stdout', line);
 
-      // 安全检查: 防止超大行
       if (line.length > MAX_LINE_LENGTH) {
         console.error('\n[警告] 检测到超大行数据，可能存在问题');
         return;
@@ -132,52 +131,48 @@ export async function callClaudeCLI(
 
       try {
         const event = JSON.parse(line);
-
-        if (event.type === 'result' && typeof event.result === 'string') {
+        if (typeof event.result === 'string') {
           finalResult = event.result;
         }
 
-        // 提取 assistant 消息中的文本
         if (event.type === 'assistant' && event.message?.content) {
           for (const block of event.message.content) {
             if (block.type === 'text') {
               result += block.text;
             }
           }
+        } else if (typeof event.text === 'string') {
+          result += event.text;
+        } else if (typeof event.output_text === 'string') {
+          result += event.output_text;
         }
-      } catch (e) {
-        // JSON 解析失败,忽略该行
+      } catch {
+        result += `${line}\n`;
       }
     });
 
-    // 处理进程退出
     child.on('close', (code) => {
-      clearTimeout(timeoutId as NodeJS.Timeout);
+      clearTimeout(timeoutId);
 
-      if (code !== 0 && !result) {
+      if (code !== 0 && !result && !finalResult) {
         const errorMsg = stderrData.trim() || `Exit code: ${code}`;
         logVerbose('meta', `Process exited with code ${code}, no usable output`);
-        reject(new Error(`Claude CLI error: ${errorMsg}`));
+        reject(new Error(`${cli.toUpperCase()} CLI error: ${errorMsg}`));
       } else {
-        const output = finalResult || result;
+        const output = (finalResult || result).trim();
         logVerbose('meta', `Process exited with code ${code}; final output length: ${output.length}`);
-        // 提取 rich blocks
         const { cleanText, blocks } = extractRichBlocks(output);
         resolve({ text: cleanText, blocks });
       }
     });
 
-    // 处理子进程错误
     child.on('error', (err) => {
-      clearTimeout(timeoutId as NodeJS.Timeout);
-      reject(new Error(`无法启动 Claude CLI: ${err.message}`));
+      clearTimeout(timeoutId);
+      reject(new Error(`无法启动 ${cli.toUpperCase()} CLI: ${err.message}`));
     });
   });
 }
 
-/**
- * 生成模拟回复（当 AI API 不可用时)
- */
 export function generateMockReply(userMessage: string, agentName: string): string {
   const lowerMsg = userMessage.toLowerCase();
 

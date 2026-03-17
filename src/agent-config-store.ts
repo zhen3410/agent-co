@@ -71,6 +71,11 @@ export function validateAgentConfig(config: AIAgentConfig): string | null {
     return '颜色必须是 6 位十六进制格式，例如 #22c55e';
   }
 
+
+  if (config.cli && config.cli !== 'claude' && config.cli !== 'codex') {
+    return 'cli 仅支持 claude 或 codex';
+  }
+
   const hasPersonality = typeof config.personality === 'string' && config.personality.trim().length > 0;
   const hasPrompt = typeof config.systemPrompt === 'string' && config.systemPrompt.trim().length > 0;
 
@@ -88,7 +93,8 @@ export function normalizeAgentConfig(config: AIAgentConfig): AIAgentConfig {
     avatar: config.avatar.trim(),
     color: config.color.trim(),
     personality: (config.personality || '').trim(),
-    systemPrompt: (config.systemPrompt || '').trim() || undefined
+    systemPrompt: (config.systemPrompt || '').trim() || undefined,
+    cli: config.cli === 'codex' || config.cli === 'claude' ? config.cli : undefined
   };
 }
 
