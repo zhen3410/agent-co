@@ -651,6 +651,37 @@ body.sheet-open {
   display: inline-block;
 }
 
+.message__text--markdown p,
+.message__text--markdown ul,
+.message__text--markdown h1,
+.message__text--markdown h2,
+.message__text--markdown h3 {
+  margin: 0;
+}
+
+.message__text--markdown p + p,
+.message__text--markdown p + ul,
+.message__text--markdown ul + p,
+.message__text--markdown h1 + p,
+.message__text--markdown h2 + p,
+.message__text--markdown h3 + p,
+.message__text--markdown h1 + ul,
+.message__text--markdown h2 + ul,
+.message__text--markdown h3 + ul {
+  margin-top: var(--space-xs);
+}
+
+.message__text--markdown ul {
+  padding-left: 1.2em;
+}
+
+.message__text--markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: rgba(0, 0, 0, 0.08);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
 /* @ 提及高亮 */
 
 .mention {
