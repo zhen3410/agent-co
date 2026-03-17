@@ -65,6 +65,13 @@ export class AgentManager {
   private agents: Map<string, AIAgent> = new Map();
   private agentConfigs: Map<string, AIAgentConfig> = new Map();
 
+  private normalizeMentionToken(token: string): string {
+    return token
+      .trim()
+      .replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, '')
+      .toLowerCase();
+  }
+
   constructor(customAgents?: AIAgentConfig[]) {
     const initialAgents = customAgents && customAgents.length > 0 ? customAgents : DEFAULT_AGENTS;
     this.replaceAgents(initialAgents);
@@ -156,21 +163,28 @@ export class AgentManager {
   }
 
   extractMentions(text: string): string[] {
-    const mentionRegex = /@([^\s@]+)/g;
+    const mentionRegex = /[@＠]([^\s@＠，。！？、,:：；;]+)/g;
     const mentions: string[] = [];
+    const normalizedAgentNames = new Map<string, string>();
+    for (const agentName of this.agentConfigs.keys()) {
+      normalizedAgentNames.set(this.normalizeMentionToken(agentName), agentName);
+    }
     let match;
 
     while ((match = mentionRegex.exec(text)) !== null) {
-      const mentionName = match[1].trim();
-      if (!mentionName) continue;
+      const mentionName = this.normalizeMentionToken(match[1] || '');
+      if (!mentionName) {
+        continue;
+      }
 
-      if (mentionName === 'all' || mentionName === '所有人') {
+      if (mentionName === 'all' || mentionName === 'everyone' || mentionName === '所有人') {
         mentions.push(...this.agentConfigs.keys());
         continue;
       }
 
-      if (this.hasAgent(mentionName)) {
-        mentions.push(mentionName);
+      const matchedName = normalizedAgentNames.get(mentionName);
+      if (matchedName) {
+        mentions.push(matchedName);
       }
     }
 
