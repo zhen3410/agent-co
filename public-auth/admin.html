@@ -839,7 +839,6 @@
           document.getElementById('tokenHint').style.display = 'flex';
           document.getElementById('authBadge').className = 'badge badge-success';
           document.getElementById('authBadge').textContent = '已验证';
-          localStorage.setItem('authAdminToken', adminToken);
           loadUsers();
           loadAgents();
         } else {
@@ -954,7 +953,6 @@
           showToast(`用户 ${username} 创建成功`);
           document.getElementById('newUsername').value = '';
           document.getElementById('newPassword').value = '';
-          localStorage.setItem('authAdminToken', adminToken);
           loadUsers();
         } else {
           showToast(data.error || '创建失败', 'error');
@@ -1232,12 +1230,9 @@
       return div.innerHTML;
     }
 
-    // 页面加载时检查保存的 token
+    // 页面加载时清理历史保存的 token，避免自动填充
     document.addEventListener('DOMContentLoaded', () => {
-      const savedToken = localStorage.getItem('authAdminToken');
-      if (savedToken) {
-        document.getElementById('adminToken').value = savedToken;
-      }
+      localStorage.removeItem('authAdminToken');
     });
   </script>
 </body>
