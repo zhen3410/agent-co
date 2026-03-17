@@ -33,7 +33,18 @@ type UserStore = {
 };
 
 const PORT = Number(process.env.AUTH_ADMIN_PORT || 3003);
-const ADMIN_TOKEN = process.env.AUTH_ADMIN_TOKEN || 'change-me-in-production';
+function normalizeAdminToken(rawToken?: string): string {
+  const trimmed = (rawToken || '').trim();
+  if (!trimmed) return '';
+
+  const isWrappedByQuote =
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"));
+
+  return isWrappedByQuote ? trimmed.slice(1, -1).trim() : trimmed;
+}
+
+const ADMIN_TOKEN = normalizeAdminToken(process.env.AUTH_ADMIN_TOKEN) || 'change-me-in-production';
 const DATA_FILE = process.env.AUTH_DATA_FILE || path.join(process.cwd(), 'data', 'users.json');
 const DEFAULT_USER = process.env.BOT_ROOM_DEFAULT_USER || 'admin';
 const DEFAULT_PASSWORD = process.env.BOT_ROOM_DEFAULT_PASSWORD || 'admin123!';
@@ -159,7 +170,8 @@ function saveStore(store: UserStore): void {
 
 function requireAdmin(req: http.IncomingMessage, res: http.ServerResponse): boolean {
   const token = req.headers['x-admin-token'];
-  if (typeof token !== 'string' || token !== ADMIN_TOKEN) {
+  const normalizedToken = typeof token === 'string' ? normalizeAdminToken(token) : '';
+  if (!normalizedToken || normalizedToken !== ADMIN_TOKEN) {
     sendJson(res, 401, { error: '未授权的管理请求' });
     return false;
   }

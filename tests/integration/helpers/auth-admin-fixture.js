@@ -27,10 +27,10 @@ function getRandomPort() {
   return Math.floor(Math.random() * 10000) + 20000;
 }
 
-async function createAuthAdminFixture() {
+async function createAuthAdminFixture(options = {}) {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-auth-it-'));
   const port = getRandomPort();
-  const adminToken = 'integration-test-admin-token-1234567890';
+  const adminToken = options.adminToken || 'integration-test-admin-token-1234567890';
   const usersFile = join(tempDir, 'users.json');
   const agentsFile = join(tempDir, 'agents.json');
 
@@ -40,7 +40,7 @@ async function createAuthAdminFixture() {
       ...process.env,
       NODE_ENV: 'test',
       AUTH_ADMIN_PORT: String(port),
-      AUTH_ADMIN_TOKEN: adminToken,
+      AUTH_ADMIN_TOKEN: options.authAdminTokenEnv || adminToken,
       AUTH_DATA_FILE: usersFile,
       AGENT_DATA_FILE: agentsFile,
       BOT_ROOM_DEFAULT_USER: 'admin',
