@@ -36,10 +36,15 @@ export interface ClaudeResult {
   blocks: Array<{ id: string; kind: string; title?: string; body?: string; tone?: string; items?: Array<{ text: string; done: boolean }> }>;
 }
 
-function buildPrompt(userMessage: string, agent: AIAgent, history: Message[]): string {
+
+export interface ClaudeCallOptions {
+  includeHistory?: boolean;
+  extraEnv?: Record<string, string>;
+}
+function buildPrompt(userMessage: string, agent: AIAgent, history: Message[], includeHistory: boolean): string {
   const parts: string[] = [agent.systemPrompt];
 
-  if (history && history.length > 0) {
+  if (includeHistory && history && history.length > 0) {
     parts.push('\n--- 对话历史 ---');
     for (const msg of history) {
       const sender = msg.sender || (msg.role === 'user' ? '用户' : 'AI');
@@ -65,8 +70,8 @@ function resolveCli(agent: AIAgent): CliKind {
   return agent.cli === 'codex' ? 'codex' : 'claude';
 }
 
-function buildCliCommand(cli: CliKind, prompt: string): { command: string; args: string[]; env: Record<string, string> } {
-  const env = { ...process.env } as Record<string, string>;
+function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, string>): { command: string; args: string[]; env: Record<string, string> } {
+  const env = { ...process.env, ...extraEnv } as Record<string, string>;
 
   if (cli === 'claude') {
     delete (env as Record<string, unknown>).CLAUDECODE;
@@ -86,15 +91,15 @@ function buildCliCommand(cli: CliKind, prompt: string): { command: string; args:
   };
 }
 
-export async function callClaudeCLI(userMessage: string, agent: AIAgent, history: Message[]): Promise<ClaudeResult> {
+export async function callClaudeCLI(userMessage: string, agent: AIAgent, history: Message[], options: ClaudeCallOptions = {}): Promise<ClaudeResult> {
   return new Promise((resolve, reject) => {
-    const prompt = buildPrompt(userMessage, agent, history);
+    const prompt = buildPrompt(userMessage, agent, history, options.includeHistory !== false);
     const cli = resolveCli(agent);
     console.log(`\n[${cli.toUpperCase()} CLI] Agent: ${agent.name}, Prompt length: ${prompt.length}`);
     const logVerbose = createVerboseLogger(agent.name, cli);
     logVerbose('meta', `Prompt length: ${prompt.length}`);
 
-    const cliCommand = buildCliCommand(cli, prompt);
+    const cliCommand = buildCliCommand(cli, prompt, options.extraEnv || {});
     const child = spawn(cliCommand.command, cliCommand.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: cliCommand.env
