@@ -12,7 +12,7 @@
     "systemd:install": "bash scripts/install-systemd.sh",
     "deploy:one-click": "bash scripts/one-click-deploy.sh",
     "test": "npm run test:integration",
-    "test:integration": "npm run build && node --test tests/integration"
+    "test:integration": "npm run build && node --test tests/integration/*.integration.test.js"
   },
   "keywords": [],
   "author": "",
