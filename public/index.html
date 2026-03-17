@@ -146,7 +146,10 @@
       </>
     );
 
-    ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+    const appRoot = ReactDOM.createRoot(document.getElementById('app'));
+    ReactDOM.flushSync(() => {
+      appRoot.render(<App />);
+    });
   </script>
 
   <script>
@@ -161,26 +164,49 @@
     let activeSessionId = null;
 
     // DOM 元素
-    const messagesEl = document.getElementById('messages');
-    const userInputEl = document.getElementById('userInput');
-    const sendBtnEl = document.getElementById('sendBtn');
-    const statusEl = document.getElementById('status');
-    const agentsListEl = document.getElementById('agentsList');
-    const currentAgentBarEl = document.getElementById('currentAgentBar');
-    const currentAgentNameEl = document.getElementById('currentAgentName');
-    const authOverlayEl = document.getElementById('authOverlay');
-    const usernameInputEl = document.getElementById('usernameInput');
-    const passwordInputEl = document.getElementById('passwordInput');
-    const authErrorEl = document.getElementById('authError');
-    const logoutBtnEl = document.getElementById('logoutBtn');
-    const loginBtnHeaderEl = document.getElementById('loginBtnHeader');
-    const mentionSuggestionsEl = document.getElementById('mentionSuggestions');
-    const sessionSelectEl = document.getElementById('sessionSelect');
-    const sessionSelectMobileEl = document.getElementById('sessionSelectMobile');
-    const sessionSheetBackdropEl = document.getElementById('sessionSheetBackdrop');
-    const pwaBannerEl = document.getElementById('pwaBanner');
-    const pwaBannerTextEl = document.getElementById('pwaBannerText');
-    const pwaInstallBtnEl = document.getElementById('pwaInstallBtn');
+    let messagesEl;
+    let userInputEl;
+    let sendBtnEl;
+    let statusEl;
+    let agentsListEl;
+    let currentAgentBarEl;
+    let currentAgentNameEl;
+    let authOverlayEl;
+    let usernameInputEl;
+    let passwordInputEl;
+    let authErrorEl;
+    let logoutBtnEl;
+    let loginBtnHeaderEl;
+    let mentionSuggestionsEl;
+    let sessionSelectEl;
+    let sessionSelectMobileEl;
+    let sessionSheetBackdropEl;
+    let pwaBannerEl;
+    let pwaBannerTextEl;
+    let pwaInstallBtnEl;
+
+    function cacheDomElements() {
+      messagesEl = document.getElementById('messages');
+      userInputEl = document.getElementById('userInput');
+      sendBtnEl = document.getElementById('sendBtn');
+      statusEl = document.getElementById('status');
+      agentsListEl = document.getElementById('agentsList');
+      currentAgentBarEl = document.getElementById('currentAgentBar');
+      currentAgentNameEl = document.getElementById('currentAgentName');
+      authOverlayEl = document.getElementById('authOverlay');
+      usernameInputEl = document.getElementById('usernameInput');
+      passwordInputEl = document.getElementById('passwordInput');
+      authErrorEl = document.getElementById('authError');
+      logoutBtnEl = document.getElementById('logoutBtn');
+      loginBtnHeaderEl = document.getElementById('loginBtnHeader');
+      mentionSuggestionsEl = document.getElementById('mentionSuggestions');
+      sessionSelectEl = document.getElementById('sessionSelect');
+      sessionSelectMobileEl = document.getElementById('sessionSelectMobile');
+      sessionSheetBackdropEl = document.getElementById('sessionSheetBackdrop');
+      pwaBannerEl = document.getElementById('pwaBanner');
+      pwaBannerTextEl = document.getElementById('pwaBannerText');
+      pwaInstallBtnEl = document.getElementById('pwaInstallBtn');
+    }
 
     let deferredInstallPrompt = null;
 
@@ -930,11 +956,89 @@
       }
     }
 
+    window.selectAgent = selectAgent;
+    window.submitLogin = submitLogin;
+    window.createSession = createSession;
+    window.renameSession = renameSession;
+    window.deleteSession = deleteSession;
+    window.openSessionManager = openSessionManager;
+    window.closeSessionManager = closeSessionManager;
+    window.showLoginOverlay = showLoginOverlay;
+    window.logout = logout;
+    window.clearHistory = clearHistory;
+    window.sendMessage = sendMessage;
+    window.switchAgent = switchAgent;
+    window.dismissPwaBanner = dismissPwaBanner;
+
+    function bindDomEvents() {
+      pwaInstallBtnEl.addEventListener('click', async () => {
+        if (!deferredInstallPrompt) return;
+        deferredInstallPrompt.prompt();
+        await deferredInstallPrompt.userChoice;
+        deferredInstallPrompt = null;
+        pwaInstallBtnEl.style.display = 'none';
+      });
+
+      userInputEl.addEventListener('input', () => {
+        updateMentionSuggestions();
+      });
+
+      userInputEl.addEventListener('blur', () => {
+        setTimeout(() => hideMentionSuggestions(), 120);
+      });
+
+      userInputEl.addEventListener('keydown', (e) => {
+        if (mentionState.visible && mentionState.items.length > 0) {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            mentionState.selectedIndex = (mentionState.selectedIndex + 1) % mentionState.items.length;
+            renderMentionSuggestions();
+            return;
+          }
+
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            mentionState.selectedIndex = (mentionState.selectedIndex - 1 + mentionState.items.length) % mentionState.items.length;
+            renderMentionSuggestions();
+            return;
+          }
+
+          if (e.key === 'Enter' || e.key === 'Tab') {
+            e.preventDefault();
+            applyMentionSuggestion(mentionState.selectedIndex);
+            return;
+          }
+
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            hideMentionSuggestions();
+            return;
+          }
+        }
+
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage(e);
+        }
+      });
+
+      sessionSelectEl.addEventListener('change', (e) => {
+        switchSession(e.target.value);
+      });
+
+      sessionSelectMobileEl.addEventListener('change', (e) => {
+        switchSession(e.target.value);
+      });
+    }
+
     // ============================================
     // 初始化
     // ============================================
 
     window.addEventListener('load', async () => {
+      cacheDomElements();
+      bindDomEvents();
+
       await checkAuthStatus().catch(() => {});
       if (!authEnabled || isAuthenticated) {
         await loadAgents();
@@ -962,64 +1066,6 @@
       setupPwaBanner();
     });
 
-    pwaInstallBtnEl.addEventListener('click', async () => {
-      if (!deferredInstallPrompt) return;
-      deferredInstallPrompt.prompt();
-      await deferredInstallPrompt.userChoice;
-      deferredInstallPrompt = null;
-      pwaInstallBtnEl.style.display = 'none';
-    });
-
-    userInputEl.addEventListener('input', () => {
-      updateMentionSuggestions();
-    });
-
-    userInputEl.addEventListener('blur', () => {
-      setTimeout(() => hideMentionSuggestions(), 120);
-    });
-
-    userInputEl.addEventListener('keydown', (e) => {
-      if (mentionState.visible && mentionState.items.length > 0) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          mentionState.selectedIndex = (mentionState.selectedIndex + 1) % mentionState.items.length;
-          renderMentionSuggestions();
-          return;
-        }
-
-        if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          mentionState.selectedIndex = (mentionState.selectedIndex - 1 + mentionState.items.length) % mentionState.items.length;
-          renderMentionSuggestions();
-          return;
-        }
-
-        if (e.key === 'Enter' || e.key === 'Tab') {
-          e.preventDefault();
-          applyMentionSuggestion(mentionState.selectedIndex);
-          return;
-        }
-
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          hideMentionSuggestions();
-          return;
-        }
-      }
-
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage(e);
-      }
-    });
-
-    sessionSelectEl.addEventListener('change', (e) => {
-      switchSession(e.target.value);
-    });
-
-    sessionSelectMobileEl.addEventListener('change', (e) => {
-      switchSession(e.target.value);
-    });
   </script>
 </body>
 </html>
