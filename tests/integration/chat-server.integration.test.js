@@ -64,3 +64,52 @@ test('登录后支持多智能体协作回复', async () => {
     await fixture.cleanup();
   }
 });
+
+test('支持带中文标点的 @Codex架构师 提及', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Codex架构师，帮我做一个两层架构设计' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.equal(chatResponse.body.success, true);
+    assert.ok(Array.isArray(chatResponse.body.aiMessages));
+
+    const senders = new Set(chatResponse.body.aiMessages.map(item => item.sender));
+    assert.ok(senders.has('Codex架构师'));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('支持全角＠all 群聊提及并触发所有智能体回复', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '＠all 请每位同学给一句建议' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.equal(chatResponse.body.success, true);
+    assert.ok(Array.isArray(chatResponse.body.aiMessages));
+
+    const senders = new Set(chatResponse.body.aiMessages.map(item => item.sender));
+    assert.ok(senders.has('Claude'));
+    assert.ok(senders.has('Codex架构师'));
+    assert.ok(senders.has('Alice'));
+    assert.ok(senders.has('Bob'));
+  } finally {
+    await fixture.cleanup();
+  }
+});
