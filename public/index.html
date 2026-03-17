@@ -15,117 +15,139 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- 登录浮层 -->
-  <div class="auth-overlay" id="authOverlay" style="display: none;">
-    <div class="auth-card">
-      <h2>访问验证</h2>
-      <p>请输入凭据以继续访问</p>
-      <form onsubmit="submitLogin(event)">
-        <input type="text" id="usernameInput" placeholder="用户名" autocomplete="username" required>
-        <input type="password" id="passwordInput" placeholder="密码" autocomplete="current-password" required>
-        <button type="submit" id="loginBtn">登录</button>
-      </form>
-      <p class="auth-error" id="authError"></p>
-    </div>
-  </div>
+  <div id="app"></div>
 
-  <div class="container">
-    <!-- 侧边栏 - 会话列表 -->
-    <aside class="sessions-sidebar">
-      <div class="sessions-label">会话</div>
-      <select id="sessionSelect" size="14"></select>
-      <button class="btn-session" onclick="createSession()">新建会话</button>
-      <button class="btn-session" onclick="renameSession()">重命名</button>
-      <button class="btn-session btn-session--danger" onclick="deleteSession()">删除</button>
-    </aside>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- 主区域 -->
-    <div class="main-layout">
-      <div class="chat-panel">
-        <!-- 顶部栏 -->
-        <header class="header">
-          <h1>Bot Room</h1>
-          <div class="header-actions">
-            <span class="status" id="status">已连接</span>
-            <button class="btn-clear btn-mobile-session" onclick="openSessionManager()">会话</button>
-            <button class="btn-clear" id="loginBtnHeader" onclick="showLoginOverlay()" style="display: none;">登录</button>
-            <button class="btn-clear" id="logoutBtn" onclick="logout()" style="display: none;">退出</button>
-            <button class="btn-clear" onclick="window.open('/verbose-logs.html', '_blank')">日志</button>
-            <button class="btn-clear" onclick="clearHistory()">清空</button>
+  <script type="text/babel">
+    const welcomeAgents = [
+      { name: 'Claude', icon: '🤖' },
+      { name: 'Codex架构师', icon: '🏗️' },
+      { name: 'Alice', icon: '👩‍💻' },
+      { name: 'Bob', icon: '🧑‍💻' }
+    ];
+
+    const WelcomeBlock = () => (
+      <div className="welcome">
+        <div className="welcome-icon">💬</div>
+        <h2>欢迎使用 Bot Room</h2>
+        <p>点击下方智能体或使用 <em>@智能体名</em> 开始对话</p>
+        <div className="welcome-agents">
+          {welcomeAgents.map((agent) => (
+            <span
+              key={agent.name}
+              className="welcome-agent"
+              onClick={() => window.selectAgent && window.selectAgent(agent.name)}
+            >
+              {agent.icon} {agent.name}
+            </span>
+          ))}
+        </div>
+        <p className="hint secondary">@ 一次后，后续消息会自动发送给该智能体</p>
+      </div>
+    );
+
+    const App = () => (
+      <>
+        <div className="auth-overlay" id="authOverlay" style={{ display: 'none' }}>
+          <div className="auth-card">
+            <h2>访问验证</h2>
+            <p>请输入凭据以继续访问</p>
+            <form onSubmit={(event) => window.submitLogin && window.submitLogin(event)}>
+              <input type="text" id="usernameInput" placeholder="用户名" autoComplete="username" required />
+              <input type="password" id="passwordInput" placeholder="密码" autoComplete="current-password" required />
+              <button type="submit" id="loginBtn">登录</button>
+            </form>
+            <p className="auth-error" id="authError"></p>
           </div>
-        </header>
-
-        <div class="pwa-banner" id="pwaBanner" style="display: none;">
-          <span id="pwaBannerText">安装 Bot Room 到主屏幕，获得更好的 iOS 全屏体验。</span>
-          <div class="pwa-banner__actions">
-            <button class="btn-clear" id="pwaInstallBtn" style="display: none;">安装</button>
-            <button class="btn-clear" onclick="dismissPwaBanner()">关闭</button>
-          </div>
         </div>
 
-        <!-- 智能体选择栏 -->
-        <div class="agents-bar">
-          <span class="agents-label">智能体</span>
-          <div class="agents-list" id="agentsList"></div>
-        </div>
+        <div className="container">
+          <aside className="sessions-sidebar">
+            <div className="sessions-label">会话蓝图</div>
+            <select id="sessionSelect" size="14"></select>
+            <button className="btn-session" onClick={() => window.createSession && window.createSession()}>新建会话</button>
+            <button className="btn-session" onClick={() => window.renameSession && window.renameSession()}>重命名</button>
+            <button className="btn-session btn-session--danger" onClick={() => window.deleteSession && window.deleteSession()}>删除</button>
+          </aside>
 
-        <!-- 当前对话提示 -->
-        <div class="current-agent-bar" id="currentAgentBar" style="display: none;">
-          <span class="current-agent-label">当前对话</span>
-          <span class="current-agent-name" id="currentAgentName"></span>
-          <button class="btn-switch" onclick="switchAgent()">切换</button>
-        </div>
+          <div className="main-layout">
+            <div className="chat-panel">
+              <header className="header">
+                <h1>Bot Room · Blueprint</h1>
+                <div className="header-actions">
+                  <span className="status" id="status">已连接</span>
+                  <button className="btn-clear btn-mobile-session" onClick={() => window.openSessionManager && window.openSessionManager()}>会话</button>
+                  <button className="btn-clear" id="loginBtnHeader" style={{ display: 'none' }} onClick={() => window.showLoginOverlay && window.showLoginOverlay()}>登录</button>
+                  <button className="btn-clear" id="logoutBtn" style={{ display: 'none' }} onClick={() => window.logout && window.logout()}>退出</button>
+                  <button className="btn-clear" onClick={() => window.open('/verbose-logs.html', '_blank')}>日志</button>
+                  <button className="btn-clear" onClick={() => window.clearHistory && window.clearHistory()}>清空</button>
+                </div>
+              </header>
 
-        <!-- 消息列表 -->
-        <div class="messages" id="messages">
-          <div class="welcome">
-            <div class="welcome-icon">💬</div>
-            <h2>欢迎使用 Bot Room</h2>
-            <p>点击下方智能体或使用 <em>@智能体名</em> 开始对话</p>
-            <div class="welcome-agents">
-              <span class="welcome-agent" onclick="selectAgent('Claude')">🤖 Claude</span>
-              <span class="welcome-agent" onclick="selectAgent('Codex架构师')">🏗️ Codex架构师</span>
-              <span class="welcome-agent" onclick="selectAgent('Alice')">👩‍💻 Alice</span>
-              <span class="welcome-agent" onclick="selectAgent('Bob')">🧑‍💻 Bob</span>
+              <div className="pwa-banner" id="pwaBanner" style={{ display: 'none' }}>
+                <span id="pwaBannerText">安装 Bot Room 到主屏幕，获得更好的 iOS 全屏体验。</span>
+                <div className="pwa-banner__actions">
+                  <button className="btn-clear" id="pwaInstallBtn" style={{ display: 'none' }}>安装</button>
+                  <button className="btn-clear" onClick={() => window.dismissPwaBanner && window.dismissPwaBanner()}>关闭</button>
+                </div>
+              </div>
+
+              <div className="agents-bar">
+                <span className="agents-label">智能体</span>
+                <div className="agents-list" id="agentsList"></div>
+              </div>
+
+              <div className="current-agent-bar" id="currentAgentBar" style={{ display: 'none' }}>
+                <span className="current-agent-label">当前对话</span>
+                <span className="current-agent-name" id="currentAgentName"></span>
+                <button className="btn-switch" onClick={() => window.switchAgent && window.switchAgent()}>切换</button>
+              </div>
+
+              <div className="messages" id="messages">
+                <WelcomeBlock />
+              </div>
+
+              <div className="input-area">
+                <form onSubmit={(event) => window.sendMessage && window.sendMessage(event)}>
+                  <div className="mention-input-wrap">
+                    <input
+                      type="text"
+                      id="userInput"
+                      placeholder="输入消息... 使用 @智能体名 召唤 AI"
+                      autoComplete="off"
+                      autoFocus
+                    />
+                    <div className="mention-suggestions" id="mentionSuggestions" style={{ display: 'none' }}></div>
+                  </div>
+                  <button type="submit" id="sendBtn">发送</button>
+                </form>
+              </div>
             </div>
-            <p class="hint secondary">@ 一次后，后续消息会自动发送给该智能体</p>
           </div>
         </div>
 
-        <!-- 输入区域 -->
-        <div class="input-area">
-          <form onsubmit="sendMessage(event)">
-            <div class="mention-input-wrap">
-              <input
-                type="text"
-                id="userInput"
-                placeholder="输入消息... 使用 @智能体名 召唤 AI"
-                autocomplete="off"
-                autofocus
-              >
-              <div class="mention-suggestions" id="mentionSuggestions" style="display: none;"></div>
+        <div className="session-sheet-backdrop" id="sessionSheetBackdrop" style={{ display: 'none' }} onClick={(event) => window.closeSessionManager && window.closeSessionManager(event)}>
+          <aside className="session-sheet" role="dialog" aria-label="会话管理" onClick={(event) => event.stopPropagation()}>
+            <div className="session-sheet__header">
+              <h2>会话管理</h2>
+              <button className="btn-clear" onClick={() => window.closeSessionManager && window.closeSessionManager()}>完成</button>
             </div>
-            <button type="submit" id="sendBtn">发送</button>
-          </form>
+            <select id="sessionSelectMobile" size="10"></select>
+            <div className="session-sheet__actions">
+              <button className="btn-session" onClick={() => window.createSession && window.createSession()}>新建会话</button>
+              <button className="btn-session" onClick={() => window.renameSession && window.renameSession()}>重命名</button>
+              <button className="btn-session btn-session--danger" onClick={() => window.deleteSession && window.deleteSession()}>删除会话</button>
+            </div>
+          </aside>
         </div>
-      </div>
-    </div>
-  </div>
+      </>
+    );
 
-  <div class="session-sheet-backdrop" id="sessionSheetBackdrop" style="display: none;" onclick="closeSessionManager(event)">
-    <aside class="session-sheet" role="dialog" aria-label="会话管理">
-      <div class="session-sheet__header">
-        <h2>会话管理</h2>
-        <button class="btn-clear" onclick="closeSessionManager()">完成</button>
-      </div>
-      <select id="sessionSelectMobile" size="10"></select>
-      <div class="session-sheet__actions">
-        <button class="btn-session" onclick="createSession()">新建会话</button>
-        <button class="btn-session" onclick="renameSession()">重命名</button>
-        <button class="btn-session btn-session--danger" onclick="deleteSession()">删除会话</button>
-      </div>
-    </aside>
-  </div>
+    ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+  </script>
 
   <script>
     // ============================================
