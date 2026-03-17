@@ -47,6 +47,26 @@ test('管理端点要求 x-admin-token', async () => {
   assert.equal(withToken.body.users.length, 1);
 });
 
+
+
+test('带引号的 AUTH_ADMIN_TOKEN 仍可用原始 token 访问管理端点', async () => {
+  await fixture.cleanup();
+  fixture = await createAuthAdminFixture({
+    adminToken: 'plain-admin-token-123',
+    authAdminTokenEnv: '"plain-admin-token-123"'
+  });
+
+  const withPlainToken = await fixture.request('/api/users', {
+    headers: { 'x-admin-token': fixture.adminToken }
+  });
+  assert.equal(withPlainToken.status, 200);
+
+  const withQuotedToken = await fixture.request('/api/users', {
+    headers: { 'x-admin-token': '"plain-admin-token-123"' }
+  });
+  assert.equal(withQuotedToken.status, 200);
+});
+
 test('用户管理集成流程：创建、改密、登录校验、删除', async () => {
   const headers = { 'x-admin-token': fixture.adminToken };
 
