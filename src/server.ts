@@ -81,6 +81,77 @@ interface DependencyStatusItem {
   detail: string;
 }
 
+interface DependencyStatusLogEntry {
+  timestamp: number;
+  level: 'info' | 'error';
+  dependency: string;
+  message: string;
+}
+
+const DEPENDENCY_STATUS_LOG_LIMIT = 80;
+const dependencyStatusLogs: DependencyStatusLogEntry[] = [];
+
+function appendDependencyStatusLog(entry: DependencyStatusLogEntry): void {
+  dependencyStatusLogs.push(entry);
+  if (dependencyStatusLogs.length > DEPENDENCY_STATUS_LOG_LIMIT) {
+    dependencyStatusLogs.splice(0, dependencyStatusLogs.length - DEPENDENCY_STATUS_LOG_LIMIT);
+  }
+}
+
+function listDependencyStatusLogs(): DependencyStatusLogEntry[] {
+  return [...dependencyStatusLogs].sort((a, b) => b.timestamp - a.timestamp);
+}
+
+interface DependencyLogQuery {
+  keyword: string;
+  startAt: number | null;
+  endAt: number | null;
+  dependency: string;
+  level: 'info' | 'error' | '';
+  limit: number;
+}
+
+function parseDateParamToTimestamp(value: string | null, endOfDay: boolean): number | null {
+  const raw = (value || '').trim();
+  if (!raw) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const normalized = endOfDay ? `${raw}T23:59:59.999` : `${raw}T00:00:00.000`;
+    const ts = new Date(normalized).getTime();
+    return Number.isFinite(ts) ? ts : null;
+  }
+
+  const ts = new Date(raw).getTime();
+  return Number.isFinite(ts) ? ts : null;
+}
+
+function parseDependencyLogQuery(url: URL): DependencyLogQuery {
+  const keyword = (url.searchParams.get('keyword') || '').trim().toLowerCase();
+  const dependency = (url.searchParams.get('dependency') || '').trim().toLowerCase();
+  const startAt = parseDateParamToTimestamp(url.searchParams.get('startDate'), false);
+  const endAt = parseDateParamToTimestamp(url.searchParams.get('endDate'), true);
+  const levelRaw = (url.searchParams.get('level') || '').trim().toLowerCase();
+  const level: 'info' | 'error' | '' = levelRaw === 'info' || levelRaw === 'error' ? levelRaw : '';
+  const limitRaw = Number(url.searchParams.get('limit') || 500);
+  const limit = Number.isFinite(limitRaw) ? Math.min(2000, Math.max(1, Math.floor(limitRaw))) : 500;
+
+  return { keyword, startAt, endAt, dependency, level, limit };
+}
+
+function filterDependencyStatusLogs(query: DependencyLogQuery): DependencyStatusLogEntry[] {
+  const allLogs = listDependencyStatusLogs();
+  return allLogs.filter((log) => {
+    if (query.startAt !== null && log.timestamp < query.startAt) return false;
+    if (query.endAt !== null && log.timestamp > query.endAt) return false;
+    if (query.dependency && log.dependency.toLowerCase() !== query.dependency) return false;
+    if (query.level && log.level !== query.level) return false;
+    if (!query.keyword) return true;
+
+    const text = `${log.dependency} ${log.message} ${log.level}`.toLowerCase();
+    return text.includes(query.keyword);
+  }).slice(0, query.limit);
+}
+
 interface RedisPersistedState {
   version: 1;
   userChatSessions: Record<string, UserChatSession[]>;
@@ -210,11 +281,19 @@ async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
 
   try {
     const pong = await redisClient.ping();
+    const healthy = pong === 'PONG';
+    const detail = healthy ? 'PONG' : `返回异常: ${pong}`;
     result.push({
       name: 'redis',
       required: REDIS_REQUIRED,
-      healthy: pong === 'PONG',
-      detail: pong === 'PONG' ? 'PONG' : `返回异常: ${pong}`
+      healthy,
+      detail
+    });
+    appendDependencyStatusLog({
+      timestamp: Date.now(),
+      level: healthy ? 'info' : 'error',
+      dependency: 'redis',
+      message: detail
     });
   } catch (error) {
     const err = error as Error;
@@ -224,6 +303,12 @@ async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
       healthy: false,
       detail: err.message
     });
+    appendDependencyStatusLog({
+      timestamp: Date.now(),
+      level: 'error',
+      dependency: 'redis',
+      message: err.message
+    });
   }
 
   return result;
@@ -232,17 +317,43 @@ async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
 function handleGetDependenciesStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
   void collectDependencyStatus().then((dependencies) => {
     const healthy = dependencies.every(item => !item.required || item.healthy);
+    const logs = listDependencyStatusLogs();
     res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       healthy,
       checkedAt: Date.now(),
-      dependencies
+      dependencies,
+      logs
     }));
   }).catch((error: unknown) => {
     const err = error as Error;
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: err.message }));
   });
+}
+
+function handleQueryDependenciesLogs(req: http.IncomingMessage, res: http.ServerResponse, url: URL): void {
+  const query = parseDependencyLogQuery(url);
+  if (query.startAt !== null && query.endAt !== null && query.startAt > query.endAt) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'startDate 不能晚于 endDate' }));
+    return;
+  }
+
+  const logs = filterDependencyStatusLogs(query);
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    total: logs.length,
+    query: {
+      keyword: query.keyword,
+      startDate: query.startAt,
+      endDate: query.endAt,
+      dependency: query.dependency,
+      level: query.level,
+      limit: query.limit
+    },
+    logs
+  }));
 }
 
 function normalizeSessionName(name: string | undefined): string {
@@ -1660,6 +1771,8 @@ const server = http.createServer(async (req, res) => {
     handleCallbackThreadContext(req, res, requestUrl);
   } else if (requestUrl.pathname === '/api/dependencies/status' && method === 'GET') {
     handleGetDependenciesStatus(req, res);
+  } else if (requestUrl.pathname === '/api/dependencies/logs' && method === 'GET') {
+    handleQueryDependenciesLogs(req, res, requestUrl);
   } else if (requestUrl.pathname === '/api/verbose/agents' && method === 'GET') {
     handleGetVerboseAgents(req, res);
   } else if (requestUrl.pathname === '/api/verbose/logs' && method === 'GET') {
@@ -1715,6 +1828,7 @@ async function startServer(): Promise<void> {
   console.log('  POST /api/callbacks/post-message - AI 主动发送聊天室消息');
   console.log('  GET  /api/callbacks/thread-context?sessionid=xxx - 获取会话历史');
   console.log('  GET  /api/verbose/agents - 查看 verbose 日志智能体列表');
+  console.log('  GET  /api/dependencies/logs?startDate=2026-03-01&endDate=2026-03-18&keyword=timeout - 查询依赖日志');
   console.log('  GET  /api/verbose/logs?agent=xxx - 查看智能体日志文件列表');
   console.log('  GET  /api/verbose/log-content?file=xxx.log - 查看日志文件内容');
   console.log('');
