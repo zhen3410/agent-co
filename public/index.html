@@ -82,7 +82,8 @@
                   <button className="btn-clear btn-mobile-session" onClick={() => window.openSessionManager && window.openSessionManager()}>会话</button>
                   <button className="btn-clear" id="loginBtnHeader" style={{ display: 'none' }} onClick={() => window.showLoginOverlay && window.showLoginOverlay()}>登录</button>
                   <button className="btn-clear" id="logoutBtn" style={{ display: 'none' }} onClick={() => window.logout && window.logout()}>退出</button>
-                  <button className="btn-clear" onClick={() => window.open('/verbose-logs.html', '_blank')}>日志</button>
+                  <button className="btn-clear btn-ops" onClick={() => window.open('/ops-logs.html', '_blank')}>运维日志</button>
+                  <button className="btn-clear" onClick={() => window.open('/verbose-logs.html', '_blank')}>CLI日志</button>
                   <button className="btn-clear" onClick={() => window.clearHistory && window.clearHistory()}>清空</button>
                 </div>
               </header>

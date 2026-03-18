@@ -36,6 +36,7 @@ const REDIS_PERSIST_DEBOUNCE_MS = 500;
 const REDIS_REQUIRED = process.env.BOT_ROOM_REDIS_REQUIRED !== 'false';
 const CALLBACK_AUTH_TOKEN = process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
 const CALLBACK_AUTH_HEADER = 'x-bot-room-callback-token';
+const OPS_LOG_MAX_ENTRIES = 3000;
 
 // 速率限制配置
 const RATE_LIMIT_MAX_REQUESTS = 100; // 每分钟最多 100 次请求
@@ -64,6 +65,7 @@ interface AuthSession {
 const userChatSessions = new Map<string, Map<string, UserChatSession>>();
 const userActiveChatSession = new Map<string, string>();
 const callbackMessages = new Map<string, Message[]>();
+const opsLogs: OpsLogEntry[] = [];
 const redisClient = new Redis(DEFAULT_REDIS_URL, { lazyConnect: true });
 let redisChatSessionsKey = DEFAULT_REDIS_CHAT_SESSIONS_KEY;
 let persistTimer: NodeJS.Timeout | null = null;
@@ -74,11 +76,44 @@ redisClient.on('error', (error: unknown) => {
   console.error('[Redis] 连接异常:', err.message);
 });
 
+function recordOpsLog(level: 'info' | 'warn' | 'error', category: string, message: string, meta?: Record<string, unknown>): void {
+  const item: OpsLogEntry = {
+    id: generateId(),
+    timestamp: Date.now(),
+    level,
+    category,
+    message,
+    meta
+  };
+  opsLogs.push(item);
+  if (opsLogs.length > OPS_LOG_MAX_ENTRIES) {
+    opsLogs.splice(0, opsLogs.length - OPS_LOG_MAX_ENTRIES);
+  }
+
+  const line = `[OpsLog][${category}][${level}] ${message}`;
+  if (level === 'error') {
+    console.error(line, meta || '');
+  } else if (level === 'warn') {
+    console.warn(line, meta || '');
+  } else {
+    console.log(line, meta || '');
+  }
+}
+
 interface DependencyStatusItem {
   name: string;
   required: boolean;
   healthy: boolean;
   detail: string;
+}
+
+interface OpsLogEntry {
+  id: string;
+  timestamp: number;
+  level: 'info' | 'warn' | 'error';
+  category: string;
+  message: string;
+  meta?: Record<string, unknown>;
 }
 
 interface RedisPersistedState {
@@ -879,8 +914,8 @@ async function handleCallbackPostMessage(req: http.IncomingMessage, res: http.Se
     }
 
     addCallbackMessage(sessionId, agentName, content);
-    console.log(`
-[聊天室消息][${agentName}] ${content}`);
+    recordOpsLog('info', 'callback.post-message', 'AI 主动发送消息到聊天室', { sessionId, agentName, contentLength: content.length });
+    console.log(`\n[聊天室消息][${agentName}] ${content}`);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
@@ -905,6 +940,8 @@ function handleCallbackThreadContext(req: http.IncomingMessage, res: http.Server
     return;
   }
 
+  recordOpsLog('info', 'callback.thread-context', 'AI 读取会话上下文', { sessionId });
+
   const session = getSessionById(sessionId);
   if (!session) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -914,6 +951,41 @@ function handleCallbackThreadContext(req: http.IncomingMessage, res: http.Server
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ sessionId, messages: session.history }));
+}
+
+function handleGetOpsLogs(req: http.IncomingMessage, res: http.ServerResponse, requestUrl: URL): void {
+  const date = (requestUrl.searchParams.get('date') || '').trim();
+  const keyword = (requestUrl.searchParams.get('keyword') || '').trim().toLowerCase();
+  const level = (requestUrl.searchParams.get('level') || '').trim();
+  const category = (requestUrl.searchParams.get('category') || '').trim();
+  const limitRaw = Number(requestUrl.searchParams.get('limit') || 200);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(1000, Math.floor(limitRaw))) : 200;
+
+  const filtered = opsLogs.filter(item => {
+    if (date) {
+      const itemDate = new Date(item.timestamp).toISOString().slice(0, 10);
+      if (itemDate !== date) return false;
+    }
+
+    if (level && item.level !== level) return false;
+    if (category && item.category !== category) return false;
+
+    if (keyword) {
+      const haystack = `${item.message} ${JSON.stringify(item.meta || {})}`.toLowerCase();
+      if (!haystack.includes(keyword)) return false;
+    }
+
+    return true;
+  });
+
+  const categories = Array.from(new Set(opsLogs.map(item => item.category))).sort();
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    total: filtered.length,
+    categories,
+    logs: filtered.slice(-limit).reverse()
+  }));
 }
 
 function parseBody<T>(req: http.IncomingMessage): Promise<T> {
@@ -981,6 +1053,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
 
     // 提取 @ 提及
     const mentions = agentManager.extractMentions(message);
+    recordOpsLog('info', 'chat.receive', '收到聊天消息', { sender, mentionCount: mentions.length, hasMention: mentions.length > 0 });
     console.log(`[Chat] @ 提及: ${mentions.join(', ') || '无'}`);
 
     // 确定要响应的智能体列表
@@ -1025,6 +1098,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       console.log(`[Chat] 调用 AI: ${agentName}`);
 
       const includeHistory = mentions.length === 0;
+      recordOpsLog('info', 'chat.agent-run', '触发智能体执行', { agentName, includeHistory, sessionId: session.id });
       const callbackEnv: Record<string, string> = {
         BOT_ROOM_API_URL: `http://127.0.0.1:${PORT}`,
         BOT_ROOM_SESSION_ID: session.id,
@@ -1122,6 +1196,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
 
     // 提取 @ 提及
     const mentions = agentManager.extractMentions(message);
+    recordOpsLog('info', 'chat.receive', '收到聊天消息', { sender, mentionCount: mentions.length, hasMention: mentions.length > 0 });
     console.log(`[ChatStream] @ 提及: ${mentions.join(', ') || '无'}`);
 
     // 确定要响应的智能体列表
@@ -1193,6 +1268,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       console.log(`[ChatStream] 并发调用 AI: ${agentName}`);
 
       const includeHistory = mentions.length === 0;
+      recordOpsLog('info', 'chat-stream.agent-run', '流式触发智能体执行', { agentName, includeHistory, sessionId: session.id });
       const callbackEnv: Record<string, string> = {
         BOT_ROOM_API_URL: `http://127.0.0.1:${PORT}`,
         BOT_ROOM_SESSION_ID: session.id,
@@ -1660,6 +1736,8 @@ const server = http.createServer(async (req, res) => {
     handleCallbackThreadContext(req, res, requestUrl);
   } else if (requestUrl.pathname === '/api/dependencies/status' && method === 'GET') {
     handleGetDependenciesStatus(req, res);
+  } else if (requestUrl.pathname === '/api/ops/logs' && method === 'GET') {
+    handleGetOpsLogs(req, res, requestUrl);
   } else if (requestUrl.pathname === '/api/verbose/agents' && method === 'GET') {
     handleGetVerboseAgents(req, res);
   } else if (requestUrl.pathname === '/api/verbose/logs' && method === 'GET') {
@@ -1680,6 +1758,8 @@ const server = http.createServer(async (req, res) => {
     serveStatic(req, res, 'verbose-logs.html', 'text/html');
   } else if (requestUrl.pathname === '/deps-monitor.html') {
     serveStatic(req, res, 'deps-monitor.html', 'text/html');
+  } else if (requestUrl.pathname === '/ops-logs.html') {
+    serveStatic(req, res, 'ops-logs.html', 'text/html');
   } else {
     res.writeHead(404);
     res.end('Not Found');
@@ -1712,6 +1792,7 @@ async function startServer(): Promise<void> {
   console.log('  POST /api/create-block - Route A: 创建 block');
   console.log('  GET  /api/block-status - 查看 BlockBuffer 状态');
   console.log('  GET  /api/dependencies/status - 查看依赖服务状态');
+  console.log('  GET  /api/ops/logs?date=YYYY-MM-DD - 运行日志查询');
   console.log('  POST /api/callbacks/post-message - AI 主动发送聊天室消息');
   console.log('  GET  /api/callbacks/thread-context?sessionid=xxx - 获取会话历史');
   console.log('  GET  /api/verbose/agents - 查看 verbose 日志智能体列表');

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Bot Room 运维日志</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --border: #dbe3ee;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --warn: #d97706;
+      --error: #dc2626;
+      --info: #059669;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .page {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: max(12px, env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .header h1 { font-size: 18px; margin: 0; }
+    .filters {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    input, select, button {
+      font: inherit;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: #fff;
+      color: var(--text);
+      min-height: 36px;
+    }
+    button {
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      font-weight: 600;
+    }
+    .secondary { background: #e5e7eb; color: #111827; }
+    .meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .list {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .item {
+      padding: 10px;
+      border-bottom: 1px solid #eef2f7;
+      display: grid;
+      gap: 6px;
+    }
+    .item:last-child { border-bottom: none; }
+    .line {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      font-size: 13px;
+    }
+    .tag {
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      color: #fff;
+    }
+    .tag.info { background: var(--info); }
+    .tag.warn { background: var(--warn); }
+    .tag.error { background: var(--error); }
+    .category { color: var(--accent); font-weight: 600; }
+    .message { font-size: 14px; }
+    .meta-json {
+      margin-top: 4px;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #334155;
+    }
+    @media (max-width: 900px) {
+      .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .filters .grow { grid-column: 1 / -1; }
+    }
+    @media (max-width: 640px) {
+      .header h1 { font-size: 16px; }
+      .filters { grid-template-columns: 1fr; }
+      .page { padding-left: 10px; padding-right: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="header">
+      <h1>🧭 运维日志查询</h1>
+      <button class="secondary" onclick="window.location.href='/'">返回聊天室</button>
+    </div>
+
+    <section class="filters">
+      <input id="date" type="date" />
+      <select id="level">
+        <option value="">全部级别</option>
+        <option value="info">info</option>
+        <option value="warn">warn</option>
+        <option value="error">error</option>
+      </select>
+      <select id="category">
+        <option value="">全部分类</option>
+      </select>
+      <input id="keyword" class="grow" type="text" placeholder="关键词（支持 message / meta 搜索）" />
+      <div style="display:flex; gap:8px;">
+        <button onclick="loadLogs()">查询</button>
+        <button class="secondary" onclick="resetFilters()">重置</button>
+      </div>
+    </section>
+
+    <div class="meta">
+      <span id="summary">加载中...</span>
+      <span id="time"></span>
+    </div>
+
+    <section class="list" id="list"></section>
+  </main>
+
+  <script>
+    const dateEl = document.getElementById('date');
+    const levelEl = document.getElementById('level');
+    const categoryEl = document.getElementById('category');
+    const keywordEl = document.getElementById('keyword');
+    const summaryEl = document.getElementById('summary');
+    const timeEl = document.getElementById('time');
+    const listEl = document.getElementById('list');
+
+    function fmt(ts) {
+      return new Date(ts).toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function buildQuery() {
+      const q = new URLSearchParams();
+      if (dateEl.value) q.set('date', dateEl.value);
+      if (levelEl.value) q.set('level', levelEl.value);
+      if (categoryEl.value) q.set('category', categoryEl.value);
+      if (keywordEl.value.trim()) q.set('keyword', keywordEl.value.trim());
+      q.set('limit', '300');
+      return q.toString();
+    }
+
+    function renderCategories(categories) {
+      const current = categoryEl.value;
+      categoryEl.innerHTML = '<option value="">全部分类</option>' +
+        categories.map((name) => `<option value="${name}">${name}</option>`).join('');
+      categoryEl.value = categories.includes(current) ? current : '';
+    }
+
+    function renderLogs(logs) {
+      if (!logs || logs.length === 0) {
+        listEl.innerHTML = '<div class="item"><div class="message">暂无日志记录</div></div>';
+        return;
+      }
+
+      listEl.innerHTML = logs.map((item) => {
+        const meta = item.meta ? `<div class="meta-json">${JSON.stringify(item.meta, null, 2)}</div>` : '';
+        return `
+          <article class="item">
+            <div class="line">
+              <span class="tag ${item.level}">${item.level.toUpperCase()}</span>
+              <span class="category">${item.category}</span>
+              <span style="color:#64748b;">${fmt(item.timestamp)}</span>
+            </div>
+            <div class="message">${item.message}</div>
+            ${meta}
+          </article>
+        `;
+      }).join('');
+    }
+
+    async function loadLogs() {
+      const query = buildQuery();
+      const res = await fetch(`/api/ops/logs?${query}`, { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error(`加载日志失败: ${res.status}`);
+      }
+      const data = await res.json();
+      summaryEl.textContent = `命中 ${data.total} 条（倒序展示最近 300 条）`;
+      timeEl.textContent = `刷新时间: ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
+      renderCategories(data.categories || []);
+      renderLogs(data.logs || []);
+    }
+
+    async function resetFilters() {
+      dateEl.value = '';
+      levelEl.value = '';
+      categoryEl.value = '';
+      keywordEl.value = '';
+      await loadLogs();
+    }
+
+    dateEl.value = new Date().toISOString().slice(0, 10);
+    loadLogs().catch((err) => {
+      summaryEl.textContent = err.message;
+      listEl.innerHTML = '<div class="item"><div class="message">加载失败，请稍后重试。</div></div>';
+    });
+  </script>
+</body>
+</html>

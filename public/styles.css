@@ -347,6 +347,17 @@ body.sheet-open {
   color: var(--text-primary);
 }
 
+.btn-ops {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.btn-ops:hover {
+  background: rgba(37, 99, 235, 0.16);
+  color: var(--accent);
+}
+
 .btn-mobile-session {
   display: none;
 }
@@ -1091,6 +1102,10 @@ body.sheet-open {
   .btn-clear {
     padding: var(--space-xs) var(--space-sm);
     font-size: 12px;
+  }
+
+  .btn-ops {
+    order: -1;
   }
 
   .pwa-banner {

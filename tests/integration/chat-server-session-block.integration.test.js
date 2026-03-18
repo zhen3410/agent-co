@@ -111,3 +111,31 @@ test('block 接口支持校验入参与状态查询（需先登录）', async ()
     await fixture.cleanup();
   }
 });
+
+test('运维日志接口支持鉴权与条件查询', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const unauthorized = await fixture.request('/api/ops/logs');
+    assert.equal(unauthorized.status, 401);
+
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 记录一条日志' }
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const logsResponse = await fixture.request(`/api/ops/logs?date=${today}&category=chat.receive&limit=20`);
+
+    assert.equal(logsResponse.status, 200);
+    assert.ok(Array.isArray(logsResponse.body.logs));
+    assert.ok(Array.isArray(logsResponse.body.categories));
+    assert.ok(logsResponse.body.logs.length >= 1);
+    assert.ok(logsResponse.body.logs.every((item) => item.category === 'chat.receive'));
+  } finally {
+    await fixture.cleanup();
+  }
+});

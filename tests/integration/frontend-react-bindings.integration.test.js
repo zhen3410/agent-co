@@ -35,6 +35,18 @@ test('React 页面会将 AI 回复按 Markdown 渲染并保留用户纯文本换
   assert.ok(html.includes('function renderPlainText(text) {'), 'should provide plain text renderer');
   assert.ok(html.includes('function renderMarkdown(text) {'), 'should provide markdown renderer');
   assert.ok(html.includes('message__text message__text--markdown'), 'assistant message should use markdown class');
+  assert.ok(html.includes("window.open('/ops-logs.html', '_blank')"), 'should expose ops logs entry button in chat header');
   assert.ok(html.includes("${highlightMentions(renderPlainText(msg.text || ''))}"), 'user message should keep plain text + mentions');
   assert.ok(html.includes("${renderMarkdown(msg.text || '')}"), 'assistant message should render markdown');
+});
+
+
+test('运维日志页面具备筛选表单并支持 iOS 安全区样式', () => {
+  const htmlPath = path.join(__dirname, '..', '..', 'public', 'ops-logs.html');
+  const html = fs.readFileSync(htmlPath, 'utf8');
+
+  assert.ok(html.includes('/api/ops/logs?'), 'ops logs page should query backend logs API');
+  assert.ok(html.includes("env(safe-area-inset-top)"), 'should adapt for iOS safe-area top inset');
+  assert.ok(html.includes("env(safe-area-inset-bottom)"), 'should adapt for iOS safe-area bottom inset');
+  assert.ok(html.includes('关键词（支持 message / meta 搜索）'), 'should provide keyword filter for operations');
 });
