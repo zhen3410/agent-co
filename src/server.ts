@@ -12,9 +12,9 @@ import Redis from 'ioredis';
 import { Message, AIAgentConfig, ChatRequest, RichBlock } from './types';
 import { AgentManager } from './agent-manager';
 import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
-import { callClaudeCLI, generateMockReply, ClaudeResult } from './claude-cli';
+import { callClaudeCLI, generateMockReply } from './claude-cli';
 import { extractRichBlocks } from './rich-extract';
-import { addBlock, consumeBlocks, getStatus as getBlockBufferStatus } from './block-buffer';
+import { addBlock, getStatus as getBlockBufferStatus } from './block-buffer';
 import { checkRateLimit, getClientIP } from './rate-limiter';
 
 // ============================================
@@ -34,6 +34,8 @@ const REDIS_CONFIG_KEY = 'bot-room:config';
 const DEFAULT_REDIS_CHAT_SESSIONS_KEY = 'bot-room:chat:sessions:v1';
 const REDIS_PERSIST_DEBOUNCE_MS = 500;
 const REDIS_REQUIRED = process.env.BOT_ROOM_REDIS_REQUIRED !== 'false';
+const CALLBACK_AUTH_TOKEN = process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
+const CALLBACK_AUTH_HEADER = 'x-bot-room-callback-token';
 
 // 速率限制配置
 const RATE_LIMIT_MAX_REQUESTS = 100; // 每分钟最多 100 次请求
@@ -61,6 +63,7 @@ interface AuthSession {
 // 改为按用户/会话存储
 const userChatSessions = new Map<string, Map<string, UserChatSession>>();
 const userActiveChatSession = new Map<string, string>();
+const callbackMessages = new Map<string, Message[]>();
 const redisClient = new Redis(DEFAULT_REDIS_URL, { lazyConnect: true });
 let redisChatSessionsKey = DEFAULT_REDIS_CHAT_SESSIONS_KEY;
 let persistTimer: NodeJS.Timeout | null = null;
@@ -386,6 +389,54 @@ function getUserHistory(userKey: string, sessionId: string): Message[] {
 
 function getUserCurrentAgent(userKey: string, sessionId: string): string | null {
   return ensureUserSessions(userKey).get(sessionId)?.currentAgent || null;
+}
+
+function getCallbackMessageKey(sessionId: string, agentName: string): string {
+  return `${sessionId}::${agentName}`;
+}
+
+function addCallbackMessage(sessionId: string, agentName: string, content: string): Message {
+  const key = getCallbackMessageKey(sessionId, agentName);
+  const queue = callbackMessages.get(key) || [];
+  const msg: Message = {
+    id: generateId(),
+    role: 'assistant',
+    sender: agentName,
+    text: content,
+    timestamp: Date.now()
+  };
+  queue.push(msg);
+  callbackMessages.set(key, queue);
+  return msg;
+}
+
+function consumeCallbackMessages(sessionId: string, agentName: string): Message[] {
+  const key = getCallbackMessageKey(sessionId, agentName);
+  const queue = callbackMessages.get(key) || [];
+  callbackMessages.delete(key);
+  return queue;
+}
+
+function getSessionById(sessionId: string): UserChatSession | null {
+  for (const sessions of userChatSessions.values()) {
+    const found = sessions.get(sessionId);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function getCallbackToken(req: http.IncomingMessage): string {
+  const authHeader = (req.headers.authorization || '').trim();
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+
+  return String(req.headers[CALLBACK_AUTH_HEADER] || '').trim();
+}
+
+function isCallbackAuthorized(req: http.IncomingMessage): boolean {
+  return getCallbackToken(req) === CALLBACK_AUTH_TOKEN;
 }
 
 function setUserCurrentAgent(userKey: string, sessionId: string, agentName: string | null): void {
@@ -745,7 +796,9 @@ function requiresAuthentication(pathname: string): boolean {
     '/api/login',
     '/api/logout',
     '/api/auth-status',
-    '/api/dependencies/status'
+    '/api/dependencies/status',
+    '/api/callbacks/post-message',
+    '/api/callbacks/thread-context'
   ]);
 
   return pathname.startsWith('/api/') && !publicPaths.has(pathname);
@@ -800,6 +853,69 @@ function verifyCredentials(username: string, password: string): Promise<{ succes
 /**
  * 解析 JSON 请求体
  */
+async function handleCallbackPostMessage(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (!isCallbackAuthorized(req)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unauthorized' }));
+    return;
+  }
+
+  try {
+    const body = await parseBody<{ content?: string }>(req);
+    const content = (body.content || '').trim();
+    if (!content) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '缺少 content 字段' }));
+      return;
+    }
+
+    const sessionId = String(req.headers['x-bot-room-session-id'] || '').trim();
+    const agentName = String(req.headers['x-bot-room-agent'] || 'AI').trim() || 'AI';
+
+    if (!sessionId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '缺少 x-bot-room-session-id 头' }));
+      return;
+    }
+
+    addCallbackMessage(sessionId, agentName, content);
+    console.log(`
+[聊天室消息][${agentName}] ${content}`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok' }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+function handleCallbackThreadContext(req: http.IncomingMessage, res: http.ServerResponse, requestUrl: URL): void {
+  if (!isCallbackAuthorized(req)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unauthorized' }));
+    return;
+  }
+
+  const sessionId = (requestUrl.searchParams.get('sessionid') || '').trim();
+  if (!sessionId) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '缺少 sessionid 参数' }));
+    return;
+  }
+
+  const session = getSessionById(sessionId);
+  if (!session) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '会话不存在' }));
+    return;
+  }
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ sessionId, messages: session.history }));
+}
+
 function parseBody<T>(req: http.IncomingMessage): Promise<T> {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -813,33 +929,6 @@ function parseBody<T>(req: http.IncomingMessage): Promise<T> {
     });
     req.on('error', reject);
   });
-}
-
-/**
- * 合并 blocks（去重）
- */
-function mergeBlocks(blocksA: RichBlock[], blocksB: RichBlock[]): RichBlock[] {
-  const blockMap = new Map<string, RichBlock>();
-
-  for (const block of blocksA) {
-    if (block.id) {
-      blockMap.set(block.id, block);
-    } else {
-      const tempId = `temp-${generateId()}`;
-      blockMap.set(tempId, { ...block, id: tempId });
-    }
-  }
-
-  for (const block of blocksB) {
-    if (block.id) {
-      blockMap.set(block.id, block);
-    } else {
-      const tempId = `temp-${generateId()}`;
-      blockMap.set(tempId, { ...block, id: tempId });
-    }
-  }
-
-  return Array.from(blockMap.values());
 }
 
 // ============================================
@@ -935,46 +1024,49 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
 
       console.log(`[Chat] 调用 AI: ${agentName}`);
 
-      let aiResponse: ClaudeResult;
+      const includeHistory = mentions.length === 0;
+      const callbackEnv: Record<string, string> = {
+        BOT_ROOM_API_URL: `http://127.0.0.1:${PORT}`,
+        BOT_ROOM_SESSION_ID: session.id,
+        BOT_ROOM_AGENT_NAME: agentName,
+        BOT_ROOM_CALLBACK_TOKEN: CALLBACK_AUTH_TOKEN
+      };
+
+      let fallbackMessage: Message | null = null;
       try {
-        // 使用用户隔离的历史
-        aiResponse = await callClaudeCLI(message, agent, userHistory);
+        await callClaudeCLI(message, agent, userHistory, {
+          includeHistory,
+          extraEnv: callbackEnv
+        });
       } catch (error: unknown) {
         const err = error as Error;
         console.log(`[Chat] AI CLI 不可用: ${err.message}`);
         console.log('[Chat] 使用模拟回复');
         const mockText = generateMockReply(message, agentName);
         const extracted = extractRichBlocks(mockText);
-        aiResponse = { text: extracted.cleanText, blocks: extracted.blocks };
+        fallbackMessage = {
+          id: generateId(),
+          role: 'assistant',
+          sender: agentName,
+          text: extracted.cleanText,
+          blocks: extracted.blocks,
+          timestamp: Date.now()
+        };
       }
 
-      // Route B: 从文本中提取 blocks
-      const { cleanText, blocks: textBlocks } = extractRichBlocks(aiResponse.text);
-      console.log(`[Chat] Route B (文本提取): ${textBlocks.length} 个 blocks`);
+      const callbackReplies = consumeCallbackMessages(session.id, agentName);
+      for (const reply of callbackReplies) {
+        userHistory.push(reply);
+        aiMessages.push(reply);
+      }
 
-      // Route A: 从 BlockBuffer 获取预存的 blocks
-      const bufferedBlocks = consumeBlocks(sessionId);
-      console.log(`[Chat] Route A (HTTP 回调): ${bufferedBlocks.length} 个 blocks`);
+      if (callbackReplies.length === 0 && fallbackMessage) {
+        userHistory.push(fallbackMessage);
+        aiMessages.push(fallbackMessage);
+      }
 
-      // 合并 blocks
-      const mergedBlocks = mergeBlocks(bufferedBlocks, textBlocks);
-      console.log(`[Chat] 合并后: ${mergedBlocks.length} 个 blocks`);
-
-      // 创建 AI 消息
-      const aiMessage: Message = {
-        id: generateId(),
-        role: 'assistant',
-        sender: agentName,
-        text: cleanText,
-        blocks: mergedBlocks,
-        timestamp: Date.now()
-      };
-
-      userHistory.push(aiMessage);
-      aiMessages.push(aiMessage);
       touchSession(session);
-
-      console.log(`[Chat] ${agentName} 回复完成`);
+      console.log(`[Chat] ${agentName} 回复完成，可见消息=${callbackReplies.length}${fallbackMessage && callbackReplies.length === 0 ? ' (fallback)' : ''}`);
     }
 
     // 返回响应
@@ -1100,40 +1192,47 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
 
       console.log(`[ChatStream] 并发调用 AI: ${agentName}`);
 
-      let aiResponse: ClaudeResult;
+      const includeHistory = mentions.length === 0;
+      const callbackEnv: Record<string, string> = {
+        BOT_ROOM_API_URL: `http://127.0.0.1:${PORT}`,
+        BOT_ROOM_SESSION_ID: session.id,
+        BOT_ROOM_AGENT_NAME: agentName,
+        BOT_ROOM_CALLBACK_TOKEN: CALLBACK_AUTH_TOKEN
+      };
+
+      let fallbackMessage: Message | null = null;
       try {
-        aiResponse = await callClaudeCLI(message, agent, userHistory);
+        await callClaudeCLI(message, agent, userHistory, {
+          includeHistory,
+          extraEnv: callbackEnv
+        });
       } catch (error: unknown) {
         const err = error as Error;
         console.log(`[ChatStream] AI CLI 不可用: ${err.message}`);
         const mockText = generateMockReply(message, agentName);
         const extracted = extractRichBlocks(mockText);
-        aiResponse = { text: extracted.cleanText, blocks: extracted.blocks };
+        fallbackMessage = {
+          id: generateId(),
+          role: 'assistant',
+          sender: agentName,
+          text: extracted.cleanText,
+          blocks: extracted.blocks,
+          timestamp: Date.now()
+        };
       }
 
-      // 提取 blocks
-      const { cleanText, blocks: textBlocks } = extractRichBlocks(aiResponse.text);
-      const bufferedBlocks = consumeBlocks(sessionId);
-      const mergedBlocks = mergeBlocks(bufferedBlocks, textBlocks);
+      const callbackReplies = consumeCallbackMessages(session.id, agentName);
+      const visibleMessages = callbackReplies.length > 0 ? callbackReplies : (fallbackMessage ? [fallbackMessage] : []);
 
-      // 创建 AI 消息
-      const aiMessage: Message = {
-        id: generateId(),
-        role: 'assistant',
-        sender: agentName,
-        text: cleanText,
-        blocks: mergedBlocks,
-        timestamp: Date.now()
-      };
+      for (const visibleMessage of visibleMessages) {
+        userHistory.push(visibleMessage);
+        touchSession(session);
+        sendEvent('agent_message', visibleMessage);
+      }
 
-      userHistory.push(aiMessage);
-      touchSession(session);
+      console.log(`[ChatStream] ${agentName} 回复已推送: ${visibleMessages.length}`);
 
-      // 立即推送该智能体的回复
-      sendEvent('agent_message', aiMessage);
-      console.log(`[ChatStream] ${agentName} 回复已推送`);
-
-      return aiMessage;
+      return visibleMessages;
     });
 
     // 等待所有智能体完成
@@ -1493,7 +1592,7 @@ const server = http.createServer(async (req, res) => {
   // CORS 头
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-bot-room-callback-token, x-bot-room-session-id, x-bot-room-agent');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
 
   if (url.startsWith('/api/')) {
@@ -1555,6 +1654,10 @@ const server = http.createServer(async (req, res) => {
     await handleCreateBlock(req, res);
   } else if (requestUrl.pathname === '/api/block-status' && method === 'GET') {
     handleGetBlockStatus(req, res);
+  } else if (requestUrl.pathname === '/api/callbacks/post-message' && method === 'POST') {
+    await handleCallbackPostMessage(req, res);
+  } else if (requestUrl.pathname === '/api/callbacks/thread-context' && method === 'GET') {
+    handleCallbackThreadContext(req, res, requestUrl);
   } else if (requestUrl.pathname === '/api/dependencies/status' && method === 'GET') {
     handleGetDependenciesStatus(req, res);
   } else if (requestUrl.pathname === '/api/verbose/agents' && method === 'GET') {
@@ -1609,6 +1712,8 @@ async function startServer(): Promise<void> {
   console.log('  POST /api/create-block - Route A: 创建 block');
   console.log('  GET  /api/block-status - 查看 BlockBuffer 状态');
   console.log('  GET  /api/dependencies/status - 查看依赖服务状态');
+  console.log('  POST /api/callbacks/post-message - AI 主动发送聊天室消息');
+  console.log('  GET  /api/callbacks/thread-context?sessionid=xxx - 获取会话历史');
   console.log('  GET  /api/verbose/agents - 查看 verbose 日志智能体列表');
   console.log('  GET  /api/verbose/logs?agent=xxx - 查看智能体日志文件列表');
   console.log('  GET  /api/verbose/log-content?file=xxx.log - 查看日志文件内容');
