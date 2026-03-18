@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
 test('未登录时聊天相关接口会返回 401，登录后可正常聊天', async () => {
@@ -111,5 +114,75 @@ test('支持全角＠all 群聊提及并触发所有智能体回复', async () =
     assert.ok(senders.has('Bob'));
   } finally {
     await fixture.cleanup();
+  }
+});
+
+test('Codex 架构师在未回调时会回退展示 CLI 直接输出，并记录关键运维日志', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-'));
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '{"output_text":"这是 Codex 直接回复（无回调）"}\\n'
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Codex架构师 请直接给出一句建议' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
+    assert.ok(codexMessage, 'should include Codex visible message');
+    assert.equal(codexMessage.text, '这是 Codex 直接回复（无回调）');
+
+    const logsResponse = await fixture.request('/api/dependencies/logs?dependency=chat-exec&keyword=Codex%E6%9E%B6%E6%9E%84%E5%B8%88');
+    assert.equal(logsResponse.status, 200);
+    const messages = logsResponse.body.logs.map(item => item.message);
+    assert.ok(messages.some(msg => msg.includes('stage=start')));
+    assert.ok(messages.some(msg => msg.includes('stage=cli_done')));
+    assert.ok(messages.some(msg => msg.includes('stage=direct_fallback')));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('chat-stream 会在 Codex 无回调时推送 agent_message，避免前端一直停留在思考中', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-stream-'));
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '{"output_text":"SSE 直出回复"}\\n'
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    const streamResponse = await fixture.request('/api/chat-stream', {
+      method: 'POST',
+      body: { message: '@Codex架构师 走流式' }
+    });
+
+    assert.equal(streamResponse.status, 200);
+    assert.ok(streamResponse.text.includes('event: agent_thinking'));
+    assert.ok(streamResponse.text.includes('event: agent_message'));
+    assert.ok(streamResponse.text.includes('SSE 直出回复'));
+    assert.ok(streamResponse.text.includes('event: done'));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });
