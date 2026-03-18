@@ -176,6 +176,18 @@
 
     <section class="card">
       <div id="log-summary" class="summary">最近日志：加载中...</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:flex-end;">
+        <label style="font-size:12px; color:var(--muted);">开始日期
+          <input id="filter-start" type="date" style="display:block; margin-top:4px; background:#0d1626; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px;">
+        </label>
+        <label style="font-size:12px; color:var(--muted);">结束日期
+          <input id="filter-end" type="date" style="display:block; margin-top:4px; background:#0d1626; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px;">
+        </label>
+        <label style="font-size:12px; color:var(--muted);">关键字
+          <input id="filter-keyword" type="text" placeholder="如 timeout / refused" style="display:block; margin-top:4px; background:#0d1626; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px; min-width:220px;">
+        </label>
+        <button id="apply-filter" class="btn" type="button">查询日志</button>
+      </div>
       <table>
         <thead>
           <tr><th>时间</th><th>级别</th><th>依赖</th><th>日志内容</th></tr>
@@ -191,6 +203,10 @@
     const refresh = document.getElementById('refresh');
     const logSummary = document.getElementById('log-summary');
     const logRows = document.getElementById('log-rows');
+    const filterStart = document.getElementById('filter-start');
+    const filterEnd = document.getElementById('filter-end');
+    const filterKeyword = document.getElementById('filter-keyword');
+    const applyFilter = document.getElementById('apply-filter');
 
     function yn(v) { return v ? '是' : '否'; }
     function cls(v) { return v ? 'ok' : 'bad'; }
@@ -198,6 +214,47 @@
     function summaryClass(v) { return v ? 'status-ok' : 'status-bad'; }
     function levelClass(level) { return level === 'error' ? 'bad' : 'info'; }
     function levelText(level) { return level === 'error' ? '异常' : '信息'; }
+
+    function renderLogs(logs) {
+      logRows.innerHTML = '';
+      logSummary.textContent = `最近日志：${logs.length} 条`;
+
+      if (logs.length === 0) {
+        const emptyTr = document.createElement('tr');
+        emptyTr.innerHTML = '<td colspan="4">暂无依赖日志</td>';
+        logRows.appendChild(emptyTr);
+        return;
+      }
+
+      for (const log of logs) {
+        const tr = document.createElement('tr');
+        const time = log.timestamp ? new Date(log.timestamp).toLocaleString() : '-';
+        tr.innerHTML = `
+          <td class="mono">${time}</td>
+          <td><span class="pill ${levelClass(log.level)}">${levelText(log.level)}</span></td>
+          <td>${log.dependency || '-'}</td>
+          <td class="mono">${log.message || '-'}</td>
+        `;
+        logRows.appendChild(tr);
+      }
+    }
+
+    async function loadLogsWithFilters() {
+      const params = new URLSearchParams();
+      if (filterStart.value) params.set('startDate', filterStart.value);
+      if (filterEnd.value) params.set('endDate', filterEnd.value);
+      if (filterKeyword.value.trim()) params.set('keyword', filterKeyword.value.trim());
+      params.set('limit', '500');
+
+      const query = params.toString();
+      const url = query ? `/api/dependencies/logs?${query}` : '/api/dependencies/logs';
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || '查询依赖日志失败');
+      }
+      renderLogs(Array.isArray(data.logs) ? data.logs : []);
+    }
 
     async function loadStatus() {
       summary.textContent = '加载中...';
@@ -220,26 +277,7 @@
           rows.appendChild(tr);
         }
 
-        const logs = Array.isArray(data.logs) ? data.logs : [];
-        logRows.innerHTML = '';
-        logSummary.textContent = `最近日志：${logs.length} 条`;
-        if (logs.length === 0) {
-          const emptyTr = document.createElement('tr');
-          emptyTr.innerHTML = '<td colspan="4">暂无依赖日志</td>';
-          logRows.appendChild(emptyTr);
-        }
-
-        for (const log of logs) {
-          const tr = document.createElement('tr');
-          const time = log.timestamp ? new Date(log.timestamp).toLocaleString() : '-';
-          tr.innerHTML = `
-            <td class="mono">${time}</td>
-            <td><span class="pill ${levelClass(log.level)}">${levelText(log.level)}</span></td>
-            <td>${log.dependency || '-'}</td>
-            <td class="mono">${log.message || '-'}</td>
-          `;
-          logRows.appendChild(tr);
-        }
+        await loadLogsWithFilters();
       } catch (error) {
         summary.innerHTML = `<span class="status-bad">加载失败：${error.message}</span>`;
         logSummary.textContent = '最近日志：加载失败';
@@ -247,6 +285,7 @@
     }
 
     refresh.addEventListener('click', loadStatus);
+    applyFilter.addEventListener('click', loadLogsWithFilters);
     loadStatus();
     setInterval(loadStatus, 10000);
   </script>
