@@ -155,7 +155,10 @@
         <h1>CLI Verbose 日志</h1>
         <p>查看各智能体 CLI 子进程日志、输出与错误信息。</p>
       </div>
-      <button class="btn" onclick="loadAgents()">刷新</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn" onclick="window.open('/deps-monitor.html', '_blank')">运维日志</button>
+        <button class="btn" onclick="loadAgents()">刷新</button>
+      </div>
     </header>
 
     <div class="layout">

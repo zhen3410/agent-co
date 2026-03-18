@@ -147,7 +147,10 @@
         <h1>运维日志与依赖监控</h1>
         <p>统一风格展示 Redis 等依赖的实时健康状态。</p>
       </div>
-      <button id="refresh" class="btn">刷新</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn" onclick="window.open('/verbose-logs.html', '_blank')">CLI日志</button>
+        <button id="refresh" class="btn">刷新</button>
+      </div>
     </header>
 
     <section class="card">
