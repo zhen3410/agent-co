@@ -758,6 +758,15 @@
               <input type="text" id="agentAvatar" placeholder="🤖">
             </div>
             <div class="form-group">
+              <label class="form-label">CLI 类型</label>
+              <select id="agentCli">
+                <option value="claude">Claude</option>
+                <option value="codex">Codex</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
               <label class="form-label">生效策略</label>
               <select id="agentApplyMode">
                 <option value="immediate">热生效（立即）</option>
@@ -1108,7 +1117,7 @@
                 <div class="agent-avatar">${escapeHtml(agent.avatar)}</div>
                 <div class="agent-info">
                   <div class="agent-name">${escapeHtml(agent.name)}</div>
-                  <div class="agent-color">${escapeHtml(agent.color)}</div>
+                  <div class="agent-color">${escapeHtml(agent.color)} · ${(agent.cli || 'claude').toUpperCase()}</div>
                 </div>
               </div>
               <div class="agent-personality">${escapeHtml(agent.personality || '暂无描述')}</div>
@@ -1142,7 +1151,8 @@
         avatar: document.getElementById('agentAvatar').value.trim(),
         color: document.getElementById('agentColor').value.trim(),
         personality: document.getElementById('agentPersonality').value.trim(),
-        systemPrompt: document.getElementById('agentPrompt').value.trim()
+        systemPrompt: document.getElementById('agentPrompt').value.trim(),
+        cli: document.getElementById('agentCli').value
       };
     }
 
@@ -1151,6 +1161,7 @@
       document.getElementById('agentName').value = '';
       document.getElementById('agentAvatar').value = '';
       document.getElementById('agentColor').value = '#3b82f6';
+      document.getElementById('agentCli').value = 'claude';
       document.getElementById('agentPersonality').value = '';
       document.getElementById('agentPrompt').value = '';
       document.getElementById('agentSubmitBtn').textContent = '新增智能体';
@@ -1161,6 +1172,7 @@
       document.getElementById('agentName').value = agent.name;
       document.getElementById('agentAvatar').value = agent.avatar;
       document.getElementById('agentColor').value = agent.color;
+      document.getElementById('agentCli').value = agent.cli || 'claude';
       document.getElementById('agentPersonality').value = agent.personality || '';
       document.getElementById('agentPrompt').value = agent.systemPrompt || '';
       document.getElementById('agentSubmitBtn').textContent = `保存 ${agent.name}`;

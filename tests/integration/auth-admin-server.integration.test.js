@@ -157,6 +157,35 @@ test('智能体配置支持延迟生效并可显式应用', async () => {
   assert.equal(after.body.agents.some(agent => agent.name === 'Planner'), true);
 });
 
+test('手动新增智能体时可持久化 cli 类型为 codex', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const create = await fixture.request('/api/agents', {
+    method: 'POST',
+    headers,
+    body: {
+      applyMode: 'immediate',
+      agent: {
+        name: 'Reviewer',
+        avatar: '🧠',
+        color: '#2563eb',
+        personality: '擅长代码评审和架构建议。',
+        cli: 'codex'
+      }
+    }
+  });
+
+  assert.equal(create.status, 201);
+  assert.equal(create.body.agent.cli, 'codex');
+
+  const list = await fixture.request('/api/agents', { headers });
+  assert.equal(list.status, 200);
+
+  const created = list.body.agents.find(agent => agent.name === 'Reviewer');
+  assert.ok(created, 'should find created agent');
+  assert.equal(created.cli, 'codex');
+});
+
 
 test('智能体列表会补齐内置智能体，并保留手动添加的智能体', async () => {
   await fixture.cleanup();
