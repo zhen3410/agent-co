@@ -614,6 +614,22 @@
       overflow: hidden;
     }
 
+    .agent-prompt-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .agent-prompt-editor {
+      min-height: 88px;
+      margin-bottom: var(--space-sm);
+      font-size: 12px;
+      line-height: 1.45;
+      background: var(--bg-primary);
+    }
+
     .agent-actions {
       display: flex;
       gap: var(--space-sm);
@@ -1096,9 +1112,15 @@
                 </div>
               </div>
               <div class="agent-personality">${escapeHtml(agent.personality || '暂无描述')}</div>
+              <div class="agent-prompt-label">当前提示词</div>
+              <textarea
+                class="agent-prompt-editor"
+                data-agent-prompt="${escapeHtml(agent.name)}"
+                placeholder="留空则继续使用默认提示词策略"
+              >${escapeHtml(agent.systemPrompt || '')}</textarea>
               <div class="agent-actions">
                 <button class="btn btn-secondary btn-sm" data-action="edit-agent" data-index="${idx}">编辑</button>
-                <button class="btn btn-secondary btn-sm" onclick="editPrompt('${agent.name}')">改提示词</button>
+                <button class="btn btn-secondary btn-sm" onclick="editPrompt('${agent.name}')">保存提示词</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteAgent('${agent.name}')">删除</button>
               </div>
             </div>
@@ -1173,8 +1195,12 @@
     }
 
     async function editPrompt(name) {
-      const prompt = window.prompt(`请输入 ${name} 新提示词（留空跳过）`);
-      if (prompt === null) return;
+      const promptInput = document.querySelector(`[data-agent-prompt="${cssEscape(name)}"]`);
+      if (!promptInput) {
+        showToast('未找到提示词编辑框，请刷新后重试', 'error');
+        return;
+      }
+      const prompt = promptInput.value;
       const applyMode = document.getElementById('agentApplyMode').value;
       try {
         const response = await fetch(`/api/agents/${encodeURIComponent(name)}/prompt`, {
@@ -1189,6 +1215,13 @@
       } catch (error) {
         showToast('请求失败: ' + error.message, 'error');
       }
+    }
+
+    function cssEscape(value) {
+      if (window.CSS && typeof window.CSS.escape === 'function') {
+        return window.CSS.escape(value);
+      }
+      return value.replace(/["\\]/g, '\\$&');
     }
 
     async function deleteAgent(name) {
