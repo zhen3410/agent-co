@@ -4,6 +4,7 @@
   "description": "Multi AI Agent Chat Room",
   "main": "dist/server.js",
   "scripts": {
+    "init": "bash scripts/init-dev.sh",
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "start": "npm run start:chat",
     "dev": "ts-node src/server.ts",

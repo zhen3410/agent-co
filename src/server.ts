@@ -28,7 +28,7 @@ const SESSION_COOKIE_NAME = 'bot_room_session';
 const CHAT_VISITOR_COOKIE_NAME = 'bot_room_visitor';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 天
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
-const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || path.join(process.cwd(), 'logs', 'claude-verbose');
+const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || path.join(process.cwd(), 'logs', 'ai-cli-verbose');
 const DEFAULT_REDIS_URL = 'redis://127.0.0.1:6379';
 const REDIS_CONFIG_KEY = 'bot-room:config';
 const DEFAULT_REDIS_CHAT_SESSIONS_KEY = 'bot-room:chat:sessions:v1';
@@ -997,7 +997,13 @@ async function handleCallbackPostMessage(req: http.IncomingMessage, res: http.Se
     }
 
     const sessionId = String(req.headers['x-bot-room-session-id'] || '').trim();
-    const agentName = String(req.headers['x-bot-room-agent'] || 'AI').trim() || 'AI';
+    const rawAgentName = String(req.headers['x-bot-room-agent'] || 'AI').trim() || 'AI';
+    let agentName = rawAgentName;
+    try {
+      agentName = decodeURIComponent(rawAgentName);
+    } catch {
+      agentName = rawAgentName;
+    }
 
     if (!sessionId) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -1628,6 +1634,7 @@ function handleGetBlockStatus(req: http.IncomingMessage, res: http.ServerRespons
 
 interface VerboseLogMeta {
   fileName: string;
+  cli: string;
   agent: string;
   updatedAt: number;
   size: number;
@@ -1646,13 +1653,21 @@ function listVerboseLogs(): VerboseLogMeta[] {
       continue;
     }
 
-    const match = entry.name.match(/^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)-(.+)\.log$/);
-    const agent = match ? match[2] : 'unknown';
+    const match = entry.name.match(/^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)-([^-]+)-(.+)\.log$/);
+    const cli = match ? match[2] : 'unknown';
+    const encodedAgent = match ? match[3] : 'unknown';
+    let agent = encodedAgent;
+    try {
+      agent = decodeURIComponent(encodedAgent);
+    } catch {
+      agent = encodedAgent;
+    }
     const fullPath = path.join(VERBOSE_LOG_DIR, entry.name);
     const stat = fs.statSync(fullPath);
 
     logs.push({
       fileName: entry.name,
+      cli,
       agent,
       updatedAt: stat.mtimeMs,
       size: stat.size
