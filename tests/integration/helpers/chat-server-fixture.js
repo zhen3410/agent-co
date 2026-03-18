@@ -37,7 +37,7 @@ function parseSetCookie(setCookieHeader) {
     .map(item => item.trim().split(';')[0]);
 }
 
-async function createChatServerFixture() {
+async function createChatServerFixture(options = {}) {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-it-'));
   const port = getRandomPort();
   const agentDataFile = join(tempDir, 'agents.json');
@@ -53,7 +53,8 @@ async function createChatServerFixture() {
       BOT_ROOM_REDIS_REQUIRED: 'false',
       AGENT_DATA_FILE: agentDataFile,
       AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
-      AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`
+      AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
+      ...(options.env || {})
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });

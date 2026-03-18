@@ -12,7 +12,7 @@ import Redis from 'ioredis';
 import { Message, AIAgentConfig, ChatRequest, RichBlock } from './types';
 import { AgentManager } from './agent-manager';
 import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
-import { callClaudeCLI, generateMockReply } from './claude-cli';
+import { callClaudeCLI, generateMockReply, ClaudeResult } from './claude-cli';
 import { extractRichBlocks } from './rich-extract';
 import { addBlock, getStatus as getBlockBufferStatus } from './block-buffer';
 import { checkRateLimit, getClientIP } from './rate-limiter';
@@ -95,6 +95,22 @@ function appendDependencyStatusLog(entry: DependencyStatusLogEntry): void {
   dependencyStatusLogs.push(entry);
   if (dependencyStatusLogs.length > DEPENDENCY_STATUS_LOG_LIMIT) {
     dependencyStatusLogs.splice(0, dependencyStatusLogs.length - DEPENDENCY_STATUS_LOG_LIMIT);
+  }
+}
+
+function appendOperationalLog(level: 'info' | 'error', dependency: string, message: string): void {
+  const entry: DependencyStatusLogEntry = {
+    timestamp: Date.now(),
+    level,
+    dependency,
+    message
+  };
+  appendDependencyStatusLog(entry);
+  const prefix = `[Ops][${dependency}]`;
+  if (level === 'error') {
+    console.error(`${prefix} ${message}`);
+  } else {
+    console.log(`${prefix} ${message}`);
   }
 }
 
@@ -1134,6 +1150,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       if (!agent) continue;
 
       console.log(`[Chat] 调用 AI: ${agentName}`);
+      appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=start stream=false`);
 
       const includeHistory = mentions.length === 0;
       const callbackEnv: Record<string, string> = {
@@ -1144,15 +1161,19 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       };
 
       let fallbackMessage: Message | null = null;
+      let cliResult: ClaudeResult | null = null;
       try {
-        await callClaudeCLI(message, agent, userHistory, {
+        const result = await callClaudeCLI(message, agent, userHistory, {
           includeHistory,
           extraEnv: callbackEnv
         });
+        cliResult = result;
+        appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_done text_len=${result.text.length} blocks=${result.blocks.length}`);
       } catch (error: unknown) {
         const err = error as Error;
         console.log(`[Chat] AI CLI 不可用: ${err.message}`);
         console.log('[Chat] 使用模拟回复');
+        appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_error error=${err.message}`);
         const mockText = generateMockReply(message, agentName);
         const extracted = extractRichBlocks(mockText);
         fallbackMessage = {
@@ -1171,12 +1192,29 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
         aiMessages.push(reply);
       }
 
+      if (callbackReplies.length === 0 && cliResult && (cliResult.text || cliResult.blocks.length > 0)) {
+        const directMessage: Message = {
+          id: generateId(),
+          role: 'assistant',
+          sender: agentName,
+          text: cliResult.text,
+          blocks: cliResult.blocks as RichBlock[],
+          timestamp: Date.now()
+        };
+        userHistory.push(directMessage);
+        aiMessages.push(directMessage);
+        appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=direct_fallback reason=no_callback`);
+      }
+
       if (callbackReplies.length === 0 && fallbackMessage) {
         userHistory.push(fallbackMessage);
         aiMessages.push(fallbackMessage);
       }
 
       touchSession(session);
+      if (callbackReplies.length === 0 && !fallbackMessage && (!cliResult || (!cliResult.text && cliResult.blocks.length === 0))) {
+        appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=empty_visible_message`);
+      }
       console.log(`[Chat] ${agentName} 回复完成，可见消息=${callbackReplies.length}${fallbackMessage && callbackReplies.length === 0 ? ' (fallback)' : ''}`);
     }
 
@@ -1302,6 +1340,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       if (!agent) return null;
 
       console.log(`[ChatStream] 并发调用 AI: ${agentName}`);
+      appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=start stream=true`);
 
       const includeHistory = mentions.length === 0;
       const callbackEnv: Record<string, string> = {
@@ -1312,14 +1351,18 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       };
 
       let fallbackMessage: Message | null = null;
+      let cliResult: ClaudeResult | null = null;
       try {
-        await callClaudeCLI(message, agent, userHistory, {
+        const result = await callClaudeCLI(message, agent, userHistory, {
           includeHistory,
           extraEnv: callbackEnv
         });
+        cliResult = result;
+        appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_done text_len=${result.text.length} blocks=${result.blocks.length}`);
       } catch (error: unknown) {
         const err = error as Error;
         console.log(`[ChatStream] AI CLI 不可用: ${err.message}`);
+        appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_error error=${err.message}`);
         const mockText = generateMockReply(message, agentName);
         const extracted = extractRichBlocks(mockText);
         fallbackMessage = {
@@ -1333,7 +1376,22 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       }
 
       const callbackReplies = consumeCallbackMessages(session.id, agentName);
-      const visibleMessages = callbackReplies.length > 0 ? callbackReplies : (fallbackMessage ? [fallbackMessage] : []);
+      const visibleMessages = callbackReplies.length > 0
+        ? callbackReplies
+        : (cliResult && (cliResult.text || cliResult.blocks.length > 0)
+          ? [{
+            id: generateId(),
+            role: 'assistant' as const,
+            sender: agentName,
+            text: cliResult.text,
+            blocks: cliResult.blocks as RichBlock[],
+            timestamp: Date.now()
+          }]
+          : (fallbackMessage ? [fallbackMessage] : []));
+
+      if (callbackReplies.length === 0 && cliResult && (cliResult.text || cliResult.blocks.length > 0)) {
+        appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=direct_fallback reason=no_callback`);
+      }
 
       for (const visibleMessage of visibleMessages) {
         userHistory.push(visibleMessage);
@@ -1341,6 +1399,9 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
         sendEvent('agent_message', visibleMessage);
       }
 
+      if (visibleMessages.length === 0) {
+        appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=empty_visible_message`);
+      }
       console.log(`[ChatStream] ${agentName} 回复已推送: ${visibleMessages.length}`);
 
       return visibleMessages;

@@ -14,6 +14,7 @@ import { digestHistory } from './rich-digest';
 import { extractRichBlocks } from './rich-extract';
 
 const CLI_TIMEOUT_MS = 30 * 60 * 1000;
+const CLI_HEARTBEAT_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_LINE_LENGTH = 10 * 1024 * 1024;
 const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || 'logs/ai-cli-verbose';
 
@@ -154,17 +155,45 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
     let result = '';
     let finalResult = '';
     let stderrData = '';
+    let lastHeartbeat = Date.now();
+    let isTerminating = false;
+
+    const onHeartbeat = () => {
+      lastHeartbeat = Date.now();
+    };
+
+    const gracefulKill = (reason: string) => {
+      if (isTerminating) return;
+      isTerminating = true;
+      logVerbose('meta', reason);
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (!child.killed) {
+          logVerbose('meta', 'SIGTERM 后进程未退出，发送 SIGKILL');
+          child.kill('SIGKILL');
+        }
+      }, 5000);
+    };
 
     const timeoutId = setTimeout(() => {
       console.error(`[${cli.toUpperCase()} CLI] 超时，正在终止...`);
-      child.kill('SIGTERM');
+      gracefulKill(`超过总超时 ${CLI_TIMEOUT_MS}ms，终止子进程`);
     }, CLI_TIMEOUT_MS);
+    const heartbeatId = setInterval(() => {
+      const elapsed = Date.now() - lastHeartbeat;
+      if (elapsed > CLI_HEARTBEAT_TIMEOUT_MS) {
+        console.error(`[${cli.toUpperCase()} CLI] 心跳超时 ${elapsed}ms，正在终止...`);
+        gracefulKill(`心跳超时 ${elapsed}ms，无任何输出`);
+      }
+    }, 30000);
 
     child.stderr?.on('data', (data) => {
+      onHeartbeat();
       const content = data.toString();
       stderrData += content;
       logVerbose('stderr', content.trimEnd());
     });
+    child.stdout?.on('data', onHeartbeat);
 
     const rl = readline.createInterface({
       input: child.stdout!,
@@ -173,6 +202,7 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
 
     rl.on('line', (line) => {
       if (!line.trim()) return;
+      onHeartbeat();
       logVerbose('stdout', line);
 
       if (line.length > MAX_LINE_LENGTH) {
@@ -204,6 +234,7 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
 
     child.on('close', (code) => {
       clearTimeout(timeoutId);
+      clearInterval(heartbeatId);
 
       if (code !== 0 && !result && !finalResult) {
         const errorMsg = stderrData.trim() || `Exit code: ${code}`;
@@ -219,6 +250,7 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
 
     child.on('error', (err) => {
       clearTimeout(timeoutId);
+      clearInterval(heartbeatId);
       reject(new Error(`无法启动 ${cli.toUpperCase()} CLI: ${err.message}`));
     });
   });
