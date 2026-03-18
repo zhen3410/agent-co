@@ -81,6 +81,27 @@ interface DependencyStatusItem {
   detail: string;
 }
 
+interface DependencyStatusLogEntry {
+  timestamp: number;
+  level: 'info' | 'error';
+  dependency: string;
+  message: string;
+}
+
+const DEPENDENCY_STATUS_LOG_LIMIT = 80;
+const dependencyStatusLogs: DependencyStatusLogEntry[] = [];
+
+function appendDependencyStatusLog(entry: DependencyStatusLogEntry): void {
+  dependencyStatusLogs.push(entry);
+  if (dependencyStatusLogs.length > DEPENDENCY_STATUS_LOG_LIMIT) {
+    dependencyStatusLogs.splice(0, dependencyStatusLogs.length - DEPENDENCY_STATUS_LOG_LIMIT);
+  }
+}
+
+function listDependencyStatusLogs(): DependencyStatusLogEntry[] {
+  return [...dependencyStatusLogs].sort((a, b) => b.timestamp - a.timestamp);
+}
+
 interface RedisPersistedState {
   version: 1;
   userChatSessions: Record<string, UserChatSession[]>;
@@ -210,11 +231,19 @@ async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
 
   try {
     const pong = await redisClient.ping();
+    const healthy = pong === 'PONG';
+    const detail = healthy ? 'PONG' : `返回异常: ${pong}`;
     result.push({
       name: 'redis',
       required: REDIS_REQUIRED,
-      healthy: pong === 'PONG',
-      detail: pong === 'PONG' ? 'PONG' : `返回异常: ${pong}`
+      healthy,
+      detail
+    });
+    appendDependencyStatusLog({
+      timestamp: Date.now(),
+      level: healthy ? 'info' : 'error',
+      dependency: 'redis',
+      message: detail
     });
   } catch (error) {
     const err = error as Error;
@@ -224,6 +253,12 @@ async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
       healthy: false,
       detail: err.message
     });
+    appendDependencyStatusLog({
+      timestamp: Date.now(),
+      level: 'error',
+      dependency: 'redis',
+      message: err.message
+    });
   }
 
   return result;
@@ -232,11 +267,13 @@ async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
 function handleGetDependenciesStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
   void collectDependencyStatus().then((dependencies) => {
     const healthy = dependencies.every(item => !item.required || item.healthy);
+    const logs = listDependencyStatusLogs();
     res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       healthy,
       checkedAt: Date.now(),
-      dependencies
+      dependencies,
+      logs
     }));
   }).catch((error: unknown) => {
     const err = error as Error;
