@@ -317,26 +317,25 @@
 
     async function switchSession(sessionId) {
       if (!sessionId || sessionId === activeSessionId || isLoading) return;
-      const response = await fetch('/api/sessions/select', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ sessionId })
-      });
-      if (!response.ok) {
+      try {
+        const response = await fetch('/api/sessions/select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ sessionId })
+        });
+        if (!response.ok) {
+          alert('切换会话失败');
+          renderSessionList();
+          return;
+        }
+        await loadHistory();
+        closeSessionManager();
+      } catch (error) {
+        console.error('切换会话失败:', error);
         alert('切换会话失败');
         renderSessionList();
-        return;
       }
-      const data = await response.json();
-      history = data.messages || [];
-      currentAgent = data.currentAgent || null;
-      activeSessionId = data.activeSessionId || null;
-      chatSessions = data.chatSessions || [];
-      renderSessionList();
-      updateCurrentAgentUI();
-      renderMessages();
-      closeSessionManager();
     }
 
     async function createSession() {
