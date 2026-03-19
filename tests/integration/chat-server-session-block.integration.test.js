@@ -111,3 +111,59 @@ test('block 接口支持校验入参与状态查询（需先登录）', async ()
     await fixture.cleanup();
   }
 });
+
+test('切换会话后 /api/history 返回对应会话记录（需先登录）', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const seedDefault = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: 'default session message' }
+    });
+    assert.equal(seedDefault.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'session B' }
+    });
+    assert.equal(createResponse.status, 200);
+    const secondSessionId = createResponse.body.session.id;
+
+    const seedSecond = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: 'second session message' }
+    });
+    assert.equal(seedSecond.status, 200);
+
+    const selectDefault = await fixture.request('/api/sessions/select', {
+      method: 'POST',
+      body: { sessionId: 'default' }
+    });
+    assert.equal(selectDefault.status, 200);
+    assert.equal(selectDefault.body.activeSessionId, 'default');
+
+    const defaultHistory = await fixture.request('/api/history');
+    assert.equal(defaultHistory.status, 200);
+    assert.equal(defaultHistory.body.activeSessionId, 'default');
+    assert.equal(defaultHistory.body.messages.some((msg) => msg.text === 'default session message'), true);
+    assert.equal(defaultHistory.body.messages.some((msg) => msg.text === 'second session message'), false);
+
+    const selectSecond = await fixture.request('/api/sessions/select', {
+      method: 'POST',
+      body: { sessionId: secondSessionId }
+    });
+    assert.equal(selectSecond.status, 200);
+    assert.equal(selectSecond.body.activeSessionId, secondSessionId);
+
+    const secondHistory = await fixture.request('/api/history');
+    assert.equal(secondHistory.status, 200);
+    assert.equal(secondHistory.body.activeSessionId, secondSessionId);
+    assert.equal(secondHistory.body.messages.some((msg) => msg.text === 'second session message'), true);
+    assert.equal(secondHistory.body.messages.some((msg) => msg.text === 'default session message'), false);
+  } finally {
+    await fixture.cleanup();
+  }
+});
