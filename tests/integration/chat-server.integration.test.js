@@ -127,7 +127,8 @@ printf '{"output_text":"这是 Codex 直接回复（无回调）"}\\n'
 
   const fixture = await createChatServerFixture({
     env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
+      PATH: `${tempDir}:${process.env.PATH || ''}`,
+      BOT_ROOM_VERBOSE_LOG_DIR: join(tempDir, 'verbose-logs')
     }
   });
 
@@ -149,6 +150,38 @@ printf '{"output_text":"这是 Codex 直接回复（无回调）"}\\n'
     assert.ok(messages.some(msg => msg.includes('stage=start')));
     assert.ok(messages.some(msg => msg.includes('stage=cli_done')));
     assert.ok(messages.some(msg => msg.includes('stage=direct_fallback')));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('verbose 日志列表能正确显示中文智能体名 Codex架构师', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-verbose-'));
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '{"output_text":"verbose log test"}\\n'
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Codex架构师 产生日志' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    const agentsResponse = await fixture.request('/api/verbose/agents');
+    assert.equal(agentsResponse.status, 200);
+    assert.ok(Array.isArray(agentsResponse.body.agents));
+    assert.ok(agentsResponse.body.agents.some(item => item.agent === 'Codex架构师'));
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -181,6 +214,81 @@ printf '{"output_text":"SSE 直出回复"}\\n'
     assert.ok(streamResponse.text.includes('event: agent_message'));
     assert.ok(streamResponse.text.includes('SSE 直出回复'));
     assert.ok(streamResponse.text.includes('event: done'));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('Codex 架构师可通过 callback 接口回传中文智能体名消息，避免因 header 编码问题丢失可见消息', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-callback-'));
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
+const apiUrl = process.env.BOT_ROOM_API_URL || '';
+const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+
+(async () => {
+  const contextUrl = new URL('/api/callbacks/thread-context', apiUrl);
+  contextUrl.searchParams.set('sessionid', sessionId);
+  const encodedAgentName = encodeURIComponent(agentName);
+
+  await fetch(contextUrl, {
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    }
+  });
+
+  await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content: '已通过 MCP 回调' })
+  });
+
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Codex架构师 请通过 callback 回复' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
+    assert.ok(codexMessage, 'should include Codex callback message');
+    assert.equal(codexMessage.text, '已通过 MCP 回调');
+
+    const logsResponse = await fixture.request('/api/dependencies/logs?dependency=chat-exec&keyword=Codex%E6%9E%B6%E6%9E%84%E5%B8%88');
+    assert.equal(logsResponse.status, 200);
+    const messages = logsResponse.body.logs.map(item => item.message);
+    assert.ok(messages.some(msg => msg.includes('stage=start')));
+    assert.ok(messages.some(msg => msg.includes('stage=cli_done')));
+    assert.ok(!messages.some(msg => msg.includes('stage=empty_visible_message')));
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

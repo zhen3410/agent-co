@@ -7,12 +7,16 @@ const CALLBACK_TOKEN = process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback
 const SESSION_ID = process.env.BOT_ROOM_SESSION_ID;
 const AGENT_NAME = process.env.BOT_ROOM_AGENT_NAME || 'AI';
 
+function encodeHeaderValue(value: string): string {
+  return encodeURIComponent(value);
+}
+
 function authHeaders(): Record<string, string> {
   return {
     Authorization: `Bearer ${CALLBACK_TOKEN}`,
     'x-bot-room-callback-token': CALLBACK_TOKEN,
     'x-bot-room-session-id': SESSION_ID || '',
-    'x-bot-room-agent': AGENT_NAME
+    'x-bot-room-agent': encodeHeaderValue(AGENT_NAME)
   };
 }
 

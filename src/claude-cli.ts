@@ -19,10 +19,13 @@ const MAX_LINE_LENGTH = 10 * 1024 * 1024;
 const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || 'logs/ai-cli-verbose';
 
 type CliKind = 'claude' | 'codex';
+type McpConfig = { mcpConfig: string; allowedTools: string };
+const CODEX_MCP_SERVER_NAME = 'botroom';
+const CLAUDE_MCP_SERVER_NAME = 'bot-room';
 
 function createVerboseLogger(agentName: string, cli: CliKind): (channel: 'stdout' | 'stderr' | 'meta', content: string) => void {
   mkdirSync(VERBOSE_LOG_DIR, { recursive: true });
-  const safeAgentName = agentName.replace(/[^a-zA-Z0-9-_]/g, '_');
+  const safeAgentName = encodeURIComponent(agentName);
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const logPath = join(VERBOSE_LOG_DIR, `${timestamp}-${cli}-${safeAgentName}.log`);
 
@@ -42,6 +45,72 @@ export interface ClaudeCallOptions {
   includeHistory?: boolean;
   extraEnv?: Record<string, string>;
 }
+
+function collectTextFromValue(value: unknown, inAssistantContext = false): string[] {
+  if (!value) return [];
+
+  if (typeof value === 'string') {
+    return inAssistantContext && value ? [value] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap(item => collectTextFromValue(item, inAssistantContext));
+  }
+
+  if (typeof value !== 'object') {
+    return [];
+  }
+
+  const record = value as Record<string, unknown>;
+  const chunks: string[] = [];
+  const assistantRole = typeof record.role === 'string' ? record.role === 'assistant' : false;
+  const assistantType = typeof record.type === 'string' ? record.type === 'assistant' : false;
+  const isAssistantContext = inAssistantContext || assistantRole || assistantType;
+  const content = Array.isArray(record.content) ? record.content : null;
+
+  if (typeof record.output_text === 'string' && record.output_text) {
+    chunks.push(record.output_text);
+  }
+
+  if ((isAssistantContext || record.type === 'output_text') && typeof record.text === 'string' && record.text) {
+    chunks.push(record.text);
+  }
+
+  for (const key of ['result', 'delta'] as const) {
+    if ((isAssistantContext || record.type === 'output_text') && typeof record[key] === 'string' && record[key]) {
+      chunks.push(record[key] as string);
+    }
+  }
+
+  if (record.type === 'output_text' && typeof record.text === 'string') {
+    return chunks;
+  }
+
+  if (record.type === 'message' && content) {
+    return chunks.concat(content.flatMap(item => collectTextFromValue(item, isAssistantContext)));
+  }
+
+  if (record.message) {
+    chunks.push(...collectTextFromValue(record.message, isAssistantContext));
+  }
+
+  if (record.item) {
+    chunks.push(...collectTextFromValue(record.item, isAssistantContext));
+  }
+
+  if (record.payload) {
+    chunks.push(...collectTextFromValue(record.payload, isAssistantContext));
+  }
+
+  if (content) {
+    for (const item of content) {
+      chunks.push(...collectTextFromValue(item, isAssistantContext));
+    }
+  }
+
+  return chunks;
+}
+
 function buildPrompt(userMessage: string, agent: AIAgent, history: Message[], includeHistory: boolean): string {
   const parts: string[] = [agent.systemPrompt];
 
@@ -78,7 +147,7 @@ function resolveCli(agent: AIAgent): CliKind {
 }
 
 
-function buildMcpConfig(extraEnv: Record<string, string>): { mcpConfig: string; allowedTools: string } | null {
+function buildMcpConfig(extraEnv: Record<string, string>): McpConfig | null {
   const apiUrl = extraEnv.BOT_ROOM_API_URL;
   const sessionId = extraEnv.BOT_ROOM_SESSION_ID;
   if (!apiUrl || !sessionId) {
@@ -91,7 +160,7 @@ function buildMcpConfig(extraEnv: Record<string, string>): { mcpConfig: string; 
 
   const mcpConfig = JSON.stringify({
     mcpServers: {
-      'bot-room': {
+      [CLAUDE_MCP_SERVER_NAME]: {
         command: 'node',
         args: [mcpServerScript],
         env: {
@@ -106,19 +175,29 @@ function buildMcpConfig(extraEnv: Record<string, string>): { mcpConfig: string; 
 
   return {
     mcpConfig,
-    allowedTools: 'mcp__bot-room__bot_room_post_message,mcp__bot-room__bot_room_get_context'
+    allowedTools: `mcp__${CLAUDE_MCP_SERVER_NAME}__bot_room_post_message,mcp__${CLAUDE_MCP_SERVER_NAME}__bot_room_get_context`
   };
 }
 
 function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, string>): { command: string; args: string[]; env: Record<string, string> } {
   const env = { ...process.env, ...extraEnv } as Record<string, string>;
+  const mcp = buildMcpConfig(extraEnv);
+  const codexMcpKey = `mcp_servers.${CODEX_MCP_SERVER_NAME}`;
+  const codexMcpEnv = {
+    BOT_ROOM_API_URL: extraEnv.BOT_ROOM_API_URL,
+    BOT_ROOM_SESSION_ID: extraEnv.BOT_ROOM_SESSION_ID,
+    BOT_ROOM_CALLBACK_TOKEN: extraEnv.BOT_ROOM_CALLBACK_TOKEN || process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token',
+    BOT_ROOM_AGENT_NAME: extraEnv.BOT_ROOM_AGENT_NAME || process.env.BOT_ROOM_AGENT_NAME || 'AI'
+  };
+  const codexMcpEnvToml = `{ ${Object.entries(codexMcpEnv)
+    .map(([key, value]) => `${key}=${JSON.stringify(value ?? '')}`)
+    .join(', ')} }`;
 
   if (cli === 'claude') {
     delete (env as Record<string, unknown>).CLAUDECODE;
     delete (env as Record<string, unknown>).CLAUDE_SESSION_ID;
 
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
-    const mcp = buildMcpConfig(extraEnv);
     if (mcp) {
       args.push('--mcp-config', mcp.mcpConfig, '--allowedTools', mcp.allowedTools);
     }
@@ -131,17 +210,36 @@ function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, 
   }
 
   delete (env as Record<string, unknown>).CODEX_SESSION_ID;
+  const args = ['exec', prompt, '--json'];
+  if (mcp) {
+    args.push(
+      '-c',
+      `${codexMcpKey}.command="node"`,
+      '-c',
+      `${codexMcpKey}.args=${JSON.stringify([join(process.cwd(), 'dist', 'bot-room-mcp-server.js')])}`,
+      '-c',
+      `${codexMcpKey}.env=${codexMcpEnvToml}`,
+      '-c',
+      `tools.allowed=${JSON.stringify([
+        `mcp__${CODEX_MCP_SERVER_NAME}__bot_room_post_message`,
+        `mcp__${CODEX_MCP_SERVER_NAME}__bot_room_get_context`
+      ])}`
+    );
+  }
   return {
     command: 'codex',
-    args: ['exec', prompt, '--json'],
+    args,
     env
   };
 }
 
 export async function callClaudeCLI(userMessage: string, agent: AIAgent, history: Message[], options: ClaudeCallOptions = {}): Promise<ClaudeResult> {
   return new Promise((resolve, reject) => {
-    const prompt = buildPrompt(userMessage, agent, history, options.includeHistory !== false);
     const cli = resolveCli(agent);
+    const prompt = buildPrompt(userMessage, agent, history, options.includeHistory !== false)
+      + (cli === 'codex' && options.includeHistory === false
+        ? `\n在 Codex 环境中，这两个工具通常显示为 functions.mcp__${CODEX_MCP_SERVER_NAME}__bot_room_get_context 和 functions.mcp__${CODEX_MCP_SERVER_NAME}__bot_room_post_message。`
+        : '');
     console.log(`\n[${cli.toUpperCase()} CLI] Agent: ${agent.name}, Prompt length: ${prompt.length}`);
     const logVerbose = createVerboseLogger(agent.name, cli);
     logVerbose('meta', `Prompt length: ${prompt.length}`);
@@ -216,16 +314,9 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
           finalResult = event.result;
         }
 
-        if (event.type === 'assistant' && event.message?.content) {
-          for (const block of event.message.content) {
-            if (block.type === 'text') {
-              result += block.text;
-            }
-          }
-        } else if (typeof event.text === 'string') {
-          result += event.text;
-        } else if (typeof event.output_text === 'string') {
-          result += event.output_text;
+        const extractedTexts = collectTextFromValue(event);
+        if (extractedTexts.length > 0) {
+          result += extractedTexts.join('');
         }
       } catch {
         result += `${line}\n`;
