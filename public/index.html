@@ -831,6 +831,38 @@
     // API 调用
     // ============================================
 
+    async function recoverViaDirectChat(text) {
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ message: text })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (Array.isArray(data.aiMessages)) {
+          for (const aiMsg of data.aiMessages) {
+            history.push(aiMsg);
+            addMessage(aiMsg);
+          }
+        }
+        if (data.currentAgent) {
+          currentAgent = data.currentAgent;
+          updateCurrentAgentUI();
+        }
+        statusEl.textContent = '已连接（已自动降级到普通模式）';
+        return true;
+      } catch (fallbackError) {
+        console.error('降级到 /api/chat 失败:', fallbackError);
+        return false;
+      }
+    }
+
     async function sendMessage(event) {
       event.preventDefault();
 
@@ -927,13 +959,16 @@
 
       } catch (error) {
         console.error('发送失败:', error);
-        statusEl.textContent = '连接失败';
-
-        addMessage({
-          role: 'assistant',
-          sender: '系统',
-          text: `❌ 发送失败: ${error.message}`
-        });
+        statusEl.textContent = '流式连接失败，尝试降级...';
+        const recovered = await recoverViaDirectChat(text);
+        if (!recovered) {
+          statusEl.textContent = '连接失败';
+          addMessage({
+            role: 'assistant',
+            sender: '系统',
+            text: `❌ 发送失败: ${error.message}`
+          });
+        }
       } finally {
         isLoading = false;
         sendBtnEl.disabled = false;
