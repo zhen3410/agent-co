@@ -46,15 +46,15 @@ export interface ClaudeCallOptions {
   extraEnv?: Record<string, string>;
 }
 
-function collectTextFromValue(value: unknown): string[] {
+function collectTextFromValue(value: unknown, inAssistantContext = false): string[] {
   if (!value) return [];
 
   if (typeof value === 'string') {
-    return value ? [value] : [];
+    return inAssistantContext && value ? [value] : [];
   }
 
   if (Array.isArray(value)) {
-    return value.flatMap(collectTextFromValue);
+    return value.flatMap(item => collectTextFromValue(item, inAssistantContext));
   }
 
   if (typeof value !== 'object') {
@@ -63,11 +63,21 @@ function collectTextFromValue(value: unknown): string[] {
 
   const record = value as Record<string, unknown>;
   const chunks: string[] = [];
-  const directKeys = ['text', 'output_text', 'result', 'delta'];
+  const assistantRole = typeof record.role === 'string' ? record.role === 'assistant' : false;
+  const assistantType = typeof record.type === 'string' ? record.type === 'assistant' : false;
+  const isAssistantContext = inAssistantContext || assistantRole || assistantType;
   const content = Array.isArray(record.content) ? record.content : null;
 
-  for (const key of directKeys) {
-    if (typeof record[key] === 'string' && record[key]) {
+  if (typeof record.output_text === 'string' && record.output_text) {
+    chunks.push(record.output_text);
+  }
+
+  if ((isAssistantContext || record.type === 'output_text') && typeof record.text === 'string' && record.text) {
+    chunks.push(record.text);
+  }
+
+  for (const key of ['result', 'delta'] as const) {
+    if ((isAssistantContext || record.type === 'output_text') && typeof record[key] === 'string' && record[key]) {
       chunks.push(record[key] as string);
     }
   }
@@ -77,33 +87,24 @@ function collectTextFromValue(value: unknown): string[] {
   }
 
   if (record.type === 'message' && content) {
-    return chunks.concat(content.flatMap(collectTextFromValue));
+    return chunks.concat(content.flatMap(item => collectTextFromValue(item, isAssistantContext)));
   }
 
   if (record.message) {
-    chunks.push(...collectTextFromValue(record.message));
+    chunks.push(...collectTextFromValue(record.message, isAssistantContext));
   }
 
   if (record.item) {
-    chunks.push(...collectTextFromValue(record.item));
+    chunks.push(...collectTextFromValue(record.item, isAssistantContext));
   }
 
   if (record.payload) {
-    chunks.push(...collectTextFromValue(record.payload));
+    chunks.push(...collectTextFromValue(record.payload, isAssistantContext));
   }
 
   if (content) {
     for (const item of content) {
-      if (item && typeof item === 'object') {
-        const block = item as Record<string, unknown>;
-        if (block.type === 'text' && typeof block.text === 'string') {
-          chunks.push(block.text);
-        } else if (block.type === 'output_text' && typeof block.text === 'string') {
-          chunks.push(block.text);
-        } else {
-          chunks.push(...collectTextFromValue(block));
-        }
-      }
+      chunks.push(...collectTextFromValue(item, isAssistantContext));
     }
   }
 

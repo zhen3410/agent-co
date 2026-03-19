@@ -146,3 +146,34 @@ printf '{"type":"response_item","payload":{"type":"message","role":"assistant","
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('Codex CLI 不会把 response_item 中的用户 input_text 拼接到最终回复', { concurrency: false }, async () => {
+  const { callClaudeCLI } = require('../../dist/claude-cli.js');
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-filter-'));
+  const fakeCodex = join(tempDir, 'codex');
+
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"secret user prompt"}]}}\\n'
+printf '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"assistant ok"}]}}\\n'
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${tempDir}:${originalPath || ''}`;
+
+  try {
+    const agent = {
+      name: 'Codex架构师',
+      avatar: '🏗️',
+      systemPrompt: '你是测试架构师',
+      color: '#8b5cf6',
+      cli: 'codex'
+    };
+
+    const response = await callClaudeCLI('请处理任务', agent, []);
+    assert.equal(response.text, 'assistant ok');
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
