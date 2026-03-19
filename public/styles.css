@@ -1101,7 +1101,29 @@ body.sheet-open {
 
   .agents-bar {
     padding: var(--space-sm) var(--space-md);
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    align-items: center;
+  }
+
+  .agents-list {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+
+  .agents-list::-webkit-scrollbar {
+    height: 4px;
+  }
+
+  .agents-list::-webkit-scrollbar-thumb {
+    background: var(--border-light);
+    border-radius: 999px;
+  }
+
+  .agent-tag {
+    flex-shrink: 0;
   }
 
   .messages {
