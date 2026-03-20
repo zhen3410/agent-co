@@ -175,6 +175,11 @@ test('对话页支持读取并设置当前智能体工作目录', async () => {
     const loginResponse = await fixture.login();
     assert.equal(loginResponse.status, 200);
 
+    const roots = await fixture.request('/api/system/dirs?path=/');
+    assert.equal(roots.status, 200);
+    assert.equal(Array.isArray(roots.body.directories), true);
+    assert.equal(roots.body.directories.every(item => item.path.startsWith('/')), true);
+
     const options = await fixture.request('/api/workdirs/options');
     assert.equal(options.status, 200);
     assert.equal(Array.isArray(options.body.options), true);

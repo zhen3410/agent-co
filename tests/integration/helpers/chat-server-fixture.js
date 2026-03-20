@@ -51,6 +51,7 @@ async function createChatServerFixture(options = {}) {
       PORT: String(port),
       BOT_ROOM_AUTH_ENABLED: 'true',
       BOT_ROOM_REDIS_REQUIRED: 'false',
+      BOT_ROOM_DISABLE_REDIS: 'true',
       AGENT_DATA_FILE: agentDataFile,
       AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
       AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,

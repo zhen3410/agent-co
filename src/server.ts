@@ -34,6 +34,7 @@ const REDIS_CONFIG_KEY = 'bot-room:config';
 const DEFAULT_REDIS_CHAT_SESSIONS_KEY = 'bot-room:chat:sessions:v1';
 const REDIS_PERSIST_DEBOUNCE_MS = 500;
 const REDIS_REQUIRED = process.env.BOT_ROOM_REDIS_REQUIRED !== 'false';
+const REDIS_DISABLED = process.env.BOT_ROOM_DISABLE_REDIS === 'true';
 const CALLBACK_AUTH_TOKEN = process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
 const CALLBACK_AUTH_HEADER = 'x-bot-room-callback-token';
 
@@ -176,6 +177,7 @@ interface RedisPersistedState {
 }
 
 async function loadRuntimeConfigFromRedis(): Promise<void> {
+  if (REDIS_DISABLED) return;
   try {
     const config = await redisClient.hgetall(REDIS_CONFIG_KEY);
     const configuredKey = (config.chat_sessions_key || '').trim();
@@ -211,7 +213,7 @@ function serializeChatSessionsState(): RedisPersistedState {
 }
 
 async function persistChatSessionsToRedis(): Promise<void> {
-  if (!redisClient || !redisReady) return;
+  if (REDIS_DISABLED || !redisClient || !redisReady) return;
 
   try {
     const payload = JSON.stringify(serializeChatSessionsState());
@@ -222,7 +224,7 @@ async function persistChatSessionsToRedis(): Promise<void> {
 }
 
 function schedulePersistChatSessions(): void {
-  if (!redisClient || !redisReady) return;
+  if (REDIS_DISABLED || !redisClient || !redisReady) return;
 
   if (persistTimer) {
     clearTimeout(persistTimer);
@@ -235,6 +237,10 @@ function schedulePersistChatSessions(): void {
 }
 
 async function hydrateChatSessionsFromRedis(): Promise<void> {
+  if (REDIS_DISABLED) {
+    console.warn('[Redis] 已通过 BOT_ROOM_DISABLE_REDIS=true 禁用会话持久化');
+    return;
+  }
   if (!redisClient) return;
 
   try {
@@ -298,6 +304,22 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
 
 async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
   const result: DependencyStatusItem[] = [];
+
+  if (REDIS_DISABLED) {
+    result.push({
+      name: 'redis',
+      required: REDIS_REQUIRED,
+      healthy: true,
+      detail: 'disabled by BOT_ROOM_DISABLE_REDIS=true'
+    });
+    appendDependencyStatusLog({
+      timestamp: Date.now(),
+      level: 'info',
+      dependency: 'redis',
+      message: 'disabled by BOT_ROOM_DISABLE_REDIS=true'
+    });
+    return result;
+  }
 
   try {
     const pong = await redisClient.ping();
@@ -1530,6 +1552,19 @@ function handleGetWorkdirOptions(req: http.IncomingMessage, res: http.ServerResp
   }
 }
 
+function handleGetSystemDirs(req: http.IncomingMessage, res: http.ServerResponse, requestUrl: URL): void {
+  try {
+    const targetPath = requestUrl.searchParams.get('path') || '/';
+    const directories = listDirectories(targetPath);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ directories }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
 async function handleSetWorkdir(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
     const body = await parseBody<{ agentName?: string; workdir?: string }>(req);
@@ -1959,6 +1994,8 @@ const server = http.createServer(async (req, res) => {
     handleGetDependenciesStatus(req, res);
   } else if (requestUrl.pathname === '/api/dependencies/logs' && method === 'GET') {
     handleQueryDependenciesLogs(req, res, requestUrl);
+  } else if (requestUrl.pathname === '/api/system/dirs' && method === 'GET') {
+    handleGetSystemDirs(req, res, requestUrl);
   } else if (requestUrl.pathname === '/api/workdirs/options' && method === 'GET') {
     handleGetWorkdirOptions(req, res);
   } else if (requestUrl.pathname === '/api/workdirs/select' && method === 'POST') {
@@ -2034,7 +2071,11 @@ async function startServer(): Promise<void> {
   } else {
     console.log('🔓 鉴权未启用: 设置 BOT_ROOM_AUTH_ENABLED=false');
   }
-  console.log(`🧠 Redis 会话持久化已启用: url=${DEFAULT_REDIS_URL}, key=${redisChatSessionsKey}`);
+  if (REDIS_DISABLED) {
+    console.log('🧠 Redis 会话持久化已禁用: BOT_ROOM_DISABLE_REDIS=true');
+  } else {
+    console.log(`🧠 Redis 会话持久化已启用: url=${DEFAULT_REDIS_URL}, key=${redisChatSessionsKey}`);
+  }
   console.log('='.repeat(60));
   });
 }
@@ -2045,7 +2086,7 @@ async function shutdown(): Promise<void> {
     persistTimer = null;
   }
   await persistChatSessionsToRedis();
-  if (redisReady) {
+  if (!REDIS_DISABLED && redisReady) {
     await redisClient.quit();
   }
 }
