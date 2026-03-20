@@ -49,6 +49,7 @@ interface UserChatSession {
   name: string;
   history: Message[];
   currentAgent: string | null;
+  enabledAgents?: string[];
   agentWorkdirs?: Record<string, string>;
   createdAt: number;
   updatedAt: number;
@@ -269,6 +270,7 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
           name: normalizeSessionName(session.name),
           history: Array.isArray(session.history) ? session.history : [],
           currentAgent: session.currentAgent || null,
+          enabledAgents: sanitizeEnabledAgents(session.enabledAgents),
           agentWorkdirs: session.agentWorkdirs && typeof session.agentWorkdirs === 'object'
             ? session.agentWorkdirs
             : {},
@@ -414,6 +416,7 @@ function createUserSession(name?: string): UserChatSession {
     name: normalizeSessionName(name),
     history: [],
     currentAgent: null,
+    enabledAgents: [],
     agentWorkdirs: {},
     createdAt: now,
     updatedAt: now
@@ -428,6 +431,7 @@ function ensureUserSessions(userKey: string): Map<string, UserChatSession> {
       name: DEFAULT_CHAT_SESSION_NAME,
       history: [],
       currentAgent: null,
+      enabledAgents: [],
       agentWorkdirs: {},
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -470,6 +474,7 @@ function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<stri
 
     existing.name = existing.name || sourceSession.name;
     existing.currentAgent = existing.currentAgent || sourceSession.currentAgent;
+    existing.enabledAgents = sanitizeEnabledAgents(sourceSession.enabledAgents, existing.enabledAgents);
     existing.agentWorkdirs = { ...(sourceSession.agentWorkdirs || {}), ...(existing.agentWorkdirs || {}) };
     existing.createdAt = Math.min(existing.createdAt, sourceSession.createdAt);
     existing.updatedAt = Math.max(existing.updatedAt, sourceSession.updatedAt);
@@ -534,6 +539,80 @@ function getSessionSummaries(userKey: string): Array<{ id: string; name: string;
     }));
 }
 
+function getAllAgentNames(): string[] {
+  return agentManager.getAgentConfigs().map(agent => agent.name);
+}
+
+function sanitizeEnabledAgents(...candidateLists: Array<string[] | undefined>): string[] {
+  const validAgentNames = new Set(getAllAgentNames());
+  for (const candidate of candidateLists) {
+    if (!Array.isArray(candidate)) continue;
+    const filtered = candidate.filter(name => typeof name === 'string' && validAgentNames.has(name));
+    return [...new Set(filtered)];
+  }
+  return getAllAgentNames();
+}
+
+function getSessionEnabledAgents(session: UserChatSession): string[] {
+  const sanitized = sanitizeEnabledAgents(session.enabledAgents);
+  if (!Array.isArray(session.enabledAgents) || session.enabledAgents.length !== sanitized.length) {
+    session.enabledAgents = sanitized;
+  }
+  return sanitized;
+}
+
+function isAgentEnabledForSession(session: UserChatSession, agentName: string): boolean {
+  return getSessionEnabledAgents(session).includes(agentName);
+}
+
+function setSessionEnabledAgent(userKey: string, sessionId: string, agentName: string, enabled: boolean): { enabledAgents: string[]; currentAgentWillExpire: boolean } | null {
+  const session = ensureUserSessions(userKey).get(sessionId);
+  if (!session) return null;
+
+  const enabledSet = new Set(getSessionEnabledAgents(session));
+  if (enabled) {
+    enabledSet.add(agentName);
+  } else {
+    enabledSet.delete(agentName);
+  }
+
+  session.enabledAgents = getAllAgentNames().filter(name => enabledSet.has(name));
+  const currentAgentWillExpire = !enabled && session.currentAgent === agentName;
+  touchSession(session);
+  return {
+    enabledAgents: [...session.enabledAgents],
+    currentAgentWillExpire
+  };
+}
+
+function collectEligibleMentions(message: string, session: UserChatSession): { mentions: string[]; ignoredMentions: string[] } {
+  const allMentions = agentManager.extractMentions(message);
+  const enabledSet = new Set(getSessionEnabledAgents(session));
+  return {
+    mentions: allMentions.filter(name => enabledSet.has(name)),
+    ignoredMentions: allMentions.filter(name => !enabledSet.has(name))
+  };
+}
+
+function expireDisabledCurrentAgent(userKey: string, session: UserChatSession): string | null {
+  if (!session.currentAgent) return null;
+  if (isAgentEnabledForSession(session, session.currentAgent)) {
+    return session.currentAgent;
+  }
+  setUserCurrentAgent(userKey, session.id, null);
+  return null;
+}
+
+function buildNoEnabledAgentsNotice(session: UserChatSession, ignoredMentions: string[] = []): string {
+  if (ignoredMentions.length > 0) {
+    return `${ignoredMentions.join('、')} 已停用，当前会话还没有可用智能体，请先启用上方智能体。`;
+  }
+  if (getSessionEnabledAgents(session).length === 0) {
+    return '当前会话还没有启用智能体，请先启用上方智能体。';
+  }
+  return '当前会话没有可用智能体，请先启用上方智能体。';
+}
+
 function touchSession(session: UserChatSession): void {
   session.updatedAt = Date.now();
   schedulePersistChatSessions();
@@ -544,7 +623,9 @@ function getUserHistory(userKey: string, sessionId: string): Message[] {
 }
 
 function getUserCurrentAgent(userKey: string, sessionId: string): string | null {
-  return ensureUserSessions(userKey).get(sessionId)?.currentAgent || null;
+  const session = ensureUserSessions(userKey).get(sessionId);
+  if (!session) return null;
+  return expireDisabledCurrentAgent(userKey, session);
 }
 
 function getUserAgentWorkdir(userKey: string, sessionId: string, agentName: string): string | null {
@@ -1124,6 +1205,42 @@ function handleGetAgents(req: http.IncomingMessage, res: http.ServerResponse): v
   res.end(JSON.stringify({ agents }));
 }
 
+async function handleSetSessionAgent(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    syncAgentsFromStore();
+    const body = await parseBody<{ sessionId?: string; agentName?: string; enabled?: boolean }>(req);
+    const { userKey, session } = resolveChatSession(req);
+    const sessionId = (body.sessionId || session.id).trim() || session.id;
+    const agentName = (body.agentName || '').trim();
+
+    if (!agentName || !agentManager.hasAgent(agentName)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '智能体不存在' }));
+      return;
+    }
+
+    if (typeof body.enabled !== 'boolean') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'enabled 必须是布尔值' }));
+      return;
+    }
+
+    const result = setSessionEnabledAgent(userKey, sessionId, agentName, body.enabled);
+    if (!result) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '会话不存在' }));
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, ...result }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
 /**
  * 处理发送消息
  */
@@ -1154,12 +1271,12 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
     const { userKey, session } = resolveChatSession(req);
     const sessionId = `${userKey}::${session.id}`;
     const userHistory = session.history;
-    const currentAgent = session.currentAgent;
+    const currentAgent = expireDisabledCurrentAgent(userKey, session);
 
     console.log(`\n[Chat] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
 
     // 提取 @ 提及
-    const mentions = agentManager.extractMentions(message);
+    const { mentions, ignoredMentions } = collectEligibleMentions(message, session);
     console.log(`[Chat] @ 提及: ${mentions.join(', ') || '无'}`);
 
     // 确定要响应的智能体列表
@@ -1192,6 +1309,19 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
     // 添加到用户历史
     userHistory.push(userMessage);
     touchSession(session);
+
+    if (agentsToRespond.length === 0) {
+      const notice = buildNoEnabledAgentsNotice(session, ignoredMentions);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        userMessage,
+        aiMessages: [],
+        currentAgent: getUserCurrentAgent(userKey, session.id),
+        notice
+      }));
+      return;
+    }
 
     // 返回的 AI 消息列表
     const aiMessages: Message[] = [];
@@ -1278,7 +1408,8 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       success: true,
       userMessage,
       aiMessages,
-      currentAgent: getUserCurrentAgent(userKey, session.id)
+      currentAgent: getUserCurrentAgent(userKey, session.id),
+      notice: ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined
     }));
   } catch (error: unknown) {
     const err = error as Error;
@@ -1319,12 +1450,12 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     const { userKey, session } = resolveChatSession(req);
     const sessionId = `${userKey}::${session.id}`;
     const userHistory = session.history;
-    const currentAgent = session.currentAgent;
+    const currentAgent = expireDisabledCurrentAgent(userKey, session);
 
     console.log(`\n[ChatStream] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
 
     // 提取 @ 提及
-    const mentions = agentManager.extractMentions(message);
+    const { mentions, ignoredMentions } = collectEligibleMentions(message, session);
     console.log(`[ChatStream] @ 提及: ${mentions.join(', ') || '无'}`);
 
     // 确定要响应的智能体列表
@@ -1378,7 +1509,8 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
 
     // 如果没有智能体可以响应
     if (agentsToRespond.length === 0) {
-      sendEvent('done', { currentAgent: null });
+      sendEvent('notice', { notice: buildNoEnabledAgentsNotice(session, ignoredMentions) });
+      sendEvent('done', { currentAgent: getUserCurrentAgent(userKey, session.id) });
       res.end();
       return;
     }
@@ -1467,6 +1599,9 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     await Promise.all(agentPromises);
 
     // 发送完成事件
+    if (ignoredMentions.length > 0) {
+      sendEvent('notice', { notice: `${ignoredMentions.join('、')} 已停用，未参与本次对话。` });
+    }
     sendEvent('done', { currentAgent: getUserCurrentAgent(userKey, session.id) });
     res.end();
 
@@ -1496,7 +1631,8 @@ function handleGetHistory(req: http.IncomingMessage, res: http.ServerResponse): 
   res.end(JSON.stringify({
     messages: session.history,
     agents: agentManager.getAgentConfigs(),
-    currentAgent: session.currentAgent,
+    currentAgent: getUserCurrentAgent(userKey, session.id),
+    enabledAgents: getSessionEnabledAgents(session),
     agentWorkdirs: session.agentWorkdirs || {},
     chatSessions: getSessionSummaries(userKey),
     activeSessionId: session.id
@@ -1615,10 +1751,13 @@ function handleSwitchAgent(req: http.IncomingMessage, res: http.ServerResponse):
   parseBody<{ agent?: string }>(req).then(body => {
     const { userKey, session } = resolveChatSession(req);
     const agentName = body.agent;
-    if (agentName && agentManager.hasAgent(agentName)) {
+    if (agentName && agentManager.hasAgent(agentName) && isAgentEnabledForSession(session, agentName)) {
       setUserCurrentAgent(userKey, session.id, agentName);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, currentAgent: agentName }));
+    } else if (agentName && agentManager.hasAgent(agentName)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `智能体未在当前会话启用: ${agentName}` }));
     } else if (!agentName) {
       // 清除当前智能体
       setUserCurrentAgent(userKey, session.id, null);
@@ -1643,6 +1782,7 @@ async function handleCreateChatSession(req: http.IncomingMessage, res: http.Serv
     res.end(JSON.stringify({
       success: true,
       session,
+      enabledAgents: getSessionEnabledAgents(session),
       chatSessions: getSessionSummaries(userKey),
       activeSessionId: session.id
     }));
@@ -1671,7 +1811,8 @@ async function handleSelectChatSession(req: http.IncomingMessage, res: http.Serv
     res.end(JSON.stringify({
       success: true,
       messages: session.history,
-      currentAgent: session.currentAgent,
+      currentAgent: getUserCurrentAgent(userKey, session.id),
+      enabledAgents: getSessionEnabledAgents(session),
       activeSessionId: session.id,
       chatSessions: getSessionSummaries(userKey)
     }));
@@ -1729,7 +1870,8 @@ async function handleDeleteChatSession(req: http.IncomingMessage, res: http.Serv
       success: true,
       activeSessionId: active.id,
       messages: active.history,
-      currentAgent: active.currentAgent,
+      currentAgent: getUserCurrentAgent(userKey, active.id),
+      enabledAgents: getSessionEnabledAgents(active),
       chatSessions: getSessionSummaries(userKey)
     }));
   } catch (error: unknown) {
@@ -2000,6 +2142,8 @@ const server = http.createServer(async (req, res) => {
     handleGetWorkdirOptions(req, res);
   } else if (requestUrl.pathname === '/api/workdirs/select' && method === 'POST') {
     await handleSetWorkdir(req, res);
+  } else if (requestUrl.pathname === '/api/session-agents' && method === 'POST') {
+    await handleSetSessionAgent(req, res);
   } else if (requestUrl.pathname === '/api/verbose/agents' && method === 'GET') {
     handleGetVerboseAgents(req, res);
   } else if (requestUrl.pathname === '/api/verbose/logs' && method === 'GET') {

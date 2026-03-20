@@ -5,6 +5,16 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
+async function enableAgents(fixture, agentNames) {
+  for (const agentName of agentNames) {
+    const response = await fixture.request('/api/session-agents', {
+      method: 'POST',
+      body: { agentName, enabled: true }
+    });
+    assert.equal(response.status, 200);
+  }
+}
+
 test('未登录时聊天相关接口会返回 401，登录后可正常聊天', async () => {
   const fixture = await createChatServerFixture();
 
@@ -31,6 +41,8 @@ test('未登录时聊天相关接口会返回 401，登录后可正常聊天', a
     assert.equal(historyAfterLogin.status, 200);
     assert.ok(Array.isArray(historyAfterLogin.body.messages));
 
+    await enableAgents(fixture, ['Alice']);
+
     const chatResponse = await fixture.request('/api/chat', {
       method: 'POST',
       body: { message: '@Alice 请总结一下今日任务' }
@@ -50,6 +62,7 @@ test('登录后支持多智能体协作回复', async () => {
   try {
     const loginResponse = await fixture.login();
     assert.equal(loginResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
 
     const chatResponse = await fixture.request('/api/chat', {
       method: 'POST',
@@ -74,6 +87,7 @@ test('支持带中文标点的 @Codex架构师 提及', async () => {
   try {
     const loginResponse = await fixture.login();
     assert.equal(loginResponse.status, 200);
+    await enableAgents(fixture, ['Codex架构师']);
 
     const chatResponse = await fixture.request('/api/chat', {
       method: 'POST',
@@ -97,6 +111,7 @@ test('支持全角＠all 群聊提及并触发所有智能体回复', async () =
   try {
     const loginResponse = await fixture.login();
     assert.equal(loginResponse.status, 200);
+    await enableAgents(fixture, ['Claude', 'Codex架构师', 'Alice', 'Bob']);
 
     const chatResponse = await fixture.request('/api/chat', {
       method: 'POST',
@@ -134,6 +149,7 @@ printf '{"output_text":"这是 Codex 直接回复（无回调）"}\\n'
 
   try {
     await fixture.login();
+    await enableAgents(fixture, ['Codex架构师']);
     const chatResponse = await fixture.request('/api/chat', {
       method: 'POST',
       body: { message: '@Codex架构师 请直接给出一句建议' }
@@ -172,6 +188,7 @@ printf '{"output_text":"verbose log test"}\\n'
 
   try {
     await fixture.login();
+    await enableAgents(fixture, ['Codex架构师']);
     const chatResponse = await fixture.request('/api/chat', {
       method: 'POST',
       body: { message: '@Codex架构师 产生日志' }
@@ -204,6 +221,7 @@ printf '{"output_text":"SSE 直出回复"}\\n'
 
   try {
     await fixture.login();
+    await enableAgents(fixture, ['Codex架构师']);
     const streamResponse = await fixture.request('/api/chat-stream', {
       method: 'POST',
       body: { message: '@Codex架构师 走流式' }
@@ -273,6 +291,7 @@ EOF
 
   try {
     await fixture.login();
+    await enableAgents(fixture, ['Codex架构师']);
     const chatResponse = await fixture.request('/api/chat', {
       method: 'POST',
       body: { message: '@Codex架构师 请通过 callback 回复' }
