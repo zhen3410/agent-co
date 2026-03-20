@@ -773,6 +773,24 @@
                 <option value="after_chat">会话结束后生效</option>
               </select>
             </div>
+            <div class="form-group">
+              <label class="form-label">工作目录（一级）</label>
+              <select id="agentWorkdirRoot"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">工作目录（二级）</label>
+              <select id="agentWorkdirLevel2"></select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">工作目录（三级）</label>
+              <select id="agentWorkdirLevel3"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">最终工作目录</label>
+              <input type="text" id="agentWorkdirPreview" readonly placeholder="默认进程目录">
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">性格描述</label>
@@ -830,6 +848,155 @@
     let adminToken = '';
     let currentEditUser = '';
     let editingAgentName = '';
+    const workdirState = { root: '', level2: '', level3: '', custom: '' };
+
+    function setSelectOptions(selectId, options, placeholder) {
+      const select = document.getElementById(selectId);
+      if (!select) return;
+      select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>` + options.map(item => {
+        const value = escapeHtml(item.path || '');
+        const label = escapeHtml(item.name || item.path || '');
+        return `<option value="${value}">${label}</option>`;
+      }).join('');
+    }
+
+    async function fetchWorkdirOptions(pathname) {
+      if (!adminToken) {
+        return [];
+      }
+      const query = pathname ? `?path=${encodeURIComponent(pathname)}` : '';
+      const response = await fetch(`/api/system/dirs${query}`, {
+        headers: { 'x-admin-token': adminToken }
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '加载目录失败');
+      }
+      return data.directories || [];
+    }
+
+    function updateWorkdirPreview() {
+      const preview = document.getElementById('agentWorkdirPreview');
+      if (!preview) return;
+      const value = workdirState.level3 || workdirState.level2 || workdirState.root || workdirState.custom || '';
+      preview.value = value;
+    }
+
+    function initializeWorkdirSelectors() {
+      setSelectOptions('agentWorkdirRoot', [], '默认进程目录');
+      setSelectOptions('agentWorkdirLevel2', [], '请选择一级目录');
+      setSelectOptions('agentWorkdirLevel3', [], '请选择二级目录');
+      updateWorkdirPreview();
+    }
+
+    async function loadWorkdirHierarchy(prefillPath = '') {
+      const rootOptions = await fetchWorkdirOptions('/');
+      setSelectOptions('agentWorkdirRoot', rootOptions, '默认进程目录');
+      setSelectOptions('agentWorkdirLevel2', [], '请选择一级目录');
+      setSelectOptions('agentWorkdirLevel3', [], '请选择二级目录');
+
+      workdirState.root = '';
+      workdirState.level2 = '';
+      workdirState.level3 = '';
+      workdirState.custom = '';
+
+      if (!prefillPath) {
+        updateWorkdirPreview();
+        return;
+      }
+
+      const segments = prefillPath.split('/').filter(Boolean);
+      if (segments.length === 0) {
+        updateWorkdirPreview();
+        return;
+      }
+
+      const rootPath = `/${segments[0]}`;
+      const rootSelect = document.getElementById('agentWorkdirRoot');
+      const hasRoot = Array.from(rootSelect.options).some(option => option.value === rootPath);
+      if (!hasRoot) {
+        workdirState.custom = prefillPath;
+        updateWorkdirPreview();
+        return;
+      }
+      rootSelect.value = rootPath;
+      workdirState.root = rootPath;
+
+      const level2Options = await fetchWorkdirOptions(rootPath);
+      setSelectOptions('agentWorkdirLevel2', level2Options, '请选择二级目录');
+      if (segments.length < 2) {
+        updateWorkdirPreview();
+        return;
+      }
+
+      const level2Path = `${rootPath}/${segments[1]}`;
+      const level2Select = document.getElementById('agentWorkdirLevel2');
+      const hasLevel2 = Array.from(level2Select.options).some(option => option.value === level2Path);
+      if (!hasLevel2) {
+        workdirState.custom = prefillPath;
+        updateWorkdirPreview();
+        return;
+      }
+      level2Select.value = level2Path;
+      workdirState.level2 = level2Path;
+
+      const level3Options = await fetchWorkdirOptions(level2Path);
+      setSelectOptions('agentWorkdirLevel3', level3Options, '请选择三级目录');
+      if (segments.length < 3) {
+        updateWorkdirPreview();
+        return;
+      }
+
+      const level3Path = `${level2Path}/${segments[2]}`;
+      const level3Select = document.getElementById('agentWorkdirLevel3');
+      const hasLevel3 = Array.from(level3Select.options).some(option => option.value === level3Path);
+      if (!hasLevel3) {
+        workdirState.custom = prefillPath;
+      } else {
+        level3Select.value = level3Path;
+        workdirState.level3 = level3Path;
+      }
+      updateWorkdirPreview();
+    }
+
+    async function onWorkdirRootChange() {
+      const rootSelect = document.getElementById('agentWorkdirRoot');
+      workdirState.root = rootSelect.value || '';
+      workdirState.level2 = '';
+      workdirState.level3 = '';
+      workdirState.custom = '';
+      setSelectOptions('agentWorkdirLevel3', [], '请选择二级目录');
+      if (!workdirState.root) {
+        setSelectOptions('agentWorkdirLevel2', [], '请选择一级目录');
+        updateWorkdirPreview();
+        return;
+      }
+      const children = await fetchWorkdirOptions(workdirState.root);
+      setSelectOptions('agentWorkdirLevel2', children, '请选择二级目录');
+      updateWorkdirPreview();
+    }
+
+    async function onWorkdirLevel2Change() {
+      const level2Select = document.getElementById('agentWorkdirLevel2');
+      workdirState.level2 = level2Select.value || '';
+      workdirState.level3 = '';
+      workdirState.custom = '';
+      if (!workdirState.level2) {
+        setSelectOptions('agentWorkdirLevel3', [], '请选择二级目录');
+        updateWorkdirPreview();
+        return;
+      }
+      const children = await fetchWorkdirOptions(workdirState.level2);
+      setSelectOptions('agentWorkdirLevel3', children, '请选择三级目录');
+      updateWorkdirPreview();
+    }
+
+    function onWorkdirLevel3Change() {
+      const level3Select = document.getElementById('agentWorkdirLevel3');
+      workdirState.level3 = level3Select.value || '';
+      workdirState.custom = '';
+      updateWorkdirPreview();
+    }
 
     function showToast(message, type = 'success') {
       const toast = document.getElementById('toast');
@@ -864,6 +1031,7 @@
           document.getElementById('tokenHint').style.display = 'flex';
           document.getElementById('authBadge').className = 'badge badge-success';
           document.getElementById('authBadge').textContent = '已验证';
+          await loadWorkdirHierarchy();
           loadUsers();
           loadAgents();
         } else {
@@ -1121,6 +1289,7 @@
                 </div>
               </div>
               <div class="agent-personality">${escapeHtml(agent.personality || '暂无描述')}</div>
+              <div class="agent-color">工作目录：${escapeHtml(agent.workdir || '默认进程目录')}</div>
               <div class="agent-prompt-label">当前提示词</div>
               <textarea
                 class="agent-prompt-editor"
@@ -1152,7 +1321,8 @@
         color: document.getElementById('agentColor').value.trim(),
         personality: document.getElementById('agentPersonality').value.trim(),
         systemPrompt: document.getElementById('agentPrompt').value.trim(),
-        cli: document.getElementById('agentCli').value
+        cli: document.getElementById('agentCli').value,
+        workdir: document.getElementById('agentWorkdirPreview').value.trim()
       };
     }
 
@@ -1164,6 +1334,14 @@
       document.getElementById('agentCli').value = 'claude';
       document.getElementById('agentPersonality').value = '';
       document.getElementById('agentPrompt').value = '';
+      workdirState.root = '';
+      workdirState.level2 = '';
+      workdirState.level3 = '';
+      workdirState.custom = '';
+      document.getElementById('agentWorkdirRoot').value = '';
+      setSelectOptions('agentWorkdirLevel2', [], '请选择一级目录');
+      setSelectOptions('agentWorkdirLevel3', [], '请选择二级目录');
+      updateWorkdirPreview();
       document.getElementById('agentSubmitBtn').textContent = '新增智能体';
     }
 
@@ -1175,6 +1353,9 @@
       document.getElementById('agentCli').value = agent.cli || 'claude';
       document.getElementById('agentPersonality').value = agent.personality || '';
       document.getElementById('agentPrompt').value = agent.systemPrompt || '';
+      loadWorkdirHierarchy(agent.workdir || '').catch(error => {
+        showToast('加载工作目录失败: ' + error.message, 'error');
+      });
       document.getElementById('agentSubmitBtn').textContent = `保存 ${agent.name}`;
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -1278,6 +1459,14 @@
     // 页面加载时清理历史保存的 token，避免自动填充
     document.addEventListener('DOMContentLoaded', () => {
       localStorage.removeItem('authAdminToken');
+      initializeWorkdirSelectors();
+      document.getElementById('agentWorkdirRoot').addEventListener('change', () => {
+        onWorkdirRootChange().catch(error => showToast('加载目录失败: ' + error.message, 'error'));
+      });
+      document.getElementById('agentWorkdirLevel2').addEventListener('change', () => {
+        onWorkdirLevel2Change().catch(error => showToast('加载目录失败: ' + error.message, 'error'));
+      });
+      document.getElementById('agentWorkdirLevel3').addEventListener('change', onWorkdirLevel3Change);
     });
   </script>
 </body>

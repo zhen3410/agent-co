@@ -230,6 +230,28 @@ function serveStatic(res: http.ServerResponse, filePath: string, contentType: st
   });
 }
 
+function listDirectories(targetPath: string): Array<{ name: string; path: string }> {
+  const normalizedPath = path.resolve(targetPath || '/');
+  if (!path.isAbsolute(normalizedPath)) {
+    throw new Error('path 必须是绝对路径');
+  }
+  if (!fs.existsSync(normalizedPath) || !fs.statSync(normalizedPath).isDirectory()) {
+    throw new Error('目录不存在');
+  }
+
+  const entries = fs.readdirSync(normalizedPath, { withFileTypes: true });
+  const directories = entries
+    .filter(entry => entry.isDirectory())
+    .map(entry => ({
+      name: entry.name,
+      path: path.posix.join(normalizedPath, entry.name).replace(/\\/g, '/')
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+    .slice(0, 200);
+
+  return directories;
+}
+
 const server = http.createServer(async (req, res) => {
   const method = req.method || 'GET';
   const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || `localhost:${PORT}`}`);
@@ -285,6 +307,18 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (!pathname.startsWith('/api/users') && !pathname.startsWith('/api/agents')) {
+    if (method === 'GET' && pathname === '/api/system/dirs') {
+      if (!requireAdmin(req, res)) return;
+      try {
+        const targetPath = (parsedUrl.searchParams.get('path') || '/').trim() || '/';
+        const directories = listDirectories(targetPath);
+        sendJson(res, 200, { path: path.resolve(targetPath), directories });
+      } catch (error: unknown) {
+        const err = error as Error;
+        sendJson(res, 400, { error: err.message });
+      }
+      return;
+    }
     sendJson(res, 404, { error: 'Not Found' });
     return;
   }

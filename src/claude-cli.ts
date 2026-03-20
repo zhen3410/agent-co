@@ -179,7 +179,7 @@ function buildMcpConfig(extraEnv: Record<string, string>): McpConfig | null {
   };
 }
 
-function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, string>): { command: string; args: string[]; env: Record<string, string> } {
+function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, string>, workdir?: string): { command: string; args: string[]; env: Record<string, string> } {
   const env = { ...process.env, ...extraEnv } as Record<string, string>;
   const mcp = buildMcpConfig(extraEnv);
   const codexMcpKey = `mcp_servers.${CODEX_MCP_SERVER_NAME}`;
@@ -211,6 +211,9 @@ function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, 
 
   delete (env as Record<string, unknown>).CODEX_SESSION_ID;
   const args = ['exec', prompt, '--json'];
+  if (workdir && workdir.trim()) {
+    args.push('-c', `approval_policy="never"`);
+  }
   if (mcp) {
     args.push(
       '-c',
@@ -244,10 +247,12 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
     const logVerbose = createVerboseLogger(agent.name, cli);
     logVerbose('meta', `Prompt length: ${prompt.length}`);
 
-    const cliCommand = buildCliCommand(cli, prompt, options.extraEnv || {});
+    const requestedWorkdir = agent.workdir && agent.workdir.trim() ? agent.workdir.trim() : undefined;
+    const cliCommand = buildCliCommand(cli, prompt, options.extraEnv || {}, requestedWorkdir);
     const child = spawn(cliCommand.command, cliCommand.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: cliCommand.env
+      env: cliCommand.env,
+      cwd: requestedWorkdir || process.cwd()
     });
 
     let result = '';

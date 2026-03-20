@@ -167,3 +167,40 @@ test('切换会话后 /api/history 返回对应会话记录（需先登录）', 
     await fixture.cleanup();
   }
 });
+
+test('对话页支持读取并设置当前智能体工作目录', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const roots = await fixture.request('/api/system/dirs?path=/');
+    assert.equal(roots.status, 200);
+    assert.equal(Array.isArray(roots.body.directories), true);
+    assert.equal(roots.body.directories.every(item => item.path.startsWith('/')), true);
+
+    const options = await fixture.request('/api/workdirs/options');
+    assert.equal(options.status, 200);
+    assert.equal(Array.isArray(options.body.options), true);
+
+    const badSet = await fixture.request('/api/workdirs/select', {
+      method: 'POST',
+      body: { agentName: 'Codex架构师', workdir: './relative' }
+    });
+    assert.equal(badSet.status, 400);
+
+    const setWorkdir = await fixture.request('/api/workdirs/select', {
+      method: 'POST',
+      body: { agentName: 'Codex架构师', workdir: '/tmp' }
+    });
+    assert.equal(setWorkdir.status, 200);
+    assert.equal(setWorkdir.body.workdir, '/tmp');
+
+    const history = await fixture.request('/api/history');
+    assert.equal(history.status, 200);
+    assert.equal(history.body.agentWorkdirs['Codex架构师'], '/tmp');
+  } finally {
+    await fixture.cleanup();
+  }
+});

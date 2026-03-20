@@ -101,6 +101,14 @@
                 <div className="agents-list" id="agentsList"></div>
               </div>
 
+              <div className="current-agent-bar current-agent-bar--workdir" id="workdirBar" style={{ display: 'none' }}>
+                <span className="current-agent-label">工作目录</span>
+                <select id="agentWorkdirRoot"></select>
+                <select id="agentWorkdirLevel2"></select>
+                <select id="agentWorkdirLevel3"></select>
+                <input id="chatWorkdirPreview" type="text" readOnly placeholder="默认进程目录" />
+                <button className="btn-switch" onClick={() => window.applyAgentWorkdir && window.applyAgentWorkdir()}>应用</button>
+              </div>
               <div className="current-agent-bar" id="currentAgentBar" style={{ display: 'none' }}>
                 <span className="current-agent-label">当前对话</span>
                 <span className="current-agent-name" id="currentAgentName"></span>
@@ -163,6 +171,8 @@
     let currentAgent = null;
     let chatSessions = [];
     let activeSessionId = null;
+    let agentWorkdirs = {};
+    const chatWorkdirState = { root: '', level2: '', level3: '', custom: '' };
 
     // DOM 元素
     let messagesEl;
@@ -172,6 +182,11 @@
     let agentsListEl;
     let currentAgentBarEl;
     let currentAgentNameEl;
+    let workdirBarEl;
+    let agentWorkdirRootEl;
+    let agentWorkdirLevel2El;
+    let agentWorkdirLevel3El;
+    let chatWorkdirPreviewEl;
     let authOverlayEl;
     let usernameInputEl;
     let passwordInputEl;
@@ -194,6 +209,11 @@
       agentsListEl = document.getElementById('agentsList');
       currentAgentBarEl = document.getElementById('currentAgentBar');
       currentAgentNameEl = document.getElementById('currentAgentName');
+      workdirBarEl = document.getElementById('workdirBar');
+      agentWorkdirRootEl = document.getElementById('agentWorkdirRoot');
+      agentWorkdirLevel2El = document.getElementById('agentWorkdirLevel2');
+      agentWorkdirLevel3El = document.getElementById('agentWorkdirLevel3');
+      chatWorkdirPreviewEl = document.getElementById('chatWorkdirPreview');
       authOverlayEl = document.getElementById('authOverlay');
       usernameInputEl = document.getElementById('usernameInput');
       passwordInputEl = document.getElementById('passwordInput');
@@ -274,6 +294,7 @@
         isAuthenticated = true;
         await loadAgents();
         await loadHistory();
+        await loadWorkdirOptions();
       } catch (error) {
         authErrorEl.textContent = error.message;
       }
@@ -574,15 +595,190 @@
       userInputEl.placeholder = '输入消息... 使用 @智能体名 召唤 AI';
     }
 
+    function setSelectOptions(selectEl, options, placeholder) {
+      if (!selectEl) return;
+      selectEl.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>` + options.map(item => {
+        const value = escapeHtml(item.path || '');
+        const label = escapeHtml(item.name || item.path || '');
+        return `<option value="${value}">${label}</option>`;
+      }).join('');
+    }
+
+    function updateChatWorkdirPreview() {
+      if (!chatWorkdirPreviewEl) return;
+      const value = chatWorkdirState.level3 || chatWorkdirState.level2 || chatWorkdirState.root || chatWorkdirState.custom || '';
+      chatWorkdirPreviewEl.value = value;
+    }
+
+    function initializeChatWorkdirSelectors() {
+      setSelectOptions(agentWorkdirRootEl, [], '默认进程目录');
+      setSelectOptions(agentWorkdirLevel2El, [], '请选择一级目录');
+      setSelectOptions(agentWorkdirLevel3El, [], '请选择二级目录');
+      updateChatWorkdirPreview();
+    }
+
+    async function fetchChatWorkdirOptions(pathname) {
+      const query = pathname ? `?path=${encodeURIComponent(pathname)}` : '';
+      const response = await fetch(`/api/system/dirs${query}`, { credentials: 'include', cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '加载目录失败');
+      }
+      return data.directories || [];
+    }
+
+    async function loadChatWorkdirHierarchy(prefillPath = '') {
+      const rootOptions = await fetchChatWorkdirOptions('/');
+      setSelectOptions(agentWorkdirRootEl, rootOptions, '默认进程目录');
+      setSelectOptions(agentWorkdirLevel2El, [], '请选择一级目录');
+      setSelectOptions(agentWorkdirLevel3El, [], '请选择二级目录');
+
+      chatWorkdirState.root = '';
+      chatWorkdirState.level2 = '';
+      chatWorkdirState.level3 = '';
+      chatWorkdirState.custom = '';
+
+      if (!prefillPath) {
+        updateChatWorkdirPreview();
+        return;
+      }
+
+      const segments = prefillPath.split('/').filter(Boolean);
+      if (segments.length === 0) {
+        updateChatWorkdirPreview();
+        return;
+      }
+
+      const rootPath = `/${segments[0]}`;
+      const hasRoot = Array.from(agentWorkdirRootEl.options).some(option => option.value === rootPath);
+      if (!hasRoot) {
+        chatWorkdirState.custom = prefillPath;
+        updateChatWorkdirPreview();
+        return;
+      }
+
+      agentWorkdirRootEl.value = rootPath;
+      chatWorkdirState.root = rootPath;
+
+      const level2Options = await fetchChatWorkdirOptions(rootPath);
+      setSelectOptions(agentWorkdirLevel2El, level2Options, '请选择一级目录');
+      if (segments.length < 2) {
+        updateChatWorkdirPreview();
+        return;
+      }
+
+      const level2Path = `${rootPath}/${segments[1]}`;
+      const hasLevel2 = Array.from(agentWorkdirLevel2El.options).some(option => option.value === level2Path);
+      if (!hasLevel2) {
+        chatWorkdirState.custom = prefillPath;
+        updateChatWorkdirPreview();
+        return;
+      }
+
+      agentWorkdirLevel2El.value = level2Path;
+      chatWorkdirState.level2 = level2Path;
+
+      const level3Options = await fetchChatWorkdirOptions(level2Path);
+      setSelectOptions(agentWorkdirLevel3El, level3Options, '请选择二级目录');
+      if (segments.length < 3) {
+        updateChatWorkdirPreview();
+        return;
+      }
+
+      const level3Path = `${level2Path}/${segments[2]}`;
+      const hasLevel3 = Array.from(agentWorkdirLevel3El.options).some(option => option.value === level3Path);
+      if (!hasLevel3) {
+        chatWorkdirState.custom = prefillPath;
+      } else {
+        agentWorkdirLevel3El.value = level3Path;
+        chatWorkdirState.level3 = level3Path;
+      }
+      updateChatWorkdirPreview();
+    }
+
+    async function onChatWorkdirRootChange() {
+      chatWorkdirState.root = agentWorkdirRootEl.value || '';
+      chatWorkdirState.level2 = '';
+      chatWorkdirState.level3 = '';
+      chatWorkdirState.custom = '';
+      setSelectOptions(agentWorkdirLevel3El, [], '请选择二级目录');
+      if (!chatWorkdirState.root) {
+        setSelectOptions(agentWorkdirLevel2El, [], '请选择一级目录');
+        updateChatWorkdirPreview();
+        return;
+      }
+      const children = await fetchChatWorkdirOptions(chatWorkdirState.root);
+      setSelectOptions(agentWorkdirLevel2El, children, '请选择一级目录');
+      updateChatWorkdirPreview();
+    }
+
+    async function onChatWorkdirLevel2Change() {
+      chatWorkdirState.level2 = agentWorkdirLevel2El.value || '';
+      chatWorkdirState.level3 = '';
+      chatWorkdirState.custom = '';
+      if (!chatWorkdirState.level2) {
+        setSelectOptions(agentWorkdirLevel3El, [], '请选择二级目录');
+        updateChatWorkdirPreview();
+        return;
+      }
+      const children = await fetchChatWorkdirOptions(chatWorkdirState.level2);
+      setSelectOptions(agentWorkdirLevel3El, children, '请选择二级目录');
+      updateChatWorkdirPreview();
+    }
+
+    function onChatWorkdirLevel3Change() {
+      chatWorkdirState.level3 = agentWorkdirLevel3El.value || '';
+      chatWorkdirState.custom = '';
+      updateChatWorkdirPreview();
+    }
+
+    async function loadWorkdirOptions() {
+      try {
+        await loadChatWorkdirHierarchy(currentAgent ? (agentWorkdirs[currentAgent] || '') : '');
+      } catch (error) {
+        initializeChatWorkdirSelectors();
+        console.error('加载工作目录选项失败:', error);
+      }
+    }
+
+    async function applyAgentWorkdir() {
+      if (!currentAgent) return;
+      const workdir = chatWorkdirPreviewEl.value || '';
+      try {
+        const response = await fetch('/api/workdirs/select', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentName: currentAgent, workdir })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '设置失败');
+        if (workdir) {
+          agentWorkdirs[currentAgent] = workdir;
+        } else {
+          delete agentWorkdirs[currentAgent];
+        }
+        await loadChatWorkdirHierarchy(workdir);
+      } catch (error) {
+        alert('设置工作目录失败: ' + error.message);
+      }
+    }
+
     function updateCurrentAgentUI() {
       if (currentAgent) {
         const agent = agents.find(a => a.name === currentAgent);
         currentAgentBarEl.style.display = 'flex';
+        workdirBarEl.style.display = 'flex';
         currentAgentNameEl.textContent = `${agent ? agent.avatar : '🤖'} ${currentAgent}`;
         currentAgentNameEl.style.color = agent ? agent.color : 'var(--accent)';
         userInputEl.placeholder = `发送消息给 ${currentAgent}...`;
+        loadChatWorkdirHierarchy(agentWorkdirs[currentAgent] || '').catch(error => {
+          initializeChatWorkdirSelectors();
+          console.error('加载工作目录层级失败:', error);
+        });
       } else {
         currentAgentBarEl.style.display = 'none';
+        workdirBarEl.style.display = 'none';
         userInputEl.placeholder = '输入消息... 使用 @智能体名 召唤 AI';
       }
     }
@@ -1021,6 +1217,7 @@
             currentAgent = null;
             updateCurrentAgentUI();
           }
+          agentWorkdirs = data.agentWorkdirs || {};
           chatSessions = data.chatSessions || [];
           activeSessionId = data.activeSessionId || null;
           renderSessionList();
@@ -1072,6 +1269,7 @@
     window.clearHistory = clearHistory;
     window.sendMessage = sendMessage;
     window.switchAgent = switchAgent;
+    window.applyAgentWorkdir = applyAgentWorkdir;
     window.dismissPwaBanner = dismissPwaBanner;
 
     function bindDomEvents() {
@@ -1133,6 +1331,20 @@
       sessionSelectMobileEl.addEventListener('change', (e) => {
         switchSession(e.target.value);
       });
+
+      agentWorkdirRootEl.addEventListener('change', () => {
+        onChatWorkdirRootChange().catch(error => {
+          console.error('加载一级目录失败:', error);
+        });
+      });
+
+      agentWorkdirLevel2El.addEventListener('change', () => {
+        onChatWorkdirLevel2Change().catch(error => {
+          console.error('加载二级目录失败:', error);
+        });
+      });
+
+      agentWorkdirLevel3El.addEventListener('change', onChatWorkdirLevel3Change);
     }
 
     // ============================================
@@ -1141,12 +1353,14 @@
 
     window.addEventListener('load', async () => {
       cacheDomElements();
+      initializeChatWorkdirSelectors();
       bindDomEvents();
 
       await checkAuthStatus().catch(() => {});
       if (!authEnabled || isAuthenticated) {
         await loadAgents();
         await loadHistory();
+        await loadWorkdirOptions();
       }
       userInputEl.focus();
 

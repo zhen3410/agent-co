@@ -34,6 +34,7 @@ const REDIS_CONFIG_KEY = 'bot-room:config';
 const DEFAULT_REDIS_CHAT_SESSIONS_KEY = 'bot-room:chat:sessions:v1';
 const REDIS_PERSIST_DEBOUNCE_MS = 500;
 const REDIS_REQUIRED = process.env.BOT_ROOM_REDIS_REQUIRED !== 'false';
+const REDIS_DISABLED = process.env.BOT_ROOM_DISABLE_REDIS === 'true';
 const CALLBACK_AUTH_TOKEN = process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
 const CALLBACK_AUTH_HEADER = 'x-bot-room-callback-token';
 
@@ -48,6 +49,7 @@ interface UserChatSession {
   name: string;
   history: Message[];
   currentAgent: string | null;
+  agentWorkdirs?: Record<string, string>;
   createdAt: number;
   updatedAt: number;
 }
@@ -175,6 +177,7 @@ interface RedisPersistedState {
 }
 
 async function loadRuntimeConfigFromRedis(): Promise<void> {
+  if (REDIS_DISABLED) return;
   try {
     const config = await redisClient.hgetall(REDIS_CONFIG_KEY);
     const configuredKey = (config.chat_sessions_key || '').trim();
@@ -210,7 +213,7 @@ function serializeChatSessionsState(): RedisPersistedState {
 }
 
 async function persistChatSessionsToRedis(): Promise<void> {
-  if (!redisClient || !redisReady) return;
+  if (REDIS_DISABLED || !redisClient || !redisReady) return;
 
   try {
     const payload = JSON.stringify(serializeChatSessionsState());
@@ -221,7 +224,7 @@ async function persistChatSessionsToRedis(): Promise<void> {
 }
 
 function schedulePersistChatSessions(): void {
-  if (!redisClient || !redisReady) return;
+  if (REDIS_DISABLED || !redisClient || !redisReady) return;
 
   if (persistTimer) {
     clearTimeout(persistTimer);
@@ -234,6 +237,10 @@ function schedulePersistChatSessions(): void {
 }
 
 async function hydrateChatSessionsFromRedis(): Promise<void> {
+  if (REDIS_DISABLED) {
+    console.warn('[Redis] 已通过 BOT_ROOM_DISABLE_REDIS=true 禁用会话持久化');
+    return;
+  }
   if (!redisClient) return;
 
   try {
@@ -262,6 +269,9 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
           name: normalizeSessionName(session.name),
           history: Array.isArray(session.history) ? session.history : [],
           currentAgent: session.currentAgent || null,
+          agentWorkdirs: session.agentWorkdirs && typeof session.agentWorkdirs === 'object'
+            ? session.agentWorkdirs
+            : {},
           createdAt: Number(session.createdAt) || Date.now(),
           updatedAt: Number(session.updatedAt) || Date.now()
         });
@@ -294,6 +304,22 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
 
 async function collectDependencyStatus(): Promise<DependencyStatusItem[]> {
   const result: DependencyStatusItem[] = [];
+
+  if (REDIS_DISABLED) {
+    result.push({
+      name: 'redis',
+      required: REDIS_REQUIRED,
+      healthy: true,
+      detail: 'disabled by BOT_ROOM_DISABLE_REDIS=true'
+    });
+    appendDependencyStatusLog({
+      timestamp: Date.now(),
+      level: 'info',
+      dependency: 'redis',
+      message: 'disabled by BOT_ROOM_DISABLE_REDIS=true'
+    });
+    return result;
+  }
 
   try {
     const pong = await redisClient.ping();
@@ -388,6 +414,7 @@ function createUserSession(name?: string): UserChatSession {
     name: normalizeSessionName(name),
     history: [],
     currentAgent: null,
+    agentWorkdirs: {},
     createdAt: now,
     updatedAt: now
   };
@@ -401,6 +428,7 @@ function ensureUserSessions(userKey: string): Map<string, UserChatSession> {
       name: DEFAULT_CHAT_SESSION_NAME,
       history: [],
       currentAgent: null,
+      agentWorkdirs: {},
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -442,6 +470,7 @@ function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<stri
 
     existing.name = existing.name || sourceSession.name;
     existing.currentAgent = existing.currentAgent || sourceSession.currentAgent;
+    existing.agentWorkdirs = { ...(sourceSession.agentWorkdirs || {}), ...(existing.agentWorkdirs || {}) };
     existing.createdAt = Math.min(existing.createdAt, sourceSession.createdAt);
     existing.updatedAt = Math.max(existing.updatedAt, sourceSession.updatedAt);
     if (sourceSession.history.length > existing.history.length) {
@@ -516,6 +545,23 @@ function getUserHistory(userKey: string, sessionId: string): Message[] {
 
 function getUserCurrentAgent(userKey: string, sessionId: string): string | null {
   return ensureUserSessions(userKey).get(sessionId)?.currentAgent || null;
+}
+
+function getUserAgentWorkdir(userKey: string, sessionId: string, agentName: string): string | null {
+  const value = ensureUserSessions(userKey).get(sessionId)?.agentWorkdirs?.[agentName];
+  return value && value.trim() ? value : null;
+}
+
+function setUserAgentWorkdir(userKey: string, sessionId: string, agentName: string, workdir: string | null): void {
+  const session = ensureUserSessions(userKey).get(sessionId);
+  if (!session) return;
+  session.agentWorkdirs = session.agentWorkdirs || {};
+  if (!workdir) {
+    delete session.agentWorkdirs[agentName];
+  } else {
+    session.agentWorkdirs[agentName] = workdir;
+  }
+  touchSession(session);
 }
 
 function getCallbackMessageKey(sessionId: string, agentName: string): string {
@@ -1154,6 +1200,8 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
     for (const agentName of agentsToRespond) {
       const agent = agentManager.getAgent(agentName);
       if (!agent) continue;
+      const runtimeWorkdir = getUserAgentWorkdir(userKey, session.id, agentName) || agent.workdir;
+      const runtimeAgent = runtimeWorkdir ? { ...agent, workdir: runtimeWorkdir } : agent;
 
       console.log(`[Chat] 调用 AI: ${agentName}`);
       appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=start stream=false`);
@@ -1169,7 +1217,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       let fallbackMessage: Message | null = null;
       let cliResult: ClaudeResult | null = null;
       try {
-        const result = await callClaudeCLI(message, agent, userHistory, {
+        const result = await callClaudeCLI(message, runtimeAgent, userHistory, {
           includeHistory,
           extraEnv: callbackEnv
         });
@@ -1344,6 +1392,8 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     const agentPromises = agentsToRespond.map(async (agentName) => {
       const agent = agentManager.getAgent(agentName);
       if (!agent) return null;
+      const runtimeWorkdir = getUserAgentWorkdir(userKey, session.id, agentName) || agent.workdir;
+      const runtimeAgent = runtimeWorkdir ? { ...agent, workdir: runtimeWorkdir } : agent;
 
       console.log(`[ChatStream] 并发调用 AI: ${agentName}`);
       appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=start stream=true`);
@@ -1359,7 +1409,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       let fallbackMessage: Message | null = null;
       let cliResult: ClaudeResult | null = null;
       try {
-        const result = await callClaudeCLI(message, agent, userHistory, {
+        const result = await callClaudeCLI(message, runtimeAgent, userHistory, {
           includeHistory,
           extraEnv: callbackEnv
         });
@@ -1447,9 +1497,104 @@ function handleGetHistory(req: http.IncomingMessage, res: http.ServerResponse): 
     messages: session.history,
     agents: agentManager.getAgentConfigs(),
     currentAgent: session.currentAgent,
+    agentWorkdirs: session.agentWorkdirs || {},
     chatSessions: getSessionSummaries(userKey),
     activeSessionId: session.id
   }));
+}
+
+function listDirectories(targetPath: string): Array<{ name: string; path: string }> {
+  const normalizedPath = path.resolve(targetPath || '/');
+  if (!path.isAbsolute(normalizedPath)) {
+    throw new Error('path 必须是绝对路径');
+  }
+  if (!fs.existsSync(normalizedPath) || !fs.statSync(normalizedPath).isDirectory()) {
+    throw new Error('目录不存在');
+  }
+  return fs.readdirSync(normalizedPath, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => ({
+      name: entry.name,
+      path: path.posix.join(normalizedPath, entry.name).replace(/\\/g, '/')
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+    .slice(0, 200);
+}
+
+function collectWorkdirOptions(): string[] {
+  const options = new Set<string>();
+  for (const item of listDirectories('/')) {
+    options.add(item.path);
+  }
+  for (const p of ['/workspace', '/root', '/tmp']) {
+    try {
+      if (!fs.existsSync(p) || !fs.statSync(p).isDirectory()) continue;
+      options.add(p);
+      for (const child of listDirectories(p)) {
+        options.add(child.path);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return Array.from(options).sort((a, b) => a.localeCompare(b, 'zh-CN')).slice(0, 300);
+}
+
+function handleGetWorkdirOptions(req: http.IncomingMessage, res: http.ServerResponse): void {
+  try {
+    const options = collectWorkdirOptions();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ options }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+function handleGetSystemDirs(req: http.IncomingMessage, res: http.ServerResponse, requestUrl: URL): void {
+  try {
+    const targetPath = requestUrl.searchParams.get('path') || '/';
+    const directories = listDirectories(targetPath);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ directories }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+async function handleSetWorkdir(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseBody<{ agentName?: string; workdir?: string }>(req);
+    const { userKey, session } = resolveChatSession(req);
+    const agentName = (body.agentName || '').trim();
+    const workdir = (body.workdir || '').trim();
+    if (!agentName || !agentManager.hasAgent(agentName)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '智能体不存在' }));
+      return;
+    }
+    if (!workdir) {
+      setUserAgentWorkdir(userKey, session.id, agentName, null);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, workdir: '' }));
+      return;
+    }
+    if (!path.isAbsolute(workdir) || !fs.existsSync(workdir) || !fs.statSync(workdir).isDirectory()) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'workdir 必须是存在的绝对目录' }));
+      return;
+    }
+    setUserAgentWorkdir(userKey, session.id, agentName, workdir);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, workdir }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
 }
 
 /**
@@ -1849,6 +1994,12 @@ const server = http.createServer(async (req, res) => {
     handleGetDependenciesStatus(req, res);
   } else if (requestUrl.pathname === '/api/dependencies/logs' && method === 'GET') {
     handleQueryDependenciesLogs(req, res, requestUrl);
+  } else if (requestUrl.pathname === '/api/system/dirs' && method === 'GET') {
+    handleGetSystemDirs(req, res, requestUrl);
+  } else if (requestUrl.pathname === '/api/workdirs/options' && method === 'GET') {
+    handleGetWorkdirOptions(req, res);
+  } else if (requestUrl.pathname === '/api/workdirs/select' && method === 'POST') {
+    await handleSetWorkdir(req, res);
   } else if (requestUrl.pathname === '/api/verbose/agents' && method === 'GET') {
     handleGetVerboseAgents(req, res);
   } else if (requestUrl.pathname === '/api/verbose/logs' && method === 'GET') {
@@ -1920,7 +2071,11 @@ async function startServer(): Promise<void> {
   } else {
     console.log('🔓 鉴权未启用: 设置 BOT_ROOM_AUTH_ENABLED=false');
   }
-  console.log(`🧠 Redis 会话持久化已启用: url=${DEFAULT_REDIS_URL}, key=${redisChatSessionsKey}`);
+  if (REDIS_DISABLED) {
+    console.log('🧠 Redis 会话持久化已禁用: BOT_ROOM_DISABLE_REDIS=true');
+  } else {
+    console.log(`🧠 Redis 会话持久化已启用: url=${DEFAULT_REDIS_URL}, key=${redisChatSessionsKey}`);
+  }
   console.log('='.repeat(60));
   });
 }
@@ -1931,7 +2086,7 @@ async function shutdown(): Promise<void> {
     persistTimer = null;
   }
   await persistChatSessionsToRedis();
-  if (redisReady) {
+  if (!REDIS_DISABLED && redisReady) {
     await redisClient.quit();
   }
 }

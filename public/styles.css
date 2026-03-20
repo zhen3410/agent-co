@@ -426,15 +426,22 @@ body.sheet-open {
 .current-agent-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-md);
   padding: var(--space-sm) var(--space-lg);
   background: var(--accent-subtle);
   border-bottom: 1px solid rgba(37, 99, 235, 0.1);
 }
 
+.current-agent-bar--workdir {
+  align-items: flex-start;
+}
+
 .current-agent-label {
   font-size: 12px;
   color: var(--text-tertiary);
+  min-width: 52px;
+  line-height: 30px;
 }
 
 .current-agent-name {
@@ -457,6 +464,25 @@ body.sheet-open {
 
 .btn-switch:hover {
   opacity: 0.8;
+}
+
+#agentWorkdirRoot,
+#agentWorkdirLevel2,
+#agentWorkdirLevel3,
+#chatWorkdirPreview {
+  max-width: 44%;
+  flex: 1 1 150px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+#chatWorkdirPreview {
+  flex-basis: 220px;
 }
 
 /* ============================================
