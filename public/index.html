@@ -106,6 +106,11 @@
                 <span className="current-agent-name" id="currentAgentName"></span>
                 <button className="btn-switch" onClick={() => window.switchAgent && window.switchAgent()}>切换</button>
               </div>
+              <div className="current-agent-bar" id="workdirBar" style={{ display: 'none' }}>
+                <span className="current-agent-label">工作目录</span>
+                <select id="chatWorkdirSelect"></select>
+                <button className="btn-switch" onClick={() => window.applyAgentWorkdir && window.applyAgentWorkdir()}>应用</button>
+              </div>
 
               <div className="messages" id="messages">
                 <WelcomeBlock />
@@ -163,6 +168,8 @@
     let currentAgent = null;
     let chatSessions = [];
     let activeSessionId = null;
+    let agentWorkdirs = {};
+    let workdirOptions = [];
 
     // DOM 元素
     let messagesEl;
@@ -172,6 +179,8 @@
     let agentsListEl;
     let currentAgentBarEl;
     let currentAgentNameEl;
+    let workdirBarEl;
+    let chatWorkdirSelectEl;
     let authOverlayEl;
     let usernameInputEl;
     let passwordInputEl;
@@ -194,6 +203,8 @@
       agentsListEl = document.getElementById('agentsList');
       currentAgentBarEl = document.getElementById('currentAgentBar');
       currentAgentNameEl = document.getElementById('currentAgentName');
+      workdirBarEl = document.getElementById('workdirBar');
+      chatWorkdirSelectEl = document.getElementById('chatWorkdirSelect');
       authOverlayEl = document.getElementById('authOverlay');
       usernameInputEl = document.getElementById('usernameInput');
       passwordInputEl = document.getElementById('passwordInput');
@@ -574,15 +585,63 @@
       userInputEl.placeholder = '输入消息... 使用 @智能体名 召唤 AI';
     }
 
+    function renderWorkdirSelect() {
+      if (!chatWorkdirSelectEl) return;
+      const currentValue = currentAgent ? (agentWorkdirs[currentAgent] || '') : '';
+      const options = [''].concat(workdirOptions || []);
+      chatWorkdirSelectEl.innerHTML = options.map(item => {
+        const label = item || '默认目录';
+        const selected = item === currentValue ? 'selected' : '';
+        return `<option value="${escapeHtml(item)}" ${selected}>${escapeHtml(label)}</option>`;
+      }).join('');
+    }
+
+    async function loadWorkdirOptions() {
+      try {
+        const response = await fetch('/api/workdirs/options', { credentials: 'include', cache: 'no-store' });
+        if (!response.ok) return;
+        const data = await response.json();
+        workdirOptions = Array.isArray(data.options) ? data.options : [];
+        renderWorkdirSelect();
+      } catch (error) {
+        console.error('加载工作目录选项失败:', error);
+      }
+    }
+
+    async function applyAgentWorkdir() {
+      if (!currentAgent) return;
+      const workdir = chatWorkdirSelectEl.value || '';
+      try {
+        const response = await fetch('/api/workdirs/select', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentName: currentAgent, workdir })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '设置失败');
+        if (workdir) {
+          agentWorkdirs[currentAgent] = workdir;
+        } else {
+          delete agentWorkdirs[currentAgent];
+        }
+      } catch (error) {
+        alert('设置工作目录失败: ' + error.message);
+      }
+    }
+
     function updateCurrentAgentUI() {
       if (currentAgent) {
         const agent = agents.find(a => a.name === currentAgent);
         currentAgentBarEl.style.display = 'flex';
+        workdirBarEl.style.display = 'flex';
         currentAgentNameEl.textContent = `${agent ? agent.avatar : '🤖'} ${currentAgent}`;
         currentAgentNameEl.style.color = agent ? agent.color : 'var(--accent)';
         userInputEl.placeholder = `发送消息给 ${currentAgent}...`;
+        renderWorkdirSelect();
       } else {
         currentAgentBarEl.style.display = 'none';
+        workdirBarEl.style.display = 'none';
         userInputEl.placeholder = '输入消息... 使用 @智能体名 召唤 AI';
       }
     }
@@ -1021,6 +1080,7 @@
             currentAgent = null;
             updateCurrentAgentUI();
           }
+          agentWorkdirs = data.agentWorkdirs || {};
           chatSessions = data.chatSessions || [];
           activeSessionId = data.activeSessionId || null;
           renderSessionList();
@@ -1072,6 +1132,7 @@
     window.clearHistory = clearHistory;
     window.sendMessage = sendMessage;
     window.switchAgent = switchAgent;
+    window.applyAgentWorkdir = applyAgentWorkdir;
     window.dismissPwaBanner = dismissPwaBanner;
 
     function bindDomEvents() {
@@ -1147,6 +1208,7 @@
       if (!authEnabled || isAuthenticated) {
         await loadAgents();
         await loadHistory();
+        await loadWorkdirOptions();
       }
       userInputEl.focus();
 
