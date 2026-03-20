@@ -96,7 +96,8 @@ export class AgentManager {
       avatar: config.avatar,
       systemPrompt,
       color: config.color,
-      cli: config.cli || 'claude'
+      cli: config.cli || 'claude',
+      workdir: config.workdir
     };
     this.agents.set(config.name, agent);
     this.agentConfigs.set(config.name, config);

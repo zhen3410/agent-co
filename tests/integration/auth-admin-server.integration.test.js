@@ -186,6 +186,52 @@ test('手动新增智能体时可持久化 cli 类型为 codex', async () => {
   assert.equal(created.cli, 'codex');
 });
 
+test('智能体支持配置 workdir，且必须为绝对路径', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const invalid = await fixture.request('/api/agents', {
+    method: 'POST',
+    headers,
+    body: {
+      applyMode: 'immediate',
+      agent: {
+        name: 'WorkdirInvalid',
+        avatar: '📁',
+        color: '#2563eb',
+        personality: '测试 workdir 校验',
+        workdir: './relative'
+      }
+    }
+  });
+
+  assert.equal(invalid.status, 400);
+  assert.match(invalid.body.error, /workdir 必须是绝对路径/);
+
+  const valid = await fixture.request('/api/agents', {
+    method: 'POST',
+    headers,
+    body: {
+      applyMode: 'immediate',
+      agent: {
+        name: 'WorkdirValid',
+        avatar: '📂',
+        color: '#16a34a',
+        personality: '测试工作目录',
+        cli: 'codex',
+        workdir: '/tmp'
+      }
+    }
+  });
+
+  assert.equal(valid.status, 201);
+  assert.equal(valid.body.agent.workdir, '/tmp');
+
+  const list = await fixture.request('/api/agents', { headers });
+  const created = list.body.agents.find(agent => agent.name === 'WorkdirValid');
+  assert.ok(created);
+  assert.equal(created.workdir, '/tmp');
+});
+
 
 test('智能体列表会补齐内置智能体，并保留手动添加的智能体', async () => {
   await fixture.cleanup();

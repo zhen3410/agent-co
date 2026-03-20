@@ -773,6 +773,10 @@
                 <option value="after_chat">会话结束后生效</option>
               </select>
             </div>
+            <div class="form-group">
+              <label class="form-label">工作目录（可选）</label>
+              <input type="text" id="agentWorkdir" placeholder="/workspace/project">
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">性格描述</label>
@@ -1121,6 +1125,7 @@
                 </div>
               </div>
               <div class="agent-personality">${escapeHtml(agent.personality || '暂无描述')}</div>
+              <div class="agent-color">工作目录：${escapeHtml(agent.workdir || '默认进程目录')}</div>
               <div class="agent-prompt-label">当前提示词</div>
               <textarea
                 class="agent-prompt-editor"
@@ -1152,7 +1157,8 @@
         color: document.getElementById('agentColor').value.trim(),
         personality: document.getElementById('agentPersonality').value.trim(),
         systemPrompt: document.getElementById('agentPrompt').value.trim(),
-        cli: document.getElementById('agentCli').value
+        cli: document.getElementById('agentCli').value,
+        workdir: document.getElementById('agentWorkdir').value.trim()
       };
     }
 
@@ -1164,6 +1170,7 @@
       document.getElementById('agentCli').value = 'claude';
       document.getElementById('agentPersonality').value = '';
       document.getElementById('agentPrompt').value = '';
+      document.getElementById('agentWorkdir').value = '';
       document.getElementById('agentSubmitBtn').textContent = '新增智能体';
     }
 
@@ -1175,6 +1182,7 @@
       document.getElementById('agentCli').value = agent.cli || 'claude';
       document.getElementById('agentPersonality').value = agent.personality || '';
       document.getElementById('agentPrompt').value = agent.systemPrompt || '';
+      document.getElementById('agentWorkdir').value = agent.workdir || '';
       document.getElementById('agentSubmitBtn').textContent = `保存 ${agent.name}`;
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
