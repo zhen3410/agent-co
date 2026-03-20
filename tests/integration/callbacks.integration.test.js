@@ -4,6 +4,16 @@ const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
 const CALLBACK_TOKEN = 'bot-room-callback-token';
 
+async function enableAgents(fixture, agentNames) {
+  for (const agentName of agentNames) {
+    const response = await fixture.request('/api/session-agents', {
+      method: 'POST',
+      body: { agentName, enabled: true }
+    });
+    assert.equal(response.status, 200);
+  }
+}
+
 test('callback 接口未鉴权返回 401', async () => {
   const fixture = await createChatServerFixture();
   try {
@@ -24,6 +34,7 @@ test('callback thread-context 返回会话历史', async () => {
   const fixture = await createChatServerFixture();
   try {
     await fixture.login();
+    await enableAgents(fixture, ['Alice']);
     await fixture.request('/api/chat', {
       method: 'POST',
       body: { message: '@Alice 你好' }
@@ -52,6 +63,7 @@ test('callback post-message 的消息可被对应智能体消费并出现在聊�
   const fixture = await createChatServerFixture();
   try {
     await fixture.login();
+    await enableAgents(fixture, ['Alice']);
     const history = await fixture.request('/api/history');
     const sessionId = history.body.activeSessionId;
 

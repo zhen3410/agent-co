@@ -204,3 +204,120 @@ test('对话页支持读取并设置当前智能体工作目录', async () => {
     await fixture.cleanup();
   }
 });
+
+test('新建会话默认不启用任何智能体，并支持按 session 切换启用状态', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'empty session' }
+    });
+    assert.equal(createResponse.status, 200);
+    assert.deepEqual(createResponse.body.session.enabledAgents, []);
+
+    const toggleOn = await fixture.request('/api/session-agents', {
+      method: 'POST',
+      body: { agentName: 'Alice', enabled: true }
+    });
+    assert.equal(toggleOn.status, 200);
+    assert.deepEqual(toggleOn.body.enabledAgents, ['Alice']);
+    assert.equal(toggleOn.body.currentAgentWillExpire, false);
+
+    const toggleOff = await fixture.request('/api/session-agents', {
+      method: 'POST',
+      body: { agentName: 'Alice', enabled: false }
+    });
+    assert.equal(toggleOff.status, 200);
+    assert.deepEqual(toggleOff.body.enabledAgents, []);
+
+    const history = await fixture.request('/api/history');
+    assert.equal(history.status, 200);
+    assert.deepEqual(history.body.enabledAgents, []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('已停用的智能体不能被 @，零启用会话会返回明确提示', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const zeroEnabled = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: 'hello when empty' }
+    });
+    assert.equal(zeroEnabled.status, 200);
+    assert.equal(zeroEnabled.body.aiMessages.length, 0);
+    assert.match(zeroEnabled.body.notice || '', /没有启用智能体|先启用/i);
+
+    await fixture.request('/api/session-agents', {
+      method: 'POST',
+      body: { agentName: 'Bob', enabled: true }
+    });
+
+    const mentionDisabled = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 你好' }
+    });
+    assert.equal(mentionDisabled.status, 200);
+    assert.equal(mentionDisabled.body.aiMessages.length, 0);
+    assert.equal(mentionDisabled.body.currentAgent, null);
+    assert.match(mentionDisabled.body.notice || '', /Alice|停用|启用/i);
+
+    const mentionEnabled = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Bob 你好' }
+    });
+    assert.equal(mentionEnabled.status, 200);
+    assert.equal(mentionEnabled.body.aiMessages.some(msg => msg.sender === 'Bob'), true);
+    assert.equal(mentionEnabled.body.currentAgent, 'Bob');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('关闭当前对话智能体后，从下一条消息开始失效', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    await fixture.request('/api/session-agents', {
+      method: 'POST',
+      body: { agentName: 'Codex架构师', enabled: true }
+    });
+
+    const firstChat = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Codex架构师 第一条消息' }
+    });
+    assert.equal(firstChat.status, 200);
+    assert.equal(firstChat.body.currentAgent, 'Codex架构师');
+
+    const disableCurrent = await fixture.request('/api/session-agents', {
+      method: 'POST',
+      body: { agentName: 'Codex架构师', enabled: false }
+    });
+    assert.equal(disableCurrent.status, 200);
+    assert.equal(disableCurrent.body.currentAgentWillExpire, true);
+
+    const followup = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '继续' }
+    });
+    assert.equal(followup.status, 200);
+    assert.equal(followup.body.aiMessages.length, 0);
+    assert.equal(followup.body.currentAgent, null);
+    assert.match(followup.body.notice || '', /没有启用智能体|先启用/i);
+  } finally {
+    await fixture.cleanup();
+  }
+});

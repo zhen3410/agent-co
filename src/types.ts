@@ -86,16 +86,19 @@ export interface ChatResponse {
   messages: Message[];
   sessionId: string;
   currentAgent?: string;  // 更新当前智能体
+  notice?: string;
 }
 
 export interface HistoryResponse {
   messages: Message[];
   agents: AIAgentConfig[];
   currentAgent?: string;  // 当前对话的智能体
+  enabledAgents?: string[];
 }
 
 export interface SessionState {
   currentAgent: string | null;  // 当前对话的智能体
+  enabledAgents?: string[];
   lastActivity: number;
 }
 

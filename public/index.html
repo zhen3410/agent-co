@@ -100,6 +100,10 @@
                 <span className="agents-label">智能体</span>
                 <div className="agents-list" id="agentsList"></div>
               </div>
+              <div className="agent-zero-state" id="agentZeroState" style={{ display: 'none' }}>
+                <strong>当前会话还没有启用智能体</strong>
+                <span>新建会话默认全部关闭，请先打开上方滑块，再发送消息。</span>
+              </div>
 
               <div className="current-agent-bar current-agent-bar--workdir" id="workdirBar" style={{ display: 'none' }}>
                 <span className="current-agent-label">工作目录</span>
@@ -112,6 +116,7 @@
               <div className="current-agent-bar" id="currentAgentBar" style={{ display: 'none' }}>
                 <span className="current-agent-label">当前对话</span>
                 <span className="current-agent-name" id="currentAgentName"></span>
+                <span className="current-agent-expiry" id="currentAgentExpiryHint" style={{ display: 'none' }}>已停用，将在下一条消息后失效</span>
                 <button className="btn-switch" onClick={() => window.switchAgent && window.switchAgent()}>切换</button>
               </div>
 
@@ -169,9 +174,11 @@
     let agents = [];
     let isLoading = false;
     let currentAgent = null;
+    let currentAgentWillExpire = false;
     let chatSessions = [];
     let activeSessionId = null;
     let agentWorkdirs = {};
+    let enabledAgents = new Set();
     const chatWorkdirState = { root: '', level2: '', level3: '', custom: '' };
 
     // DOM 元素
@@ -182,6 +189,7 @@
     let agentsListEl;
     let currentAgentBarEl;
     let currentAgentNameEl;
+    let currentAgentExpiryHintEl;
     let workdirBarEl;
     let agentWorkdirRootEl;
     let agentWorkdirLevel2El;
@@ -200,6 +208,7 @@
     let pwaBannerEl;
     let pwaBannerTextEl;
     let pwaInstallBtnEl;
+    let agentZeroStateEl;
 
     function cacheDomElements() {
       messagesEl = document.getElementById('messages');
@@ -209,6 +218,7 @@
       agentsListEl = document.getElementById('agentsList');
       currentAgentBarEl = document.getElementById('currentAgentBar');
       currentAgentNameEl = document.getElementById('currentAgentName');
+      currentAgentExpiryHintEl = document.getElementById('currentAgentExpiryHint');
       workdirBarEl = document.getElementById('workdirBar');
       agentWorkdirRootEl = document.getElementById('agentWorkdirRoot');
       agentWorkdirLevel2El = document.getElementById('agentWorkdirLevel2');
@@ -227,6 +237,7 @@
       pwaBannerEl = document.getElementById('pwaBanner');
       pwaBannerTextEl = document.getElementById('pwaBannerText');
       pwaInstallBtnEl = document.getElementById('pwaInstallBtn');
+      agentZeroStateEl = document.getElementById('agentZeroState');
     }
 
     let deferredInstallPrompt = null;
@@ -307,7 +318,12 @@
         history = [];
         chatSessions = [];
         activeSessionId = null;
+        enabledAgents = new Set();
+        currentAgent = null;
+        currentAgentWillExpire = false;
         renderSessionList();
+        renderAgentsList();
+        updateCurrentAgentUI();
         renderMessages();
         return;
       }
@@ -415,9 +431,12 @@
 
       history = data.messages || [];
       currentAgent = data.currentAgent || null;
+      currentAgentWillExpire = false;
+      enabledAgents = new Set(data.enabledAgents || []);
       activeSessionId = data.activeSessionId || null;
       chatSessions = data.chatSessions || [];
       renderSessionList();
+      renderAgentsList();
       updateCurrentAgentUI();
       renderMessages();
       closeSessionManager();
@@ -463,39 +482,99 @@
       }
     }
 
+    function getSortedAgents() {
+      return [...agents].sort((a, b) => {
+        const aEnabled = enabledAgents.has(a.name) ? 0 : 1;
+        const bEnabled = enabledAgents.has(b.name) ? 0 : 1;
+        if (aEnabled !== bEnabled) return aEnabled - bEnabled;
+        return agents.findIndex(item => item.name === a.name) - agents.findIndex(item => item.name === b.name);
+      });
+    }
+
+    function updateAgentZeroState() {
+      if (!agentZeroStateEl) return;
+      const hasEnabledAgents = Array.from(enabledAgents).length > 0;
+      agentZeroStateEl.style.display = hasEnabledAgents ? 'none' : 'flex';
+    }
+
     function renderAgentsList() {
-      agentsListEl.innerHTML = agents.map(agent => `
-        <span class="agent-tag" style="--agent-color: ${agent.color}" title="@${agent.name}" onclick="selectAgent('${agent.name}')">
-          ${agent.avatar} ${agent.name}
-        </span>
-      `).join('');
+      const sortedAgents = getSortedAgents();
+      agentsListEl.innerHTML = sortedAgents.map(agent => {
+        const isEnabled = enabledAgents.has(agent.name);
+        const disabledClass = isEnabled ? '' : ' agent-tag--disabled';
+        const checked = isEnabled ? 'checked' : '';
+        const disabledAttr = isEnabled ? '' : 'aria-disabled="true"';
+        return `
+          <span class="agent-tag${disabledClass}" style="--agent-color: ${agent.color}" title="@${agent.name}" ${disabledAttr} onclick="selectAgent('${agent.name}')">
+            <span class="agent-tag__main">
+              ${agent.avatar} ${agent.name}
+            </span>
+            <button
+              type="button"
+              class="agent-tag__toggle"
+              role="switch"
+              aria-checked="${checked ? 'true' : 'false'}"
+              onclick="event.stopPropagation(); toggleSessionAgent('${agent.name}', ${!isEnabled})"
+            >
+              <span class="agent-tag__toggle-track">
+                <span class="agent-tag__toggle-thumb"></span>
+              </span>
+            </button>
+          </span>
+        `;
+      }).join('');
+      updateAgentZeroState();
     }
 
     function selectAgent(name) {
       const agent = agents.find(a => a.name === name);
-      if (agent) {
+      if (agent && enabledAgents.has(agent.name)) {
         userInputEl.value = `@${name} ` + userInputEl.value;
         userInputEl.focus();
       }
     }
 
     function getMentionCandidates() {
-      const list = agents.map(agent => ({
+      const list = agents.filter(agent => enabledAgents.has(agent.name)).map(agent => ({
         type: 'agent',
         name: agent.name,
         avatar: agent.avatar,
         color: agent.color
       }));
 
-      list.unshift({
-        type: 'all',
-        name: '所有人',
-        alias: 'all',
-        avatar: '📣',
-        color: '#ec4899'
-      });
+      if (list.length > 0) {
+        list.unshift({
+          type: 'all',
+          name: '所有人',
+          alias: 'all',
+          avatar: '📣',
+          color: '#ec4899'
+        });
+      }
 
       return list;
+    }
+
+    async function toggleSessionAgent(name, nextEnabled) {
+      try {
+        const response = await fetch('/api/session-agents', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentName: name, enabled: nextEnabled })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || '切换智能体失败');
+        }
+        enabledAgents = new Set(data.enabledAgents || []);
+        currentAgentWillExpire = !!data.currentAgentWillExpire;
+        renderAgentsList();
+        updateCurrentAgentUI();
+        renderMessages();
+      } catch (error) {
+        alert('切换智能体失败: ' + error.message);
+      }
     }
 
     function hideMentionSuggestions() {
@@ -591,6 +670,7 @@
 
     function switchAgent() {
       currentAgent = null;
+      currentAgentWillExpire = false;
       updateCurrentAgentUI();
       userInputEl.placeholder = '输入消息... 使用 @智能体名 召唤 AI';
     }
@@ -771,6 +851,7 @@
         workdirBarEl.style.display = 'flex';
         currentAgentNameEl.textContent = `${agent ? agent.avatar : '🤖'} ${currentAgent}`;
         currentAgentNameEl.style.color = agent ? agent.color : 'var(--accent)';
+        currentAgentExpiryHintEl.style.display = currentAgentWillExpire ? 'inline-flex' : 'none';
         userInputEl.placeholder = `发送消息给 ${currentAgent}...`;
         loadChatWorkdirHierarchy(agentWorkdirs[currentAgent] || '').catch(error => {
           initializeChatWorkdirSelectors();
@@ -778,6 +859,7 @@
         });
       } else {
         currentAgentBarEl.style.display = 'none';
+        currentAgentExpiryHintEl.style.display = 'none';
         workdirBarEl.style.display = 'none';
         userInputEl.placeholder = '输入消息... 使用 @智能体名 召唤 AI';
       }
@@ -912,6 +994,17 @@
     }
 
     function renderMessages() {
+      if (history.length === 0 && enabledAgents.size === 0) {
+        messagesEl.innerHTML = `
+          <div class="welcome">
+            <div class="welcome-icon">💡</div>
+            <h2>当前会话还没有启用智能体</h2>
+            <p>新建会话默认全部关闭，请先打开上方滑块，再开始对话。</p>
+          </div>
+        `;
+        return;
+      }
+
       messagesEl.innerHTML = '';
       history.forEach(msg => {
         messagesEl.innerHTML += renderMessage(msg);
@@ -945,6 +1038,20 @@
 
     function scrollToBottom() {
       messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function showSystemNotice(notice) {
+      if (!notice) return;
+      addMessage({
+        role: 'assistant',
+        sender: '系统',
+        text: notice
+      });
+      history.push({
+        role: 'assistant',
+        sender: '系统',
+        text: notice
+      });
     }
 
     function escapeHtml(text) {
@@ -1047,10 +1154,10 @@
             addMessage(aiMsg);
           }
         }
-        if (data.currentAgent) {
-          currentAgent = data.currentAgent;
-          updateCurrentAgentUI();
-        }
+        currentAgent = data.currentAgent || null;
+        currentAgentWillExpire = false;
+        updateCurrentAgentUI();
+        showSystemNotice(data.notice);
         statusEl.textContent = '已连接（已自动降级到普通模式）';
         return true;
       } catch (fallbackError) {
@@ -1134,10 +1241,11 @@
                     ? `${Array.from(thinkingAgents).join(', ')} 思考中...`
                     : '已连接';
                 } else if (eventType === 'done') {
-                  if (data.currentAgent) {
-                    currentAgent = data.currentAgent;
-                    updateCurrentAgentUI();
-                  }
+                  currentAgent = data.currentAgent || null;
+                  currentAgentWillExpire = false;
+                  updateCurrentAgentUI();
+                } else if (eventType === 'notice') {
+                  showSystemNotice(data.notice);
                 } else if (eventType === 'error') {
                   addMessage({
                     role: 'assistant',
@@ -1208,15 +1316,12 @@
           history = data.messages || [];
           if (data.agents) {
             agents = data.agents;
-            renderAgentsList();
           }
-          if (data.currentAgent) {
-            currentAgent = data.currentAgent;
-            updateCurrentAgentUI();
-          } else {
-            currentAgent = null;
-            updateCurrentAgentUI();
-          }
+          enabledAgents = new Set(data.enabledAgents || []);
+          renderAgentsList();
+          currentAgent = data.currentAgent || null;
+          currentAgentWillExpire = false;
+          updateCurrentAgentUI();
           agentWorkdirs = data.agentWorkdirs || {};
           chatSessions = data.chatSessions || [];
           activeSessionId = data.activeSessionId || null;
@@ -1236,21 +1341,9 @@
         const data = await response.json();
         history = [];
         currentAgent = data.currentAgent;
+        currentAgentWillExpire = false;
         updateCurrentAgentUI();
-        messagesEl.innerHTML = `
-          <div class="welcome">
-            <div class="welcome-icon">💬</div>
-            <h2>欢迎使用 Bot Room</h2>
-            <p>使用 <em>@智能体名</em> 开始对话</p>
-            <div class="welcome-agents">
-              <span class="welcome-agent" onclick="selectAgent('Claude')">🤖 Claude</span>
-              <span class="welcome-agent" onclick="selectAgent('Codex架构师')">🏗️ Codex架构师</span>
-              <span class="welcome-agent" onclick="selectAgent('Alice')">👩‍💻 Alice</span>
-              <span class="welcome-agent" onclick="selectAgent('Bob')">🧑‍💻 Bob</span>
-            </div>
-            <p class="hint secondary">@ 一次后，后续消息会自动发送给该智能体</p>
-          </div>
-        `;
+        renderMessages();
       } catch (error) {
         console.error('清空失败:', error);
         alert('清空失败: ' + error.message);
@@ -1270,6 +1363,7 @@
     window.sendMessage = sendMessage;
     window.switchAgent = switchAgent;
     window.applyAgentWorkdir = applyAgentWorkdir;
+    window.toggleSessionAgent = toggleSessionAgent;
     window.dismissPwaBanner = dismissPwaBanner;
 
     function bindDomEvents() {
