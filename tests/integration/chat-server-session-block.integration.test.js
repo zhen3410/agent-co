@@ -167,3 +167,39 @@ test('切换会话后 /api/history 返回对应会话记录（需先登录）', 
     await fixture.cleanup();
   }
 });
+
+test('会话支持单独设置工作目录并在会话列表中返回', async () => {
+  const fixture = await createChatServerFixture();
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'workdir session' }
+    });
+    assert.equal(createResponse.status, 200);
+    const sessionId = createResponse.body.session.id;
+
+    const invalid = await fixture.request('/api/sessions/workdir', {
+      method: 'POST',
+      body: { sessionId, workdir: './relative' }
+    });
+    assert.equal(invalid.status, 400);
+
+    const update = await fixture.request('/api/sessions/workdir', {
+      method: 'POST',
+      body: { sessionId, workdir: '/tmp' }
+    });
+    assert.equal(update.status, 200);
+    assert.equal(update.body.session.workdir, '/tmp');
+
+    const history = await fixture.request('/api/history');
+    assert.equal(history.status, 200);
+    const matched = history.body.chatSessions.find((item) => item.id === sessionId);
+    assert.ok(matched);
+    assert.equal(matched.workdir, '/tmp');
+  } finally {
+    await fixture.cleanup();
+  }
+});

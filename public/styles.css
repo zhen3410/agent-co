@@ -443,6 +443,17 @@ body.sheet-open {
   color: var(--accent);
 }
 
+.session-workdir-select {
+  min-width: 200px;
+  max-width: 320px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-medium);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
 .btn-switch {
   padding: 4px 8px;
   background: transparent;

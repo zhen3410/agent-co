@@ -48,6 +48,7 @@ interface UserChatSession {
   name: string;
   history: Message[];
   currentAgent: string | null;
+  workdir: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -262,6 +263,7 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
           name: normalizeSessionName(session.name),
           history: Array.isArray(session.history) ? session.history : [],
           currentAgent: session.currentAgent || null,
+          workdir: normalizeSessionWorkdir(session.workdir) || null,
           createdAt: Number(session.createdAt) || Date.now(),
           updatedAt: Number(session.updatedAt) || Date.now()
         });
@@ -377,6 +379,14 @@ function normalizeSessionName(name: string | undefined): string {
   return trimmed ? trimmed.slice(0, 40) : DEFAULT_CHAT_SESSION_NAME;
 }
 
+function normalizeSessionWorkdir(workdir: string | undefined | null): string | null {
+  const trimmed = (workdir || '').trim();
+  if (!trimmed) return null;
+  if (!path.isAbsolute(trimmed)) return null;
+  if (trimmed.includes('\0')) return null;
+  return trimmed;
+}
+
 function generateChatSessionId(): string {
   return `s_${crypto.randomBytes(6).toString('hex')}`;
 }
@@ -388,6 +398,7 @@ function createUserSession(name?: string): UserChatSession {
     name: normalizeSessionName(name),
     history: [],
     currentAgent: null,
+    workdir: null,
     createdAt: now,
     updatedAt: now
   };
@@ -401,6 +412,7 @@ function ensureUserSessions(userKey: string): Map<string, UserChatSession> {
       name: DEFAULT_CHAT_SESSION_NAME,
       history: [],
       currentAgent: null,
+      workdir: null,
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -492,7 +504,7 @@ function resolveChatSession(req: http.IncomingMessage): { userKey: string; sessi
   return { userKey, session: activeSession };
 }
 
-function getSessionSummaries(userKey: string): Array<{ id: string; name: string; messageCount: number; updatedAt: number; createdAt: number }> {
+function getSessionSummaries(userKey: string): Array<{ id: string; name: string; messageCount: number; updatedAt: number; createdAt: number; workdir: string | null }> {
   const sessions = ensureUserSessions(userKey);
   return Array.from(sessions.values())
     .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -501,7 +513,8 @@ function getSessionSummaries(userKey: string): Array<{ id: string; name: string;
       name: session.name,
       messageCount: session.history.length,
       updatedAt: session.updatedAt,
-      createdAt: session.createdAt
+      createdAt: session.createdAt,
+      workdir: session.workdir || null
     }));
 }
 
@@ -596,6 +609,14 @@ function createChatSessionForUser(userKey: string, name?: string): UserChatSessi
   userActiveChatSession.set(userKey, newSession.id);
   schedulePersistChatSessions();
   return newSession;
+}
+
+function setChatSessionWorkdirForUser(userKey: string, sessionId: string, workdir?: string | null): UserChatSession | null {
+  const session = ensureUserSessions(userKey).get(sessionId);
+  if (!session) return null;
+  session.workdir = normalizeSessionWorkdir(workdir) || null;
+  touchSession(session);
+  return session;
 }
 
 function renameChatSessionForUser(userKey: string, sessionId: string, name: string): UserChatSession | null {
@@ -1171,7 +1192,8 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       try {
         const result = await callClaudeCLI(message, agent, userHistory, {
           includeHistory,
-          extraEnv: callbackEnv
+          extraEnv: callbackEnv,
+          workdir: session.workdir || undefined
         });
         cliResult = result;
         appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_done text_len=${result.text.length} blocks=${result.blocks.length}`);
@@ -1361,7 +1383,8 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       try {
         const result = await callClaudeCLI(message, agent, userHistory, {
           includeHistory,
-          extraEnv: callbackEnv
+          extraEnv: callbackEnv,
+          workdir: session.workdir || undefined
         });
         cliResult = result;
         appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_done text_len=${result.text.length} blocks=${result.blocks.length}`);
@@ -1491,15 +1514,56 @@ function handleSwitchAgent(req: http.IncomingMessage, res: http.ServerResponse):
 
 async function handleCreateChatSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
-    const body = await parseBody<{ name?: string }>(req);
+    const body = await parseBody<{ name?: string; workdir?: string }>(req);
     const userKey = getUserKeyFromRequest(req);
     const session = createChatSessionForUser(userKey, body.name);
+    if (body.workdir) {
+      session.workdir = normalizeSessionWorkdir(body.workdir);
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
       session,
       chatSessions: getSessionSummaries(userKey),
       activeSessionId: session.id
+    }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+async function handleSetSessionWorkdir(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseBody<{ sessionId?: string; workdir?: string }>(req);
+    const userKey = getUserKeyFromRequest(req);
+    const sessionId = (body.sessionId || '').trim();
+    if (!sessionId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '缺少 sessionId' }));
+      return;
+    }
+
+    const normalized = normalizeSessionWorkdir(body.workdir);
+    if ((body.workdir || '').trim() && !normalized) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'workdir 必须是绝对路径' }));
+      return;
+    }
+
+    const updated = setChatSessionWorkdirForUser(userKey, sessionId, normalized);
+    if (!updated) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '会话不存在' }));
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      session: { id: updated.id, workdir: updated.workdir },
+      chatSessions: getSessionSummaries(userKey)
     }));
   } catch (error: unknown) {
     const err = error as Error;
@@ -1833,6 +1897,8 @@ const server = http.createServer(async (req, res) => {
     await handleCreateChatSession(req, res);
   } else if (requestUrl.pathname === '/api/sessions/select' && method === 'POST') {
     await handleSelectChatSession(req, res);
+  } else if (requestUrl.pathname === '/api/sessions/workdir' && method === 'POST') {
+    await handleSetSessionWorkdir(req, res);
   } else if (requestUrl.pathname === '/api/sessions/rename' && method === 'POST') {
     await handleRenameChatSession(req, res);
   } else if (requestUrl.pathname === '/api/sessions/delete' && method === 'POST') {

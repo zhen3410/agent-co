@@ -158,6 +158,42 @@ printf '{"output_text":"ok"}\\n'
   }
 });
 
+test('Codex CLI 优先使用会话级 workdir（options.workdir）', { concurrency: false }, async () => {
+  const { callClaudeCLI } = require('../../dist/claude-cli.js');
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-workdir-override-'));
+  const agentWorkdir = join(tempDir, 'agent-dir');
+  const sessionWorkdir = join(tempDir, 'session-dir');
+  const pwdFile = join(tempDir, 'codex-pwd.txt');
+  const fakeCodex = join(tempDir, 'codex');
+
+  require('node:fs').mkdirSync(agentWorkdir, { recursive: true });
+  require('node:fs').mkdirSync(sessionWorkdir, { recursive: true });
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+pwd > "${pwdFile}"
+printf '{"output_text":"ok"}\\n'
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${tempDir}:${originalPath || ''}`;
+  try {
+    const agent = {
+      name: 'Codex架构师',
+      avatar: '🏗️',
+      systemPrompt: '你是测试架构师',
+      color: '#8b5cf6',
+      cli: 'codex',
+      workdir: agentWorkdir
+    };
+    const response = await callClaudeCLI('请处理任务', agent, [], { workdir: sessionWorkdir });
+    assert.equal(response.text, 'ok');
+    assert.equal(readFileSync(pwdFile, 'utf8').trim(), sessionWorkdir);
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('Codex CLI 能解析 response_item.message.content 里的 output_text 事件', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-json-'));

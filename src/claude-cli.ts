@@ -44,6 +44,7 @@ export interface ClaudeResult {
 export interface ClaudeCallOptions {
   includeHistory?: boolean;
   extraEnv?: Record<string, string>;
+  workdir?: string;
 }
 
 function collectTextFromValue(value: unknown, inAssistantContext = false): string[] {
@@ -247,7 +248,9 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
     const logVerbose = createVerboseLogger(agent.name, cli);
     logVerbose('meta', `Prompt length: ${prompt.length}`);
 
-    const requestedWorkdir = agent.workdir && agent.workdir.trim() ? agent.workdir.trim() : undefined;
+    const requestedWorkdir = (options.workdir && options.workdir.trim())
+      ? options.workdir.trim()
+      : (agent.workdir && agent.workdir.trim() ? agent.workdir.trim() : undefined);
     const cliCommand = buildCliCommand(cli, prompt, options.extraEnv || {}, requestedWorkdir);
     const child = spawn(cliCommand.command, cliCommand.args, {
       stdio: ['ignore', 'pipe', 'pipe'],

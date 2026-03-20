@@ -107,6 +107,17 @@
                 <button className="btn-switch" onClick={() => window.switchAgent && window.switchAgent()}>切换</button>
               </div>
 
+              <div className="current-agent-bar">
+                <span className="current-agent-label">工作目录</span>
+                <select id="sessionWorkdirSelect" className="session-workdir-select">
+                  <option value="">默认进程目录</option>
+                  <option value="/workspace">/workspace</option>
+                  <option value="/workspace/bot-room">/workspace/bot-room</option>
+                  <option value="/root/chat">/root/chat</option>
+                  <option value="/tmp">/tmp</option>
+                </select>
+              </div>
+
               <div className="messages" id="messages">
                 <WelcomeBlock />
               </div>
@@ -182,6 +193,7 @@
     let sessionSelectEl;
     let sessionSelectMobileEl;
     let sessionSheetBackdropEl;
+    let sessionWorkdirSelectEl;
     let pwaBannerEl;
     let pwaBannerTextEl;
     let pwaInstallBtnEl;
@@ -204,6 +216,7 @@
       sessionSelectEl = document.getElementById('sessionSelect');
       sessionSelectMobileEl = document.getElementById('sessionSelectMobile');
       sessionSheetBackdropEl = document.getElementById('sessionSheetBackdrop');
+      sessionWorkdirSelectEl = document.getElementById('sessionWorkdirSelect');
       pwaBannerEl = document.getElementById('pwaBanner');
       pwaBannerTextEl = document.getElementById('pwaBannerText');
       pwaInstallBtnEl = document.getElementById('pwaInstallBtn');
@@ -287,6 +300,7 @@
         chatSessions = [];
         activeSessionId = null;
         renderSessionList();
+        syncSessionWorkdirSelector();
         renderMessages();
         return;
       }
@@ -302,6 +316,49 @@
 
       sessionSelectEl.innerHTML = optionsHtml;
       sessionSelectMobileEl.innerHTML = optionsHtml;
+      syncSessionWorkdirSelector();
+    }
+
+    function getActiveSession() {
+      return chatSessions.find(session => session.id === activeSessionId) || null;
+    }
+
+    function ensureSessionWorkdirOption(workdir) {
+      if (!sessionWorkdirSelectEl) return;
+      const value = (workdir || '').trim();
+      if (!value) return;
+      const exists = Array.from(sessionWorkdirSelectEl.options).some(option => option.value === value);
+      if (!exists) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = `${value}（当前会话）`;
+        sessionWorkdirSelectEl.appendChild(option);
+      }
+    }
+
+    function syncSessionWorkdirSelector() {
+      if (!sessionWorkdirSelectEl) return;
+      const active = getActiveSession();
+      const workdir = active && active.workdir ? active.workdir : '';
+      ensureSessionWorkdirOption(workdir);
+      sessionWorkdirSelectEl.value = workdir;
+      sessionWorkdirSelectEl.disabled = !activeSessionId;
+    }
+
+    async function updateSessionWorkdir(workdir) {
+      if (!activeSessionId) return;
+      const response = await fetch('/api/sessions/workdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ sessionId: activeSessionId, workdir })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '设置工作目录失败');
+      }
+      chatSessions = data.chatSessions || chatSessions;
+      syncSessionWorkdirSelector();
     }
 
     function openSessionManager() {
@@ -1132,6 +1189,17 @@
 
       sessionSelectMobileEl.addEventListener('change', (e) => {
         switchSession(e.target.value);
+      });
+
+      sessionWorkdirSelectEl.addEventListener('change', async (e) => {
+        const nextWorkdir = e.target.value;
+        try {
+          await updateSessionWorkdir(nextWorkdir);
+        } catch (error) {
+          console.error('设置会话工作目录失败:', error);
+          alert(error.message || '设置会话工作目录失败');
+          syncSessionWorkdirSelector();
+        }
       });
     }
 
