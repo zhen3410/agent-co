@@ -775,7 +775,13 @@
             </div>
             <div class="form-group">
               <label class="form-label">工作目录（可选）</label>
-              <input type="text" id="agentWorkdir" placeholder="/workspace/project">
+              <select id="agentWorkdir">
+                <option value="">默认进程目录</option>
+                <option value="/workspace">/workspace</option>
+                <option value="/workspace/bot-room">/workspace/bot-room</option>
+                <option value="/root/chat">/root/chat</option>
+                <option value="/tmp">/tmp</option>
+              </select>
             </div>
           </div>
           <div class="form-group">
@@ -834,6 +840,24 @@
     let adminToken = '';
     let currentEditUser = '';
     let editingAgentName = '';
+    const BUILTIN_WORKDIR_OPTIONS = ['', '/workspace', '/workspace/bot-room', '/root/chat', '/tmp'];
+
+    function ensureWorkdirOption(value) {
+      const select = document.getElementById('agentWorkdir');
+      if (!select) return;
+      if (!value) {
+        select.value = '';
+        return;
+      }
+      const exists = Array.from(select.options).some(option => option.value === value);
+      if (!exists) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = `${value}（已保存）`;
+        select.appendChild(option);
+      }
+      select.value = value;
+    }
 
     function showToast(message, type = 'success') {
       const toast = document.getElementById('toast');
@@ -1170,7 +1194,13 @@
       document.getElementById('agentCli').value = 'claude';
       document.getElementById('agentPersonality').value = '';
       document.getElementById('agentPrompt').value = '';
-      document.getElementById('agentWorkdir').value = '';
+      const select = document.getElementById('agentWorkdir');
+      Array.from(select.options).forEach(option => {
+        if (!BUILTIN_WORKDIR_OPTIONS.includes(option.value)) {
+          option.remove();
+        }
+      });
+      select.value = '';
       document.getElementById('agentSubmitBtn').textContent = '新增智能体';
     }
 
@@ -1182,7 +1212,7 @@
       document.getElementById('agentCli').value = agent.cli || 'claude';
       document.getElementById('agentPersonality').value = agent.personality || '';
       document.getElementById('agentPrompt').value = agent.systemPrompt || '';
-      document.getElementById('agentWorkdir').value = agent.workdir || '';
+      ensureWorkdirOption(agent.workdir || '');
       document.getElementById('agentSubmitBtn').textContent = `保存 ${agent.name}`;
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }

@@ -9,6 +9,8 @@ test('管理后台智能体列表展示并支持就地修改当前提示词', ()
 
   assert.ok(html.includes('当前提示词'), 'should render current prompt label in agent card');
   assert.ok(html.includes('<select id="agentCli">'), 'should render cli selector for manual agent creation');
+  assert.ok(html.includes('<select id="agentWorkdir">'), 'should render workdir selector for manual agent creation');
+  assert.ok(html.includes('ensureWorkdirOption(agent.workdir || \'\')'), 'should restore saved workdir option when editing');
   assert.ok(html.includes("document.getElementById('agentCli').value"), 'should read and restore cli type in the form');
   assert.ok(html.includes("(agent.cli || 'claude').toUpperCase()"), 'should show current cli type in agent list');
   assert.ok(html.includes('data-agent-prompt="${escapeHtml(agent.name)}"'), 'should bind prompt editor to agent name');
