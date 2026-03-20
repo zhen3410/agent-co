@@ -97,6 +97,15 @@ export function validateAgentConfig(config: AIAgentConfig): string | null {
     return 'cli 仅支持 claude 或 codex';
   }
 
+  if (config.workdir) {
+    if (!path.isAbsolute(config.workdir)) {
+      return 'workdir 必须是绝对路径';
+    }
+    if (config.workdir.includes('\0')) {
+      return 'workdir 非法';
+    }
+  }
+
   const hasPersonality = typeof config.personality === 'string' && config.personality.trim().length > 0;
   const hasPrompt = typeof config.systemPrompt === 'string' && config.systemPrompt.trim().length > 0;
 
@@ -115,7 +124,8 @@ export function normalizeAgentConfig(config: AIAgentConfig): AIAgentConfig {
     color: config.color.trim(),
     personality: (config.personality || '').trim(),
     systemPrompt: (config.systemPrompt || '').trim() || undefined,
-    cli: config.cli === 'codex' || config.cli === 'claude' ? config.cli : undefined
+    cli: config.cli === 'codex' || config.cli === 'claude' ? config.cli : undefined,
+    workdir: (config.workdir || '').trim() || undefined
   };
 }
 

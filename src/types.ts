@@ -58,6 +58,7 @@ export interface AIAgent {
   systemPrompt: string;
   color: string;  // 用于前端显示
   cli?: 'claude' | 'codex';
+  workdir?: string;
 }
 
 export interface AIAgentConfig {
@@ -67,6 +68,7 @@ export interface AIAgentConfig {
   color: string;
   systemPrompt?: string;
   cli?: 'claude' | 'codex';
+  workdir?: string;
 }
 
 // ============================================
