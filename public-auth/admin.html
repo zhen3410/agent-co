@@ -861,6 +861,9 @@
     }
 
     async function fetchWorkdirOptions(pathname) {
+      if (!adminToken) {
+        return [];
+      }
       const query = pathname ? `?path=${encodeURIComponent(pathname)}` : '';
       const response = await fetch(`/api/system/dirs${query}`, {
         headers: { 'x-admin-token': adminToken }
@@ -877,6 +880,13 @@
       if (!preview) return;
       const value = workdirState.level3 || workdirState.level2 || workdirState.root || workdirState.custom || '';
       preview.value = value;
+    }
+
+    function initializeWorkdirSelectors() {
+      setSelectOptions('agentWorkdirRoot', [], '默认进程目录');
+      setSelectOptions('agentWorkdirLevel2', [], '请选择一级目录');
+      setSelectOptions('agentWorkdirLevel3', [], '请选择二级目录');
+      updateWorkdirPreview();
     }
 
     async function loadWorkdirHierarchy(prefillPath = '') {
@@ -1021,6 +1031,7 @@
           document.getElementById('tokenHint').style.display = 'flex';
           document.getElementById('authBadge').className = 'badge badge-success';
           document.getElementById('authBadge').textContent = '已验证';
+          await loadWorkdirHierarchy();
           loadUsers();
           loadAgents();
         } else {
@@ -1448,9 +1459,7 @@
     // 页面加载时清理历史保存的 token，避免自动填充
     document.addEventListener('DOMContentLoaded', () => {
       localStorage.removeItem('authAdminToken');
-      loadWorkdirHierarchy().catch(error => {
-        showToast('加载工作目录失败: ' + error.message, 'error');
-      });
+      initializeWorkdirSelectors();
       document.getElementById('agentWorkdirRoot').addEventListener('change', () => {
         onWorkdirRootChange().catch(error => showToast('加载目录失败: ' + error.message, 'error'));
       });
