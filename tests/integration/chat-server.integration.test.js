@@ -81,6 +81,81 @@ test('登录后支持多智能体协作回复', async () => {
   }
 });
 
+test('智能体 callback 消息中的 @ 提及会自动触发下一个智能体回复', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-claude-chain-'));
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
+const apiUrl = process.env.BOT_ROOM_API_URL || '';
+const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+
+async function post(content) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+(async () => {
+  if (agentName === 'Alice') {
+    await post('@Bob 请补充工程实现建议');
+  } else if (agentName === 'Bob') {
+    await post('Bob 已收到 Alice 的邀请，并补充了工程实现建议');
+  } else {
+    await post(\`\${agentName} 未命中测试分支\`);
+  }
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 发起协作' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.equal(chatResponse.body.success, true);
+    assert.deepEqual(
+      chatResponse.body.aiMessages.map(item => [item.sender, item.text]),
+      [
+        ['Alice', '@Bob 请补充工程实现建议'],
+        ['Bob', 'Bob 已收到 Alice 的邀请，并补充了工程实现建议']
+      ]
+    );
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('支持带中文标点的 @Codex架构师 提及', async () => {
   const fixture = await createChatServerFixture();
 
@@ -232,6 +307,77 @@ printf '{"output_text":"SSE 直出回复"}\\n'
     assert.ok(streamResponse.text.includes('event: agent_message'));
     assert.ok(streamResponse.text.includes('SSE 直出回复'));
     assert.ok(streamResponse.text.includes('event: done'));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('chat-stream 会继续推送由智能体 @ 触发的后续智能体消息', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-claude-stream-chain-'));
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
+const apiUrl = process.env.BOT_ROOM_API_URL || '';
+const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+
+async function post(content) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+(async () => {
+  if (agentName === 'Alice') {
+    await post('@Bob 请流式继续');
+  } else if (agentName === 'Bob') {
+    await post('Bob 流式补充完成');
+  }
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const streamResponse = await fixture.request('/api/chat-stream', {
+      method: 'POST',
+      body: { message: '@Alice 开始流式协作' }
+    });
+
+    assert.equal(streamResponse.status, 200);
+    assert.ok(streamResponse.text.includes('event: agent_thinking'));
+    assert.ok(streamResponse.text.includes('"agent":"Alice"'));
+    assert.ok(streamResponse.text.includes('"agent":"Bob"'));
+    assert.ok(streamResponse.text.includes('"sender":"Alice"'));
+    assert.ok(streamResponse.text.includes('"sender":"Bob"'));
+    assert.ok(streamResponse.text.includes('Bob 流式补充完成'));
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
