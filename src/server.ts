@@ -37,6 +37,8 @@ const REDIS_REQUIRED = process.env.BOT_ROOM_REDIS_REQUIRED !== 'false';
 const REDIS_DISABLED = process.env.BOT_ROOM_DISABLE_REDIS === 'true';
 const CALLBACK_AUTH_TOKEN = process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
 const CALLBACK_AUTH_HEADER = 'x-bot-room-callback-token';
+const AGENT_CHAIN_MAX_HOPS = Math.max(1, Number(process.env.BOT_ROOM_AGENT_CHAIN_MAX_HOPS || 4));
+const AGENT_CHAIN_MAX_CALLS_PER_TURN = Math.max(1, Number(process.env.BOT_ROOM_AGENT_CHAIN_MAX_CALLS_PER_TURN || 2));
 
 // 速率限制配置
 const RATE_LIMIT_MAX_REQUESTS = 100; // 每分钟最多 100 次请求
@@ -58,6 +60,12 @@ interface UserChatSession {
 interface AuthSession {
   username: string;
   expiresAt: number;
+}
+
+interface AgentDispatchTask {
+  agentName: string;
+  prompt: string;
+  includeHistory: boolean;
 }
 
 // ============================================
@@ -669,6 +677,166 @@ function consumeCallbackMessages(sessionId: string, agentName: string): Message[
   const queue = callbackMessages.get(key) || [];
   callbackMessages.delete(key);
   return queue;
+}
+
+function buildAgentVisibleMessages(agentName: string, cliResult: ClaudeResult | null, fallbackMessage: Message | null, callbackReplies: Message[]): Message[] {
+  if (callbackReplies.length > 0) {
+    return callbackReplies;
+  }
+
+  if (cliResult && (cliResult.text || cliResult.blocks.length > 0)) {
+    return [{
+      id: generateId(),
+      role: 'assistant',
+      sender: agentName,
+      text: cliResult.text,
+      blocks: cliResult.blocks as RichBlock[],
+      timestamp: Date.now()
+    }];
+  }
+
+  return fallbackMessage ? [fallbackMessage] : [];
+}
+
+async function runAgentTask(params: {
+  userKey: string;
+  session: UserChatSession;
+  task: AgentDispatchTask;
+  stream: boolean;
+}): Promise<Message[]> {
+  const { userKey, session, task, stream } = params;
+  const { agentName, prompt, includeHistory } = task;
+  const agent = agentManager.getAgent(agentName);
+  if (!agent) return [];
+
+  const runtimeWorkdir = getUserAgentWorkdir(userKey, session.id, agentName) || agent.workdir;
+  const runtimeAgent = runtimeWorkdir ? { ...agent, workdir: runtimeWorkdir } : agent;
+  const logTag = stream ? 'ChatStream' : 'Chat';
+
+  console.log(`[${logTag}] 调用 AI: ${agentName}`);
+  appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=start stream=${stream}`);
+
+  const callbackEnv: Record<string, string> = {
+    BOT_ROOM_API_URL: `http://127.0.0.1:${PORT}`,
+    BOT_ROOM_SESSION_ID: session.id,
+    BOT_ROOM_AGENT_NAME: agentName,
+    BOT_ROOM_CALLBACK_TOKEN: CALLBACK_AUTH_TOKEN
+  };
+
+  let fallbackMessage: Message | null = null;
+  let cliResult: ClaudeResult | null = null;
+  try {
+    const result = await callClaudeCLI(prompt, runtimeAgent, session.history, {
+      includeHistory,
+      extraEnv: callbackEnv
+    });
+    cliResult = result;
+    appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_done text_len=${result.text.length} blocks=${result.blocks.length}`);
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.log(`[${logTag}] AI CLI 不可用: ${err.message}`);
+    if (!stream) {
+      console.log('[Chat] 使用模拟回复');
+    }
+    appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_error error=${err.message}`);
+    const mockText = generateMockReply(prompt, agentName);
+    const extracted = extractRichBlocks(mockText);
+    fallbackMessage = {
+      id: generateId(),
+      role: 'assistant',
+      sender: agentName,
+      text: extracted.cleanText,
+      blocks: extracted.blocks,
+      timestamp: Date.now()
+    };
+  }
+
+  const callbackReplies = consumeCallbackMessages(session.id, agentName);
+  const visibleMessages = buildAgentVisibleMessages(agentName, cliResult, fallbackMessage, callbackReplies);
+
+  if (callbackReplies.length === 0 && cliResult && (cliResult.text || cliResult.blocks.length > 0)) {
+    appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=direct_fallback reason=no_callback`);
+  }
+
+  if (visibleMessages.length === 0) {
+    appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=empty_visible_message`);
+  }
+
+  return visibleMessages;
+}
+
+async function executeAgentTurn(params: {
+  userKey: string;
+  session: UserChatSession;
+  initialTasks: AgentDispatchTask[];
+  stream: boolean;
+  onThinking?: (agentName: string) => void;
+  onMessage?: (message: Message) => void;
+}): Promise<Message[]> {
+  const { userKey, session, initialTasks, stream, onThinking, onMessage } = params;
+  const queue = [...initialTasks];
+  const aiMessages: Message[] = [];
+  const callCounts = new Map<string, number>();
+  let totalCalls = 0;
+
+  while (queue.length > 0) {
+    const task = queue.shift()!;
+    if (totalCalls >= AGENT_CHAIN_MAX_HOPS) {
+      appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=chain_stop reason=max_hops hops=${AGENT_CHAIN_MAX_HOPS}`);
+      break;
+    }
+
+    const currentCalls = callCounts.get(task.agentName) || 0;
+    if (currentCalls >= AGENT_CHAIN_MAX_CALLS_PER_TURN) {
+      appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=chain_skip reason=max_calls count=${currentCalls}`);
+      continue;
+    }
+
+    callCounts.set(task.agentName, currentCalls + 1);
+    totalCalls += 1;
+    onThinking?.(task.agentName);
+
+    const visibleMessages = await runAgentTask({
+      userKey,
+      session,
+      task,
+      stream
+    });
+
+    for (const rawMessage of visibleMessages) {
+      const { mentions } = collectEligibleMentions(rawMessage.text || '', session);
+      const chainedMentions = mentions.filter(name => name !== rawMessage.sender);
+      const message = chainedMentions.length > 0
+        ? { ...rawMessage, mentions: chainedMentions }
+        : rawMessage;
+
+      session.history.push(message);
+      aiMessages.push(message);
+      touchSession(session);
+      onMessage?.(message);
+
+      for (const mention of chainedMentions) {
+        if (totalCalls + queue.length >= AGENT_CHAIN_MAX_HOPS) {
+          break;
+        }
+
+        const queuedCalls = callCounts.get(mention) || 0;
+        const pendingCalls = queue.filter(item => item.agentName === mention).length;
+        if (queuedCalls + pendingCalls >= AGENT_CHAIN_MAX_CALLS_PER_TURN) {
+          appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${mention} stage=chain_skip reason=max_calls_pending count=${queuedCalls} pending=${pendingCalls}`);
+          continue;
+        }
+
+        queue.push({
+          agentName: mention,
+          prompt: message.text || '',
+          includeHistory: true
+        });
+      }
+    }
+  }
+
+  return aiMessages;
 }
 
 function getSessionById(sessionId: string): UserChatSession | null {
@@ -1323,84 +1491,16 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       return;
     }
 
-    // 返回的 AI 消息列表
-    const aiMessages: Message[] = [];
-
-    // 调用对应的 AI 智能体
-    for (const agentName of agentsToRespond) {
-      const agent = agentManager.getAgent(agentName);
-      if (!agent) continue;
-      const runtimeWorkdir = getUserAgentWorkdir(userKey, session.id, agentName) || agent.workdir;
-      const runtimeAgent = runtimeWorkdir ? { ...agent, workdir: runtimeWorkdir } : agent;
-
-      console.log(`[Chat] 调用 AI: ${agentName}`);
-      appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=start stream=false`);
-
-      const includeHistory = mentions.length === 0;
-      const callbackEnv: Record<string, string> = {
-        BOT_ROOM_API_URL: `http://127.0.0.1:${PORT}`,
-        BOT_ROOM_SESSION_ID: session.id,
-        BOT_ROOM_AGENT_NAME: agentName,
-        BOT_ROOM_CALLBACK_TOKEN: CALLBACK_AUTH_TOKEN
-      };
-
-      let fallbackMessage: Message | null = null;
-      let cliResult: ClaudeResult | null = null;
-      try {
-        const result = await callClaudeCLI(message, runtimeAgent, userHistory, {
-          includeHistory,
-          extraEnv: callbackEnv
-        });
-        cliResult = result;
-        appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_done text_len=${result.text.length} blocks=${result.blocks.length}`);
-      } catch (error: unknown) {
-        const err = error as Error;
-        console.log(`[Chat] AI CLI 不可用: ${err.message}`);
-        console.log('[Chat] 使用模拟回复');
-        appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_error error=${err.message}`);
-        const mockText = generateMockReply(message, agentName);
-        const extracted = extractRichBlocks(mockText);
-        fallbackMessage = {
-          id: generateId(),
-          role: 'assistant',
-          sender: agentName,
-          text: extracted.cleanText,
-          blocks: extracted.blocks,
-          timestamp: Date.now()
-        };
-      }
-
-      const callbackReplies = consumeCallbackMessages(session.id, agentName);
-      for (const reply of callbackReplies) {
-        userHistory.push(reply);
-        aiMessages.push(reply);
-      }
-
-      if (callbackReplies.length === 0 && cliResult && (cliResult.text || cliResult.blocks.length > 0)) {
-        const directMessage: Message = {
-          id: generateId(),
-          role: 'assistant',
-          sender: agentName,
-          text: cliResult.text,
-          blocks: cliResult.blocks as RichBlock[],
-          timestamp: Date.now()
-        };
-        userHistory.push(directMessage);
-        aiMessages.push(directMessage);
-        appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=direct_fallback reason=no_callback`);
-      }
-
-      if (callbackReplies.length === 0 && fallbackMessage) {
-        userHistory.push(fallbackMessage);
-        aiMessages.push(fallbackMessage);
-      }
-
-      touchSession(session);
-      if (callbackReplies.length === 0 && !fallbackMessage && (!cliResult || (!cliResult.text && cliResult.blocks.length === 0))) {
-        appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=empty_visible_message`);
-      }
-      console.log(`[Chat] ${agentName} 回复完成，可见消息=${callbackReplies.length}${fallbackMessage && callbackReplies.length === 0 ? ' (fallback)' : ''}`);
-    }
+    const aiMessages = await executeAgentTurn({
+      userKey,
+      session,
+      initialTasks: agentsToRespond.map(agentName => ({
+        agentName,
+        prompt: message,
+        includeHistory: mentions.length === 0
+      })),
+      stream: false
+    });
 
     // 返回响应
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1515,88 +1615,22 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       return;
     }
 
-    // 先发送所有智能体的思考事件
-    for (const agentName of agentsToRespond) {
-      sendEvent('agent_thinking', { agent: agentName });
-    }
-
-    // 并发调用所有智能体，完成后立即推送
-    const agentPromises = agentsToRespond.map(async (agentName) => {
-      const agent = agentManager.getAgent(agentName);
-      if (!agent) return null;
-      const runtimeWorkdir = getUserAgentWorkdir(userKey, session.id, agentName) || agent.workdir;
-      const runtimeAgent = runtimeWorkdir ? { ...agent, workdir: runtimeWorkdir } : agent;
-
-      console.log(`[ChatStream] 并发调用 AI: ${agentName}`);
-      appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=start stream=true`);
-
-      const includeHistory = mentions.length === 0;
-      const callbackEnv: Record<string, string> = {
-        BOT_ROOM_API_URL: `http://127.0.0.1:${PORT}`,
-        BOT_ROOM_SESSION_ID: session.id,
-        BOT_ROOM_AGENT_NAME: agentName,
-        BOT_ROOM_CALLBACK_TOKEN: CALLBACK_AUTH_TOKEN
-      };
-
-      let fallbackMessage: Message | null = null;
-      let cliResult: ClaudeResult | null = null;
-      try {
-        const result = await callClaudeCLI(message, runtimeAgent, userHistory, {
-          includeHistory,
-          extraEnv: callbackEnv
-        });
-        cliResult = result;
-        appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_done text_len=${result.text.length} blocks=${result.blocks.length}`);
-      } catch (error: unknown) {
-        const err = error as Error;
-        console.log(`[ChatStream] AI CLI 不可用: ${err.message}`);
-        appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_error error=${err.message}`);
-        const mockText = generateMockReply(message, agentName);
-        const extracted = extractRichBlocks(mockText);
-        fallbackMessage = {
-          id: generateId(),
-          role: 'assistant',
-          sender: agentName,
-          text: extracted.cleanText,
-          blocks: extracted.blocks,
-          timestamp: Date.now()
-        };
-      }
-
-      const callbackReplies = consumeCallbackMessages(session.id, agentName);
-      const visibleMessages = callbackReplies.length > 0
-        ? callbackReplies
-        : (cliResult && (cliResult.text || cliResult.blocks.length > 0)
-          ? [{
-            id: generateId(),
-            role: 'assistant' as const,
-            sender: agentName,
-            text: cliResult.text,
-            blocks: cliResult.blocks as RichBlock[],
-            timestamp: Date.now()
-          }]
-          : (fallbackMessage ? [fallbackMessage] : []));
-
-      if (callbackReplies.length === 0 && cliResult && (cliResult.text || cliResult.blocks.length > 0)) {
-        appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=direct_fallback reason=no_callback`);
-      }
-
-      for (const visibleMessage of visibleMessages) {
-        userHistory.push(visibleMessage);
-        touchSession(session);
+    await executeAgentTurn({
+      userKey,
+      session,
+      initialTasks: agentsToRespond.map(agentName => ({
+        agentName,
+        prompt: message,
+        includeHistory: mentions.length === 0
+      })),
+      stream: true,
+      onThinking: (agentName) => {
+        sendEvent('agent_thinking', { agent: agentName });
+      },
+      onMessage: (visibleMessage) => {
         sendEvent('agent_message', visibleMessage);
       }
-
-      if (visibleMessages.length === 0) {
-        appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=empty_visible_message`);
-      }
-      console.log(`[ChatStream] ${agentName} 回复已推送: ${visibleMessages.length}`);
-
-      return visibleMessages;
     });
-
-    // 等待所有智能体完成
-    await Promise.all(agentPromises);
 
     // 发送完成事件
     if (ignoredMentions.length > 0) {
