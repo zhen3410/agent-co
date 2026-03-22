@@ -29,11 +29,45 @@
       { name: 'Bob', icon: '🧑‍💻' }
     ];
 
+    const Icon = ({ name }) => {
+      const icons = {
+        sessions: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 6.5h14M5 12h14M5 17.5h9" />
+          </svg>
+        ),
+        agents: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 4.5v4m-5 9v-2a5 5 0 0 1 10 0v2M9 12a3 3 0 1 0 6 0a3 3 0 0 0-6 0Z" />
+          </svg>
+        ),
+        workdir: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3.5 8.5h17v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Zm0 0l3-3h4l2 2h8" />
+          </svg>
+        ),
+        controls: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 7h12M6 12h12M6 17h12M9 7v2m6 3v2m-3 3v2" />
+          </svg>
+        ),
+        focus: (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 4.5H5.5V7M16 4.5h2.5V7M8 19.5H5.5V17M16 19.5h2.5V17M8.5 12a3.5 3.5 0 1 0 7 0a3.5 3.5 0 0 0-7 0Z" />
+          </svg>
+        )
+      };
+
+      return <span className="icon" data-icon={name}>{icons[name] || icons.sessions}</span>;
+    };
+
     const WelcomeBlock = () => (
       <div className="welcome">
-        <div className="welcome-icon">💬</div>
+        <div className="welcome-orb">
+          <div className="welcome-icon">💬</div>
+        </div>
         <h2>欢迎使用 Bot Room</h2>
-        <p>点击下方智能体或使用 <em>@智能体名</em> 开始对话</p>
+        <p>把聊天内容放在中心，把控制信息收回侧边。点击下方智能体或使用 <em>@智能体名</em> 开始对话。</p>
         <div className="welcome-agents">
           {welcomeAgents.map((agent) => (
             <span
@@ -65,21 +99,32 @@
         </div>
 
         <div className="container">
-          <aside className="sessions-sidebar">
-            <div className="sessions-label">会话蓝图</div>
-            <select id="sessionSelect" size="14"></select>
-            <button className="btn-session" onClick={() => window.createSession && window.createSession()}>新建会话</button>
-            <button className="btn-session" onClick={() => window.renameSession && window.renameSession()}>重命名</button>
-            <button className="btn-session btn-session--danger" onClick={() => window.deleteSession && window.deleteSession()}>删除</button>
+          <aside className="utility-rail">
+            <div className="utility-rail__brand">BR</div>
+            <button className="utility-rail__btn utility-rail__btn--primary" data-tab="sessions" onClick={() => window.toggleContextPanel && window.toggleContextPanel('sessions')} title="会话"><Icon name="sessions" /></button>
+            <button className="utility-rail__btn" data-tab="agents" onClick={() => window.toggleContextPanel && window.toggleContextPanel('agents')} title="智能体"><Icon name="agents" /></button>
+            <button className="utility-rail__btn" data-tab="workdir" onClick={() => window.toggleContextPanel && window.toggleContextPanel('workdir')} title="目录"><Icon name="workdir" /></button>
+            <div className="utility-rail__spacer"></div>
+            <button className="utility-rail__btn utility-rail__btn--mobile" onClick={() => window.openMobileControlHub && window.openMobileControlHub('sessions')} title="控制中心"><Icon name="controls" /></button>
           </aside>
 
           <div className="main-layout">
             <div className="chat-panel">
               <header className="header">
-                <h1>Bot Room · Blueprint</h1>
+                <div className="header-main">
+                  <div className="header-title">
+                    <span className="header-kicker">Bot Room</span>
+                    <h1>Focused Chat</h1>
+                    <p className="header-subtitle">让消息成为主视图，其余上下文按需展开。</p>
+                  </div>
+                  <div className="header-session-pill" id="activeSessionBadge">当前会话</div>
+                </div>
                 <div className="header-actions">
                   <span className="status" id="status">已连接</span>
-                  <button className="btn-clear btn-mobile-session" onClick={() => window.openSessionManager && window.openSessionManager()}>会话</button>
+                  <button className="btn-clear btn-mobile-session" onClick={() => window.openMobileControlHub && window.openMobileControlHub('sessions')}>控制</button>
+                  <button className="btn-clear btn-desktop-context" data-tab="sessions" onClick={() => window.toggleContextPanel && window.toggleContextPanel('sessions')}>会话</button>
+                  <button className="btn-clear btn-desktop-context" data-tab="agents" onClick={() => window.toggleContextPanel && window.toggleContextPanel('agents')}>智能体</button>
+                  <button className="btn-clear btn-desktop-context" data-tab="workdir" onClick={() => window.toggleContextPanel && window.toggleContextPanel('workdir')}>目录</button>
                   <button className="btn-clear" id="loginBtnHeader" style={{ display: 'none' }} onClick={() => window.showLoginOverlay && window.showLoginOverlay()}>登录</button>
                   <button className="btn-clear" id="logoutBtn" style={{ display: 'none' }} onClick={() => window.logout && window.logout()}>退出</button>
                   <button className="btn-clear" onClick={() => window.open('/verbose-logs.html', '_blank')}>CLI日志</button>
@@ -96,32 +141,21 @@
                 </div>
               </div>
 
-              <div className="agents-bar">
-                <span className="agents-label">智能体</span>
-                <div className="agents-list" id="agentsList"></div>
-              </div>
-              <div className="agent-zero-state" id="agentZeroState" style={{ display: 'none' }}>
-                <strong>当前会话还没有启用智能体</strong>
-                <span>新建会话默认全部关闭，请先打开上方滑块，再发送消息。</span>
-              </div>
-
-              <div className="current-agent-bar current-agent-bar--workdir" id="workdirBar" style={{ display: 'none' }}>
-                <span className="current-agent-label">工作目录</span>
-                <select id="agentWorkdirRoot"></select>
-                <select id="agentWorkdirLevel2"></select>
-                <select id="agentWorkdirLevel3"></select>
-                <input id="chatWorkdirPreview" type="text" readOnly placeholder="默认进程目录" />
-                <button className="btn-switch" onClick={() => window.applyAgentWorkdir && window.applyAgentWorkdir()}>应用</button>
-              </div>
-              <div className="current-agent-bar" id="currentAgentBar" style={{ display: 'none' }}>
-                <span className="current-agent-label">当前对话</span>
-                <span className="current-agent-name" id="currentAgentName"></span>
-                <span className="current-agent-expiry" id="currentAgentExpiryHint" style={{ display: 'none' }}>已停用，将在下一条消息后失效</span>
-                <button className="btn-switch" onClick={() => window.switchAgent && window.switchAgent()}>切换</button>
+              <div className="chat-focus-strip">
+                <div className="chat-focus-strip__summary">
+                  <span className="chat-focus-strip__label">聚焦对话</span>
+                  <span className="chat-focus-strip__value" id="focusAgentSummary"><Icon name="focus" />尚未锁定智能体</span>
+                </div>
+                <div className="chat-focus-strip__meta">
+                  <span className="chat-focus-strip__hint">使用 `@智能体名` 或右侧面板切换上下文</span>
+                  <button className="btn-clear chat-focus-strip__action" onClick={() => window.toggleContextPanel && window.toggleContextPanel('agents')}>管理上下文</button>
+                </div>
               </div>
 
-              <div className="messages" id="messages">
-                <WelcomeBlock />
+              <div className="messages-shell">
+                <div className="messages" id="messages">
+                  <WelcomeBlock />
+                </div>
               </div>
 
               <div className="input-area">
@@ -138,22 +172,100 @@
                   </div>
                   <button type="submit" id="sendBtn">发送</button>
                 </form>
+                <div className="input-area__hint">聊天区保持专注显示，会话、智能体与目录设置可从侧边栏或控制中心展开。</div>
               </div>
             </div>
+
+            <aside className="context-panel" id="contextPanel" data-tab="sessions">
+              <div className="context-panel__header">
+                <div>
+                  <div className="context-panel__eyebrow">Context</div>
+                  <h2>控制中心</h2>
+                </div>
+                <button className="btn-clear" onClick={() => window.closeContextPanel && window.closeContextPanel()}>关闭</button>
+              </div>
+
+              <div className="context-panel__tabs">
+                <button className="context-tab is-active" data-tab="sessions" onClick={() => window.setContextTab && window.setContextTab('sessions')}>会话</button>
+                <button className="context-tab" data-tab="agents" onClick={() => window.setContextTab && window.setContextTab('agents')}>智能体</button>
+                <button className="context-tab" data-tab="workdir" onClick={() => window.setContextTab && window.setContextTab('workdir')}>目录</button>
+              </div>
+
+              <section className="context-section" data-section="sessions">
+                <div className="sessions-label">会话蓝图</div>
+                <p className="context-section__intro">快速切换会话，或者创建新的工作流分支。</p>
+                <input id="sessionSearchInput" type="text" placeholder="搜索会话名称" autoComplete="off" />
+                <div className="recent-sessions" id="recentSessions"></div>
+                <select id="sessionSelect" size="12"></select>
+                <div className="session-actions">
+                  <button className="btn-session" onClick={() => window.createSession && window.createSession()}>新建会话</button>
+                  <button className="btn-session" onClick={() => window.renameSession && window.renameSession()}>重命名</button>
+                  <button className="btn-session btn-session--danger" onClick={() => window.deleteSession && window.deleteSession()}>删除会话</button>
+                </div>
+              </section>
+
+              <section className="context-section" data-section="workdir">
+                <p className="context-section__intro">为当前对话智能体指定运行目录，保留上下文但不占据主聊天区。</p>
+                <div className="current-agent-bar current-agent-bar--workdir" id="workdirBar" style={{ display: 'none' }}>
+                  <span className="current-agent-label">工作目录</span>
+                  <select id="agentWorkdirRoot"></select>
+                  <select id="agentWorkdirLevel2"></select>
+                  <select id="agentWorkdirLevel3"></select>
+                  <input id="chatWorkdirPreview" type="text" readOnly placeholder="默认进程目录" />
+                  <button className="btn-switch" onClick={() => window.applyAgentWorkdir && window.applyAgentWorkdir()}>应用</button>
+                </div>
+                <div className="context-workdir-empty" id="contextWorkdirEmpty">选择一个当前对话智能体后，这里会显示目录层级选择。</div>
+              </section>
+
+              <section className="context-section" data-section="agents">
+                <div className="agents-bar">
+                  <span className="agents-label">智能体</span>
+                  <p className="context-section__intro">启用本会话可参与对话的智能体，并管理当前聚焦对象。</p>
+                  <div className="agents-list" id="agentsList"></div>
+                </div>
+                <div className="agent-zero-state" id="agentZeroState" style={{ display: 'none' }}>
+                  <strong>当前会话还没有启用智能体</strong>
+                  <span>新建会话默认全部关闭，请先打开滑块，再发送消息。</span>
+                </div>
+                <div className="current-agent-bar" id="currentAgentBar" style={{ display: 'none' }}>
+                  <span className="current-agent-label">当前对话</span>
+                  <span className="current-agent-name" id="currentAgentName"></span>
+                  <span className="current-agent-expiry" id="currentAgentExpiryHint" style={{ display: 'none' }}>已停用，将在下一条消息后失效</span>
+                  <button className="btn-switch" onClick={() => window.switchAgent && window.switchAgent()}>切换</button>
+                </div>
+              </section>
+            </aside>
           </div>
         </div>
 
-        <div className="session-sheet-backdrop" id="sessionSheetBackdrop" style={{ display: 'none' }} onClick={(event) => window.closeSessionManager && window.closeSessionManager(event)}>
-          <aside className="session-sheet" role="dialog" aria-label="会话管理" onClick={(event) => event.stopPropagation()}>
+        <div className="mobile-control-sheet-backdrop" id="mobileControlSheetBackdrop" style={{ display: 'none' }} onClick={(event) => window.closeMobileControlHub && window.closeMobileControlHub(event)}>
+          <aside className="mobile-control-sheet" role="dialog" aria-label="移动端控制中心" onClick={(event) => event.stopPropagation()}>
+            <div className="mobile-control-sheet__handle"></div>
             <div className="session-sheet__header">
-              <h2>会话管理</h2>
-              <button className="btn-clear" onClick={() => window.closeSessionManager && window.closeSessionManager()}>完成</button>
+              <h2>控制中心</h2>
+              <button className="btn-clear" onClick={() => window.closeMobileControlHub && window.closeMobileControlHub()}>完成</button>
             </div>
-            <select id="sessionSelectMobile" size="10"></select>
-            <div className="session-sheet__actions">
-              <button className="btn-session" onClick={() => window.createSession && window.createSession()}>新建会话</button>
-              <button className="btn-session" onClick={() => window.renameSession && window.renameSession()}>重命名</button>
-              <button className="btn-session btn-session--danger" onClick={() => window.deleteSession && window.deleteSession()}>删除会话</button>
+            <p className="mobile-control-sheet__intro">在不遮挡聊天主舞台的前提下，集中管理会话、智能体和目录。</p>
+            <div className="context-panel__tabs context-panel__tabs--mobile">
+              <button className="context-tab is-active" data-tab="sessions" onClick={() => window.setContextTab && window.setContextTab('sessions')}>会话</button>
+              <button className="context-tab" data-tab="agents" onClick={() => window.setContextTab && window.setContextTab('agents')}>智能体</button>
+              <button className="context-tab" data-tab="workdir" onClick={() => window.setContextTab && window.setContextTab('workdir')}>目录</button>
+            </div>
+            <div className="mobile-control-sheet__body">
+              <section className="context-section context-section--mobile" data-section="sessions">
+                <select id="sessionSelectMobile" size="8"></select>
+                <div className="session-sheet__actions">
+                  <button className="btn-session" onClick={() => window.createSession && window.createSession()}>新建会话</button>
+                  <button className="btn-session" onClick={() => window.renameSession && window.renameSession()}>重命名</button>
+                  <button className="btn-session btn-session--danger" onClick={() => window.deleteSession && window.deleteSession()}>删除会话</button>
+                </div>
+              </section>
+              <section className="context-section context-section--mobile" data-section="agents">
+                <div className="mobile-agents-mirror" id="mobileAgentsMirror"></div>
+              </section>
+              <section className="context-section context-section--mobile" data-section="workdir">
+                <div className="mobile-workdir-mirror" id="mobileWorkdirMirror"></div>
+              </section>
             </div>
           </aside>
         </div>
@@ -204,11 +316,22 @@
     let mentionSuggestionsEl;
     let sessionSelectEl;
     let sessionSelectMobileEl;
-    let sessionSheetBackdropEl;
+    let mobileControlSheetBackdropEl;
     let pwaBannerEl;
     let pwaBannerTextEl;
     let pwaInstallBtnEl;
     let agentZeroStateEl;
+    let contextPanelEl;
+    let activeSessionBadgeEl;
+    let focusAgentSummaryEl;
+    let contextWorkdirEmptyEl;
+    let mobileAgentsMirrorEl;
+    let mobileWorkdirMirrorEl;
+    let sessionSearchInputEl;
+    let recentSessionsEl;
+
+    let activeContextTab = 'sessions';
+    let sessionSearchQuery = '';
 
     function cacheDomElements() {
       messagesEl = document.getElementById('messages');
@@ -233,11 +356,19 @@
       mentionSuggestionsEl = document.getElementById('mentionSuggestions');
       sessionSelectEl = document.getElementById('sessionSelect');
       sessionSelectMobileEl = document.getElementById('sessionSelectMobile');
-      sessionSheetBackdropEl = document.getElementById('sessionSheetBackdrop');
+      mobileControlSheetBackdropEl = document.getElementById('mobileControlSheetBackdrop');
       pwaBannerEl = document.getElementById('pwaBanner');
       pwaBannerTextEl = document.getElementById('pwaBannerText');
       pwaInstallBtnEl = document.getElementById('pwaInstallBtn');
       agentZeroStateEl = document.getElementById('agentZeroState');
+      contextPanelEl = document.getElementById('contextPanel');
+      activeSessionBadgeEl = document.getElementById('activeSessionBadge');
+      focusAgentSummaryEl = document.getElementById('focusAgentSummary');
+      contextWorkdirEmptyEl = document.getElementById('contextWorkdirEmpty');
+      mobileAgentsMirrorEl = document.getElementById('mobileAgentsMirror');
+      mobileWorkdirMirrorEl = document.getElementById('mobileWorkdirMirror');
+      sessionSearchInputEl = document.getElementById('sessionSearchInput');
+      recentSessionsEl = document.getElementById('recentSessions');
     }
 
     let deferredInstallPrompt = null;
@@ -318,6 +449,8 @@
         history = [];
         chatSessions = [];
         activeSessionId = null;
+        sessionSearchQuery = '';
+        if (sessionSearchInputEl) sessionSearchInputEl.value = '';
         enabledAgents = new Set();
         currentAgent = null;
         currentAgentWillExpire = false;
@@ -330,25 +463,119 @@
       await loadHistory();
     }
 
+    function getVisibleSessions() {
+      const normalizedQuery = sessionSearchQuery.trim().toLowerCase();
+      if (!normalizedQuery) return chatSessions;
+      return chatSessions.filter((session) => {
+        return session.name.toLowerCase().includes(normalizedQuery);
+      });
+    }
+
+    function renderRecentSessions() {
+      if (!recentSessionsEl) return;
+      const recent = chatSessions.slice(0, 4);
+      if (recent.length === 0) {
+        recentSessionsEl.innerHTML = '';
+        return;
+      }
+
+        recentSessionsEl.innerHTML = recent.map((session) => {
+        const activeClass = session.id === activeSessionId ? ' is-active' : '';
+        return `
+          <button
+            type="button"
+            class="recent-session-chip${activeClass}"
+            onclick="window.switchSession && window.switchSession('${session.id}')"
+          >
+            ${escapeHtml(session.name)}
+          </button>
+        `;
+      }).join('');
+    }
+
+    function updateSessionSearch() {
+      sessionSearchQuery = sessionSearchInputEl ? sessionSearchInputEl.value : '';
+      renderSessionList();
+    }
+
     function renderSessionList() {
-      const optionsHtml = chatSessions.map(session => `
+      const visibleSessions = getVisibleSessions();
+      const optionsHtml = visibleSessions.length > 0
+        ? visibleSessions.map(session => `
         <option value="${session.id}" ${session.id === activeSessionId ? 'selected' : ''}>
           ${escapeHtml(session.name)} (${session.messageCount})
         </option>
-      `).join('');
+      `).join('')
+        : '<option value="">没有匹配的会话，请尝试其他关键词</option>';
 
       sessionSelectEl.innerHTML = optionsHtml;
       sessionSelectMobileEl.innerHTML = optionsHtml;
+      renderRecentSessions();
+
+       const current = chatSessions.find(session => session.id === activeSessionId);
+       if (activeSessionBadgeEl) {
+         activeSessionBadgeEl.textContent = current ? current.name : '当前会话';
+       }
     }
 
-    function openSessionManager() {
-      sessionSheetBackdropEl.style.display = 'flex';
+    function renderContextTab() {
+      const allTabs = document.querySelectorAll('.context-tab');
+      allTabs.forEach((tab) => {
+        const isActive = tab.dataset.tab === activeContextTab;
+        tab.classList.toggle('is-active', isActive);
+      });
+
+      const contextTriggers = document.querySelectorAll('.utility-rail__btn[data-tab], .btn-desktop-context[data-tab]');
+      contextTriggers.forEach((trigger) => {
+        const triggerTab = trigger.dataset.tab;
+        const isDesktopOpen = contextPanelEl && contextPanelEl.classList.contains('is-open');
+        const isActive = triggerTab === activeContextTab && isDesktopOpen;
+        trigger.classList.toggle('is-active', isActive);
+      });
+
+      const allSections = document.querySelectorAll('.context-section');
+      allSections.forEach((section) => {
+        const isActive = section.dataset.section === activeContextTab;
+        section.classList.toggle('is-active', isActive);
+      });
+    }
+
+    function setContextTab(tab) {
+      activeContextTab = tab || 'sessions';
+      renderContextTab();
+    }
+
+    function openContextPanel(tab = activeContextTab) {
+      activeContextTab = tab || activeContextTab;
+      contextPanelEl.classList.add('is-open');
+      document.body.classList.add('context-panel-open');
+      renderContextTab();
+    }
+
+    function closeContextPanel() {
+      contextPanelEl.classList.remove('is-open');
+      document.body.classList.remove('context-panel-open');
+      renderContextTab();
+    }
+
+    function toggleContextPanel(tab = activeContextTab) {
+      if (contextPanelEl.classList.contains('is-open') && activeContextTab === tab) {
+        closeContextPanel();
+        return;
+      }
+      openContextPanel(tab);
+    }
+
+    function openMobileControlHub(tab = activeContextTab) {
+      activeContextTab = tab || activeContextTab;
+      mobileControlSheetBackdropEl.style.display = 'flex';
       document.body.classList.add('sheet-open');
+      renderContextTab();
     }
 
-    function closeSessionManager(event) {
-      if (event && event.target !== sessionSheetBackdropEl) return;
-      sessionSheetBackdropEl.style.display = 'none';
+    function closeMobileControlHub(event) {
+      if (event && event.target !== mobileControlSheetBackdropEl) return;
+      mobileControlSheetBackdropEl.style.display = 'none';
       document.body.classList.remove('sheet-open');
     }
 
@@ -367,7 +594,7 @@
           return;
         }
         await loadHistory();
-        closeSessionManager();
+        closeMobileControlHub();
       } catch (error) {
         console.error('切换会话失败:', error);
         alert('切换会话失败');
@@ -439,7 +666,7 @@
       renderAgentsList();
       updateCurrentAgentUI();
       renderMessages();
-      closeSessionManager();
+      closeMobileControlHub();
     }
 
     function isStandaloneMode() {
@@ -495,11 +722,17 @@
       if (!agentZeroStateEl) return;
       const hasEnabledAgents = Array.from(enabledAgents).length > 0;
       agentZeroStateEl.style.display = hasEnabledAgents ? 'none' : 'flex';
+      if (mobileAgentsMirrorEl) {
+        const zeroState = mobileAgentsMirrorEl.querySelector('.agent-zero-state--mobile');
+        if (zeroState) {
+          zeroState.style.display = hasEnabledAgents ? 'none' : 'flex';
+        }
+      }
     }
 
     function renderAgentsList() {
       const sortedAgents = getSortedAgents();
-      agentsListEl.innerHTML = sortedAgents.map(agent => {
+      const agentsHtml = sortedAgents.map(agent => {
         const isEnabled = enabledAgents.has(agent.name);
         const disabledClass = isEnabled ? '' : ' agent-tag--disabled';
         const checked = isEnabled ? 'checked' : '';
@@ -523,6 +756,16 @@
           </span>
         `;
       }).join('');
+      agentsListEl.innerHTML = agentsHtml;
+      if (mobileAgentsMirrorEl) {
+        mobileAgentsMirrorEl.innerHTML = `
+          <div class="agents-bar agents-bar--mobile">
+            <span class="agents-label">智能体</span>
+            <div class="agents-list">${agentsHtml}</div>
+          </div>
+          <div class="agent-zero-state agent-zero-state--mobile"><strong>当前会话还没有启用智能体</strong><span>请先启用一个智能体，再开始对话。</span></div>
+        `;
+      }
       updateAgentZeroState();
     }
 
@@ -688,6 +931,19 @@
       if (!chatWorkdirPreviewEl) return;
       const value = chatWorkdirState.level3 || chatWorkdirState.level2 || chatWorkdirState.root || chatWorkdirState.custom || '';
       chatWorkdirPreviewEl.value = value;
+      renderMobileWorkdirMirror();
+    }
+
+    function setFocusSummary(content) {
+      if (!focusAgentSummaryEl) return;
+      focusAgentSummaryEl.innerHTML = `
+        <span class="focus-summary-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M8 4.5H5.5V7M16 4.5h2.5V7M8 19.5H5.5V17M16 19.5h2.5V17M8.5 12a3.5 3.5 0 1 0 7 0a3.5 3.5 0 0 0-7 0Z" />
+          </svg>
+        </span>
+        <span class="focus-agent-inline">${content}</span>
+      `;
     }
 
     function initializeChatWorkdirSelectors() {
@@ -852,6 +1108,8 @@
         currentAgentNameEl.textContent = `${agent ? agent.avatar : '🤖'} ${currentAgent}`;
         currentAgentNameEl.style.color = agent ? agent.color : 'var(--accent)';
         currentAgentExpiryHintEl.style.display = currentAgentWillExpire ? 'inline-flex' : 'none';
+        setFocusSummary(`${agent ? agent.avatar : '🤖'} ${escapeHtml(currentAgent)}`);
+        contextWorkdirEmptyEl.style.display = 'none';
         userInputEl.placeholder = `发送消息给 ${currentAgent}...`;
         loadChatWorkdirHierarchy(agentWorkdirs[currentAgent] || '').catch(error => {
           initializeChatWorkdirSelectors();
@@ -861,8 +1119,26 @@
         currentAgentBarEl.style.display = 'none';
         currentAgentExpiryHintEl.style.display = 'none';
         workdirBarEl.style.display = 'none';
+        setFocusSummary('尚未锁定智能体');
+        contextWorkdirEmptyEl.style.display = 'block';
         userInputEl.placeholder = '输入消息... 使用 @智能体名 召唤 AI';
       }
+      renderMobileWorkdirMirror();
+    }
+
+    function renderMobileWorkdirMirror() {
+      if (!mobileWorkdirMirrorEl) return;
+
+      if (!currentAgent) {
+        mobileWorkdirMirrorEl.innerHTML = '<div class="context-workdir-empty">选择一个当前对话智能体后，这里会显示目录层级选择。</div>';
+        return;
+      }
+
+      mobileWorkdirMirrorEl.innerHTML = `
+        <div class="mobile-current-agent">${currentAgentNameEl ? currentAgentNameEl.textContent : currentAgent}</div>
+        <div class="mobile-workdir-preview">${escapeHtml(chatWorkdirPreviewEl ? (chatWorkdirPreviewEl.value || '默认进程目录') : '默认进程目录')}</div>
+        <p class="mobile-workdir-hint">工作目录层级选择请在桌面上下文面板中完成，移动端保留当前结果预览。</p>
+      `;
     }
 
     // ============================================
@@ -1355,8 +1631,14 @@
     window.createSession = createSession;
     window.renameSession = renameSession;
     window.deleteSession = deleteSession;
-    window.openSessionManager = openSessionManager;
-    window.closeSessionManager = closeSessionManager;
+    window.switchSession = switchSession;
+    window.openSessionManager = openMobileControlHub;
+    window.closeSessionManager = closeMobileControlHub;
+    window.openMobileControlHub = openMobileControlHub;
+    window.closeMobileControlHub = closeMobileControlHub;
+    window.toggleContextPanel = toggleContextPanel;
+    window.closeContextPanel = closeContextPanel;
+    window.setContextTab = setContextTab;
     window.showLoginOverlay = showLoginOverlay;
     window.logout = logout;
     window.clearHistory = clearHistory;
@@ -1378,6 +1660,10 @@
       userInputEl.addEventListener('input', () => {
         updateMentionSuggestions();
       });
+
+      if (sessionSearchInputEl) {
+        sessionSearchInputEl.addEventListener('input', updateSessionSearch);
+      }
 
       userInputEl.addEventListener('blur', () => {
         setTimeout(() => hideMentionSuggestions(), 120);
@@ -1448,6 +1734,8 @@
     window.addEventListener('load', async () => {
       cacheDomElements();
       initializeChatWorkdirSelectors();
+      renderContextTab();
+      renderMobileWorkdirMirror();
       bindDomEvents();
 
       await checkAuthStatus().catch(() => {});
