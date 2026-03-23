@@ -905,10 +905,16 @@ body.context-panel-open .main-layout {
 }
 
 #userInput {
+  display: block;
   border: none;
   background: transparent;
   box-shadow: none;
   padding: 12px 14px;
+  min-height: 48px;
+  max-height: 160px;
+  overflow-y: auto;
+  resize: none;
+  line-height: 1.5;
 }
 
 .mention-suggestions {
