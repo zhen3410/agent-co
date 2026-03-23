@@ -166,13 +166,13 @@
               <div className="input-area">
                 <form onSubmit={(event) => window.sendMessage && window.sendMessage(event)}>
                   <div className="mention-input-wrap">
-                    <input
-                      type="text"
+                    <textarea
                       id="userInput"
                       placeholder="输入消息... 使用 @智能体名 召唤 AI"
                       autoComplete="off"
                       autoFocus
-                    />
+                      rows="1"
+                    ></textarea>
                     <div className="mention-suggestions" id="mentionSuggestions" style={{ display: 'none' }}></div>
                   </div>
                   <button type="submit" id="sendBtn">发送</button>
@@ -782,6 +782,7 @@
       const agent = agents.find(a => a.name === name);
       if (agent && enabledAgents.has(agent.name)) {
         userInputEl.value = `@${name} ` + userInputEl.value;
+        resizeUserInput();
         userInputEl.focus();
       }
     }
@@ -911,6 +912,7 @@
 
       userInputEl.value = `${before}${mentionText}${after}`;
       const nextCursor = (before + mentionText).length;
+      resizeUserInput();
       userInputEl.setSelectionRange(nextCursor, nextCursor);
       hideMentionSuggestions();
       userInputEl.focus();
@@ -918,6 +920,12 @@
 
     function selectMentionSuggestion(index) {
       applyMentionSuggestion(index);
+    }
+
+    function resizeUserInput() {
+      if (!userInputEl) return;
+      userInputEl.style.height = 'auto';
+      userInputEl.style.height = `${Math.min(userInputEl.scrollHeight, 160)}px`;
     }
 
     function switchAgent() {
@@ -1546,6 +1554,7 @@
       if (!text) return;
 
       userInputEl.value = '';
+      resizeUserInput();
 
       const userMsg = { role: 'user', sender: '用户', text: text };
       addMessage(userMsg);
@@ -1749,6 +1758,7 @@
 
     function bindDomEvents() {
       userInputEl.addEventListener('input', () => {
+        resizeUserInput();
         updateMentionSuggestions();
       });
 
@@ -1828,6 +1838,7 @@
       renderContextTab();
       renderMobileWorkdirMirror();
       bindDomEvents();
+      resizeUserInput();
 
       await checkAuthStatus().catch(() => {});
       if (!authEnabled || isAuthenticated) {
