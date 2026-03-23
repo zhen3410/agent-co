@@ -83,6 +83,29 @@
       </div>
     );
 
+    const ChatScrollIntro = () => (
+      <div className="messages-intro">
+        <div className="pwa-banner" id="pwaBanner" style={{ display: 'none' }}>
+          <span id="pwaBannerText">安装 Bot Room 到主屏幕，获得更好的 iOS 全屏体验。</span>
+          <div className="pwa-banner__actions">
+            <button className="btn-clear" id="pwaInstallBtn" style={{ display: 'none' }} onClick={() => window.triggerPwaInstall && window.triggerPwaInstall()}>安装</button>
+            <button className="btn-clear" onClick={() => window.dismissPwaBanner && window.dismissPwaBanner()}>关闭</button>
+          </div>
+        </div>
+
+        <div className="chat-focus-strip">
+          <div className="chat-focus-strip__summary">
+            <span className="chat-focus-strip__label">聚焦对话</span>
+            <span className="chat-focus-strip__value" id="focusAgentSummary"><Icon name="focus" />尚未锁定智能体</span>
+          </div>
+          <div className="chat-focus-strip__meta">
+            <span className="chat-focus-strip__hint">使用 `@智能体名` 或右侧面板切换上下文</span>
+            <button className="btn-clear chat-focus-strip__action" onClick={() => window.toggleContextPanel && window.toggleContextPanel('agents')}>管理上下文</button>
+          </div>
+        </div>
+      </div>
+    );
+
     const App = () => (
       <>
         <div className="auth-overlay" id="authOverlay" style={{ display: 'none' }}>
@@ -133,27 +156,9 @@
                 </div>
               </header>
 
-              <div className="pwa-banner" id="pwaBanner" style={{ display: 'none' }}>
-                <span id="pwaBannerText">安装 Bot Room 到主屏幕，获得更好的 iOS 全屏体验。</span>
-                <div className="pwa-banner__actions">
-                  <button className="btn-clear" id="pwaInstallBtn" style={{ display: 'none' }}>安装</button>
-                  <button className="btn-clear" onClick={() => window.dismissPwaBanner && window.dismissPwaBanner()}>关闭</button>
-                </div>
-              </div>
-
-              <div className="chat-focus-strip">
-                <div className="chat-focus-strip__summary">
-                  <span className="chat-focus-strip__label">聚焦对话</span>
-                  <span className="chat-focus-strip__value" id="focusAgentSummary"><Icon name="focus" />尚未锁定智能体</span>
-                </div>
-                <div className="chat-focus-strip__meta">
-                  <span className="chat-focus-strip__hint">使用 `@智能体名` 或右侧面板切换上下文</span>
-                  <button className="btn-clear chat-focus-strip__action" onClick={() => window.toggleContextPanel && window.toggleContextPanel('agents')}>管理上下文</button>
-                </div>
-              </div>
-
               <div className="messages-shell">
                 <div className="messages" id="messages">
+                  <ChatScrollIntro />
                   <WelcomeBlock />
                 </div>
               </div>
@@ -333,6 +338,13 @@
     let activeContextTab = 'sessions';
     let sessionSearchQuery = '';
 
+    function cacheMessageChromeElements() {
+      pwaBannerEl = document.getElementById('pwaBanner');
+      pwaBannerTextEl = document.getElementById('pwaBannerText');
+      pwaInstallBtnEl = document.getElementById('pwaInstallBtn');
+      focusAgentSummaryEl = document.getElementById('focusAgentSummary');
+    }
+
     function cacheDomElements() {
       messagesEl = document.getElementById('messages');
       userInputEl = document.getElementById('userInput');
@@ -357,18 +369,15 @@
       sessionSelectEl = document.getElementById('sessionSelect');
       sessionSelectMobileEl = document.getElementById('sessionSelectMobile');
       mobileControlSheetBackdropEl = document.getElementById('mobileControlSheetBackdrop');
-      pwaBannerEl = document.getElementById('pwaBanner');
-      pwaBannerTextEl = document.getElementById('pwaBannerText');
-      pwaInstallBtnEl = document.getElementById('pwaInstallBtn');
       agentZeroStateEl = document.getElementById('agentZeroState');
       contextPanelEl = document.getElementById('contextPanel');
       activeSessionBadgeEl = document.getElementById('activeSessionBadge');
-      focusAgentSummaryEl = document.getElementById('focusAgentSummary');
       contextWorkdirEmptyEl = document.getElementById('contextWorkdirEmpty');
       mobileAgentsMirrorEl = document.getElementById('mobileAgentsMirror');
       mobileWorkdirMirrorEl = document.getElementById('mobileWorkdirMirror');
       sessionSearchInputEl = document.getElementById('sessionSearchInput');
       recentSessionsEl = document.getElementById('recentSessions');
+      cacheMessageChromeElements();
     }
 
     let deferredInstallPrompt = null;
@@ -1269,31 +1278,113 @@
       `;
     }
 
-    function renderMessages() {
-      if (history.length === 0 && enabledAgents.size === 0) {
-        messagesEl.innerHTML = `
-          <div class="welcome">
-            <div class="welcome-icon">💡</div>
-            <h2>当前会话还没有启用智能体</h2>
-            <p>新建会话默认全部关闭，请先打开上方滑块，再开始对话。</p>
+    function renderMessageIntro() {
+      return `
+        <div class="messages-intro">
+          <div class="pwa-banner" id="pwaBanner" style="display: none;">
+            <span id="pwaBannerText">安装 Bot Room 到主屏幕，获得更好的 iOS 全屏体验。</span>
+            <div class="pwa-banner__actions">
+              <button class="btn-clear" id="pwaInstallBtn" style="display: none;" onclick="window.triggerPwaInstall && window.triggerPwaInstall()">安装</button>
+              <button class="btn-clear" onclick="window.dismissPwaBanner && window.dismissPwaBanner()">关闭</button>
+            </div>
           </div>
-        `;
+
+          <div class="chat-focus-strip">
+            <div class="chat-focus-strip__summary">
+              <span class="chat-focus-strip__label">聚焦对话</span>
+              <span class="chat-focus-strip__value" id="focusAgentSummary">
+                <span class="focus-summary-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M8 4.5H5.5V7M16 4.5h2.5V7M8 19.5H5.5V17M16 19.5h2.5V17M8.5 12a3.5 3.5 0 1 0 7 0a3.5 3.5 0 0 0-7 0Z"></path>
+                  </svg>
+                </span>
+                <span class="focus-agent-inline">尚未锁定智能体</span>
+              </span>
+            </div>
+            <div class="chat-focus-strip__meta">
+              <span class="chat-focus-strip__hint">使用 \`@智能体名\` 或右侧面板切换上下文</span>
+              <button class="btn-clear chat-focus-strip__action" onclick="window.toggleContextPanel && window.toggleContextPanel('agents')">管理上下文</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderEmptyState() {
+      return `
+        <div class="welcome">
+          <div class="welcome-icon">💡</div>
+          <h2>当前会话还没有启用智能体</h2>
+          <p>新建会话默认全部关闭，请先打开上方滑块，再开始对话。</p>
+        </div>
+      `;
+    }
+
+    function renderWelcomeState() {
+      return `
+        <div class="welcome">
+          <div class="welcome-orb">
+            <div class="welcome-icon">💬</div>
+          </div>
+          <h2>欢迎使用 Bot Room</h2>
+          <p>把聊天内容放在中心，把控制信息收回侧边。点击下方智能体或使用 <em>@智能体名</em> 开始对话。</p>
+          <div class="welcome-agents">
+            ${welcomeAgents.map((agent) => `
+              <span class="welcome-agent" onclick="window.selectAgent && window.selectAgent(${JSON.stringify(agent.name)})">
+                ${agent.icon} ${escapeHtml(agent.name)}
+              </span>
+            `).join('')}
+          </div>
+          <p class="hint secondary">@ 一次后，后续消息会自动发送给该智能体</p>
+        </div>
+      `;
+    }
+
+    function syncMessageChromeState() {
+      cacheMessageChromeElements();
+      updateCurrentAgentUI();
+      if (localStorage.getItem('pwa-banner-dismissed') !== '1' && !isStandaloneMode() && pwaBannerEl) {
+        pwaBannerEl.style.display = 'flex';
+        if (isIOS() && pwaBannerTextEl) {
+          pwaBannerTextEl.textContent = 'iOS 安装提示：点击浏览器分享按钮，再选择“添加到主屏幕”。';
+        }
+      }
+      if (deferredInstallPrompt) {
+        showPwaInstallButton();
+      }
+    }
+
+    function renderMessages() {
+      let markup = renderMessageIntro();
+
+      if (history.length === 0 && enabledAgents.size === 0) {
+        messagesEl.innerHTML = markup + renderEmptyState();
+        syncMessageChromeState();
         return;
       }
 
-      messagesEl.innerHTML = '';
       history.forEach(msg => {
-        messagesEl.innerHTML += renderMessage(msg);
+        markup += renderMessage(msg);
       });
+      messagesEl.innerHTML = markup;
+      if (history.length === 0) {
+        messagesEl.innerHTML += renderWelcomeState();
+      }
+      syncMessageChromeState();
+      scrollToBottom();
+    }
+
+    function appendMessageMarkup(markup) {
+      const welcome = messagesEl.querySelector('.welcome');
+      if (welcome) welcome.remove();
+      messagesEl.insertAdjacentHTML('beforeend', markup);
+      cacheMessageChromeElements();
+      updateCurrentAgentUI();
       scrollToBottom();
     }
 
     function addMessage(msg) {
-      const welcome = messagesEl.querySelector('.welcome');
-      if (welcome) welcome.remove();
-
-      messagesEl.innerHTML += renderMessage(msg);
-      scrollToBottom();
+      appendMessageMarkup(renderMessage(msg));
     }
 
     function setLoading(loading, agentName = null) {
@@ -1302,8 +1393,7 @@
       if (loading) {
         sendBtnEl.disabled = true;
         sendBtnEl.textContent = '...';
-        messagesEl.innerHTML += renderLoading(agentName || 'AI');
-        scrollToBottom();
+        appendMessageMarkup(renderLoading(agentName || 'AI'));
       } else {
         sendBtnEl.disabled = false;
         sendBtnEl.textContent = '发送';
@@ -1647,16 +1737,17 @@
     window.applyAgentWorkdir = applyAgentWorkdir;
     window.toggleSessionAgent = toggleSessionAgent;
     window.dismissPwaBanner = dismissPwaBanner;
+    window.triggerPwaInstall = async function triggerPwaInstall() {
+      if (!deferredInstallPrompt) return;
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      if (pwaInstallBtnEl) {
+        pwaInstallBtnEl.style.display = 'none';
+      }
+    };
 
     function bindDomEvents() {
-      pwaInstallBtnEl.addEventListener('click', async () => {
-        if (!deferredInstallPrompt) return;
-        deferredInstallPrompt.prompt();
-        await deferredInstallPrompt.userChoice;
-        deferredInstallPrompt = null;
-        pwaInstallBtnEl.style.display = 'none';
-      });
-
       userInputEl.addEventListener('input', () => {
         updateMentionSuggestions();
       });
