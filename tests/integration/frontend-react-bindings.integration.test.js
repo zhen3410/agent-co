@@ -72,3 +72,13 @@ test('React 页面会将 AI 回复按 Markdown 渲染并保留用户纯文本换
   assert.ok(html.includes("${highlightMentions(renderPlainText(msg.text || ''))}"), 'user message should keep plain text + mentions');
   assert.ok(html.includes("${renderMarkdown(msg.text || '')}"), 'assistant message should render markdown');
 });
+
+test('聊天页顶部控制栏保持吸顶，避免被长消息列表顶出视口', () => {
+  const cssPath = path.join(__dirname, '..', '..', 'public', 'styles.css');
+  const css = fs.readFileSync(cssPath, 'utf8');
+
+  assert.ok(css.includes('.header {'), 'should define header styles');
+  assert.ok(css.includes('position: sticky;'), 'header should stick to the top of the viewport');
+  assert.ok(css.includes('top: 0;'), 'sticky header should anchor to viewport top');
+  assert.ok(css.includes('z-index: 10;'), 'sticky header should stay above the message list');
+});
