@@ -774,14 +774,15 @@ async function executeAgentTurn(params: {
   onMessage?: (message: Message) => void;
 }): Promise<Message[]> {
   const { userKey, session, initialTasks, stream, onThinking, onMessage } = params;
-  const queue = [...initialTasks];
+  type QueuedAgentDispatchTask = AgentDispatchTask & { dispatchKind: 'initial' | 'chained' };
+  const queue: QueuedAgentDispatchTask[] = initialTasks.map(task => ({ ...task, dispatchKind: 'initial' }));
   const aiMessages: Message[] = [];
   const callCounts = new Map<string, number>();
-  let totalCalls = 0;
+  let chainedCalls = 0;
 
   while (queue.length > 0) {
     const task = queue.shift()!;
-    if (totalCalls >= AGENT_CHAIN_MAX_HOPS) {
+    if (task.dispatchKind === 'chained' && chainedCalls >= AGENT_CHAIN_MAX_HOPS) {
       appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=chain_stop reason=max_hops hops=${AGENT_CHAIN_MAX_HOPS}`);
       break;
     }
@@ -793,7 +794,9 @@ async function executeAgentTurn(params: {
     }
 
     callCounts.set(task.agentName, currentCalls + 1);
-    totalCalls += 1;
+    if (task.dispatchKind === 'chained') {
+      chainedCalls += 1;
+    }
     onThinking?.(task.agentName);
 
     const visibleMessages = await runAgentTask({
@@ -816,7 +819,8 @@ async function executeAgentTurn(params: {
       onMessage?.(message);
 
       for (const mention of chainedMentions) {
-        if (totalCalls + queue.length >= AGENT_CHAIN_MAX_HOPS) {
+        const queuedChainedCalls = queue.filter(item => item.dispatchKind === 'chained').length;
+        if (chainedCalls + queuedChainedCalls >= AGENT_CHAIN_MAX_HOPS) {
           break;
         }
 
@@ -830,7 +834,8 @@ async function executeAgentTurn(params: {
         queue.push({
           agentName: mention,
           prompt: message.text || '',
-          includeHistory: true
+          includeHistory: true,
+          dispatchKind: 'chained'
         });
       }
     }
