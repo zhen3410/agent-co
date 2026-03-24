@@ -211,19 +211,35 @@ test('启用超过 4 个智能体时，@所有人 仍会触发全部已启用智
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-broadcast-all-'));
   const fakeClaude = join(tempDir, 'claude');
   const fakeCodex = join(tempDir, 'codex');
+  const agentDataFile = join(tempDir, 'agents.json');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 printf '{"output_text":"%s 已收到"}\\n' "\${BOT_ROOM_AGENT_NAME:-AI}"
 `, 'utf8');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
 printf '{"output_text":"{\\"output_text\\":\\"%s 已收到\\"}\\n"' "\${BOT_ROOM_AGENT_NAME:-AI}"
 `, 'utf8');
+  writeFileSync(agentDataFile, JSON.stringify({
+    activeAgents: [
+      { name: 'Codex架构师', avatar: '🏗️', personality: '架构师', color: '#8b5cf6', cli: 'codex' },
+      { name: 'BACKEND', avatar: '🧩', personality: '后端工程师', color: '#0f766e', cli: 'codex' },
+      { name: 'FRONTEND', avatar: '🖼️', personality: '前端工程师', color: '#2563eb', cli: 'codex' },
+      { name: 'QA', avatar: '🧪', personality: '测试工程师', color: '#dc2626', cli: 'claude' },
+      { name: 'OPS', avatar: '🛠️', personality: '运维工程师', color: '#7c3aed', cli: 'claude' },
+      { name: 'SECURITY', avatar: '🔐', personality: '安全工程师', color: '#b45309', cli: 'claude' },
+      { name: 'PERF', avatar: '⚡', personality: '性能工程师', color: '#059669', cli: 'claude' }
+    ],
+    pendingAgents: null,
+    pendingReason: null,
+    updatedAt: Date.now(),
+    pendingUpdatedAt: null
+  }, null, 2), 'utf8');
   chmodSync(fakeClaude, 0o755);
   chmodSync(fakeCodex, 0o755);
 
   const fixture = await createChatServerFixture({
     env: {
       PATH: `${tempDir}:${process.env.PATH || ''}`,
-      AGENT_DATA_FILE: join(process.cwd(), 'data', 'agents.json')
+      AGENT_DATA_FILE: agentDataFile
     }
   });
 
