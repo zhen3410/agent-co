@@ -635,13 +635,118 @@ printf '{"output_text":"late reply"}\\n'
     abortController.abort();
     await streamResponse.body?.cancel().catch(() => {});
 
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 1600));
 
     const logsResponse = await fixture.request('/api/dependencies/logs?dependency=chat-exec&keyword=stream_disconnect');
     assert.equal(logsResponse.status, 200);
     const messages = logsResponse.body.logs.map(item => item.message);
     assert.ok(messages.some(msg => msg.includes('stage=stream_disconnect')));
     assert.ok(messages.some(msg => msg.includes('reason=client_disconnect')));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('chat-resume 会继续执行流式中断后剩余的智能体链路，避免重复执行已完成节点', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-stream-resume-chain-'));
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
+const apiUrl = process.env.BOT_ROOM_API_URL || '';
+const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+
+async function post(content) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+(async () => {
+  if (agentName === 'Alice') {
+    await post('Alice 已完成首段');
+  } else if (agentName === 'Bob') {
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    await post('Bob 已继续完成剩余链路');
+  }
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const abortController = new AbortController();
+    const response = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Bob 开始后中断，再恢复剩余链路' }),
+      signal: abortController.signal
+    });
+
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let streamText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      streamText += decoder.decode(value, { stream: true });
+      if (streamText.includes('"sender":"Alice"')) {
+        abortController.abort();
+        break;
+      }
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1600));
+
+    const resumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.ok(Array.isArray(resumeResponse.body.aiMessages));
+    assert.equal(resumeResponse.body.aiMessages.length, 1);
+    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Bob');
+    assert.equal(resumeResponse.body.aiMessages[0].text, 'Bob 已继续完成剩余链路');
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    const senders = historyResponse.body.messages.map(item => item.sender);
+    assert.deepEqual(senders, ['用户', 'Alice', 'Bob']);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

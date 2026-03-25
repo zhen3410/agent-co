@@ -129,6 +129,17 @@ test('React 页面仅在流式连接尚未收到 AI 可见回复时才降级到 
   assert.ok(html.includes('if (!streamReceivedAgentMessage) {'), 'should only downgrade before visible AI output arrives');
 });
 
+test('React 页面会在收到部分回复后提供继续剩余执行入口，而不是提示手动重发', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assert.ok(html.includes('async function resumePendingChain() {'), 'should provide a resume action for interrupted chains');
+  assert.ok(html.includes("fetch('/api/chat-resume', {"), 'resume action should call /api/chat-resume');
+  assert.ok(html.includes('function showResumeChainNotice() {'), 'should render a dedicated resume notice');
+  assert.ok(html.includes('继续剩余执行'), 'should label the resume action clearly');
+  assert.ok(html.includes('本次对话已收到部分回复，连接已中断。'), 'should explain the interrupted-partial-response state');
+  assert.ok(!html.includes('如需继续，请手动再发一次。'), 'should no longer instruct users to manually resend');
+});
+
 test('管理后台为智能体提示词提供恢复模板默认值入口，且保留手动编辑能力', () => {
   const html = readPublicFile('public-auth', 'admin.html');
 
