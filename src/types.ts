@@ -79,36 +79,58 @@ export interface Message {
 // AI Agent 类型
 // ============================================
 
-export interface AIAgent {
-  name: string;
-  avatar: string;
-  systemPrompt: string;
-  color: string;  // 用于前端显示
-  executionMode?: AgentExecutionMode;
+interface AgentExecutionLegacyFields {
+  executionMode?: undefined;
   cliName?: AgentCliName;
   apiConnectionId?: string;
   apiModel?: string;
   apiTemperature?: number;
   apiMaxTokens?: number;
-  cli?: 'claude' | 'codex';  // legacy
+  cli?: AgentCliName;  // legacy
+}
+
+interface AgentCliExecutionFields {
+  executionMode: 'cli';
+  cliName?: AgentCliName;
+  apiConnectionId?: never;
+  apiModel?: never;
+  apiTemperature?: never;
+  apiMaxTokens?: never;
+  cli?: AgentCliName;  // legacy
+}
+
+interface AgentApiExecutionFields {
+  executionMode: 'api';
+  cliName?: never;
+  apiConnectionId: string;
+  apiModel: string;
+  apiTemperature?: number;
+  apiMaxTokens?: number;
+  cli?: AgentCliName;
+}
+
+type AgentExecutionConfig = AgentExecutionLegacyFields | AgentCliExecutionFields | AgentApiExecutionFields;
+
+interface AIAgentBase {
+  name: string;
+  avatar: string;
+  systemPrompt: string;
+  color: string;  // 用于前端显示
   workdir?: string;
 }
 
-export interface AIAgentConfig {
+export type AIAgent = AIAgentBase & AgentExecutionConfig;
+
+interface AIAgentConfigBase {
   name: string;
   avatar: string;
   personality: string;
   color: string;
   systemPrompt?: string;
-  executionMode?: AgentExecutionMode;
-  cliName?: AgentCliName;
-  apiConnectionId?: string;
-  apiModel?: string;
-  apiTemperature?: number;
-  apiMaxTokens?: number;
-  cli?: 'claude' | 'codex';  // legacy
   workdir?: string;
 }
+
+export type AIAgentConfig = AIAgentConfigBase & AgentExecutionConfig;
 
 export interface AgentInvokeResult {
   text: string;
