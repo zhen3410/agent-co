@@ -3,25 +3,88 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-test('React 页面将内联事件处理函数挂载到 window，并在 load 后绑定 DOM', () => {
-  const htmlPath = path.join(__dirname, '..', '..', 'public', 'index.html');
-  const html = fs.readFileSync(htmlPath, 'utf8');
+function readPublicFile(...parts) {
+  return fs.readFileSync(path.join(__dirname, '..', '..', ...parts), 'utf8');
+}
 
-  const requiredExports = [
+function countMatches(source, pattern) {
+  return (source.match(pattern) || []).length;
+}
+
+function assertContainsAll(source, snippets, messagePrefix = 'missing snippet') {
+  for (const snippet of snippets) {
+    assert.ok(source.includes(snippet), `${messagePrefix}: ${snippet}`);
+  }
+}
+
+function assertOmitsAll(source, snippets, messagePrefix = 'unexpected snippet') {
+  for (const snippet of snippets) {
+    assert.ok(!source.includes(snippet), `${messagePrefix}: ${snippet}`);
+  }
+}
+
+function getFunctionBody(source, functionName) {
+  const signaturePattern = new RegExp(`(?:async\\s+)?function\\s+${functionName}\\s*\\(`);
+  const match = source.match(signaturePattern);
+  assert.ok(match, `should contain function: ${functionName}`);
+
+  const startIndex = match.index;
+  const openBraceIndex = source.indexOf('{', startIndex);
+  assert.notEqual(openBraceIndex, -1, `should contain function body: ${functionName}`);
+
+  let depth = 0;
+  for (let index = openBraceIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(startIndex, index + 1);
+      }
+    }
+  }
+
+  assert.fail(`unable to extract function body: ${functionName}`);
+}
+
+function getArrowComponentBody(source, componentName) {
+  const signaturePattern = new RegExp(`const\\s+${componentName}\\s*=\\s*\\([^)]*\\)\\s*=>`);
+  const match = source.match(signaturePattern);
+  assert.ok(match, `should contain component: ${componentName}`);
+
+  const startIndex = match.index;
+  const arrowIndex = source.indexOf('=>', startIndex);
+  const openBraceIndex = source.indexOf('{', arrowIndex);
+  assert.notEqual(openBraceIndex, -1, `should contain component body: ${componentName}`);
+
+  let depth = 0;
+  for (let index = openBraceIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(startIndex, index + 1);
+      }
+    }
+  }
+
+  assert.fail(`unable to extract component body: ${componentName}`);
+}
+
+test('React 页面将内联事件处理函数挂载到 window，并在 load 后绑定 DOM', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assertContainsAll(html, [
     'window.selectAgent = selectAgent;',
     'window.submitLogin = submitLogin;',
     'window.showLoginOverlay = showLoginOverlay;',
     'window.sendMessage = sendMessage;',
     'window.applyAgentWorkdir = applyAgentWorkdir;',
-    'window.dismissPwaBanner = dismissPwaBanner;'
-  ];
-
-  for (const token of requiredExports) {
-    assert.ok(html.includes(token), `missing binding: ${token}`);
-  }
-
-  assert.ok(html.includes('cacheDomElements();'), 'should cache DOM elements on load');
-  assert.ok(html.includes('bindDomEvents();'), 'should bind DOM events on load');
+    'window.dismissPwaBanner = dismissPwaBanner;',
+    'cacheDomElements();',
+    'bindDomEvents();'
+  ], 'missing window/dom bootstrap contract');
   assert.ok(html.includes("window.addEventListener('load', async () => {"), 'should initialize in load callback');
   assert.ok(html.includes('id="agentWorkdirRoot"'), 'should render workdir root selector in chat page');
   assert.ok(html.includes('id="agentWorkdirLevel2"'), 'should render workdir level2 selector in chat page');
@@ -37,7 +100,7 @@ test('React 页面将内联事件处理函数挂载到 window，并在 load 后�
   assert.ok(html.includes('id="recentSessions"'), 'should render recent session shortcuts');
   assert.ok(html.includes('class="agent-tag__toggle"'), 'should render inline session agent toggle');
   assert.ok(html.includes('启用本会话可参与对话的智能体，并管理当前聚焦对象。'), 'should explain that toggles live inside the agents context section');
-  assert.ok(!html.includes('id="agentQuickSwitches"'), 'should not duplicate agent toggles in the main chat shell');
+  assertOmitsAll(html, ['id="agentQuickSwitches"'], 'should not duplicate legacy agent quick-switch markup');
   assert.ok(html.includes("fetch('/api/session-agents', {"), 'should call session agent toggle API');
   assert.ok(html.includes("enabledAgents.has(agent.name)"), 'should compute enabled state from session-scoped set');
   assert.ok(html.includes('agent-tag--disabled'), 'should render disabled agent styling hook');
@@ -47,14 +110,15 @@ test('React 页面将内联事件处理函数挂载到 window，并在 load 后�
   assert.ok(html.includes('function updateSessionSearch() {'), 'should provide session filtering logic');
   assert.ok(html.includes('function renderRecentSessions() {'), 'should provide recent sessions quick actions');
 
-  assert.ok(html.includes('function showPwaInstallButton() {'), 'should guard install button rendering');
-  assert.ok(html.includes('if (!pwaInstallBtnEl) return;'), 'should avoid beforeinstallprompt crash before load');
-  assert.ok(html.includes('if (deferredInstallPrompt) {'), 'should render install button after load when prompt was cached');
+  assertContainsAll(html, [
+    'function showPwaInstallButton() {',
+    'if (!pwaInstallBtnEl) return;',
+    'if (deferredInstallPrompt) {'
+  ], 'missing PWA install guard behavior');
 });
 
 test('React 页面在 /api/chat-stream 失败时会自动降级到 /api/chat，减少 iOS Load failed 可见报错', () => {
-  const htmlPath = path.join(__dirname, '..', '..', 'public', 'index.html');
-  const html = fs.readFileSync(htmlPath, 'utf8');
+  const html = readPublicFile('public', 'index.html');
 
   assert.ok(html.includes('async function recoverViaDirectChat(text) {'), 'should provide stream failure fallback');
   assert.ok(html.includes("fetch('/api/chat', {"), 'fallback should call /api/chat');
@@ -63,40 +127,148 @@ test('React 页面在 /api/chat-stream 失败时会自动降级到 /api/chat，�
 });
 
 test('React 页面会将 AI 回复按 Markdown 渲染并保留用户纯文本换行', () => {
-  const htmlPath = path.join(__dirname, '..', '..', 'public', 'index.html');
-  const html = fs.readFileSync(htmlPath, 'utf8');
+  const html = readPublicFile('public', 'index.html');
+  const plainTextBody = getFunctionBody(html, 'renderPlainText');
+  const markdownBody = getFunctionBody(html, 'renderMarkdown');
 
-  assert.ok(html.includes('function renderPlainText(text) {'), 'should provide plain text renderer');
-  assert.ok(html.includes('function renderMarkdown(text) {'), 'should provide markdown renderer');
-  assert.ok(html.includes('message__text message__text--markdown'), 'assistant message should use markdown class');
-  assert.ok(html.includes("${highlightMentions(renderPlainText(msg.text || ''))}"), 'user message should keep plain text + mentions');
-  assert.ok(html.includes("${renderMarkdown(msg.text || '')}"), 'assistant message should render markdown');
+  assertContainsAll(plainTextBody, [
+    'function renderPlainText(text) {',
+    'escapeHtml(text)',
+    "replace(/\\n/g, '<br>')"
+  ], 'missing plain-text renderer contract');
+  assertContainsAll(markdownBody, [
+    'function renderMarkdown(text) {',
+    "escapeHtml((text || '').replace(/\\r\\n/g, '\\n'))",
+    'function formatInline(line) {',
+    ".replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')",
+    ".replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g, '<a href=\"$2\" target=\"_blank\" rel=\"noopener noreferrer\">$1</a>')"
+  ], 'missing markdown renderer contract');
+  assertContainsAll(html, [
+    'message__text message__text--markdown',
+    "${highlightMentions(renderPlainText(msg.text || ''))}",
+    "${renderMarkdown(msg.text || '')}"
+  ], 'missing message rendering contract');
 });
 
 test('聊天页顶部控制栏保持吸顶，避免被长消息列表顶出视口', () => {
-  const cssPath = path.join(__dirname, '..', '..', 'public', 'styles.css');
-  const css = fs.readFileSync(cssPath, 'utf8');
+  const css = readPublicFile('public', 'styles.css');
+  const headerRule = css.slice(css.indexOf('.header {'), css.indexOf('}', css.indexOf('.header {')) + 1);
 
-  assert.ok(css.includes('.header {'), 'should define header styles');
-  assert.ok(css.includes('position: sticky;'), 'header should stick to the top of the viewport');
-  assert.ok(css.includes('top: 0;'), 'sticky header should anchor to viewport top');
-  assert.ok(css.includes('z-index: 10;'), 'sticky header should stay above the message list');
+  assertContainsAll(headerRule, [
+    '.header {',
+    'position: sticky;',
+    'top: 0;',
+    'z-index: 10;'
+  ], 'missing sticky header contract');
 });
 
 test('聊天输入框支持多行自适应增高，并保留 Enter 发送与 Shift+Enter 换行', () => {
-  const htmlPath = path.join(__dirname, '..', '..', 'public', 'index.html');
-  const cssPath = path.join(__dirname, '..', '..', 'public', 'styles.css');
-  const html = fs.readFileSync(htmlPath, 'utf8');
-  const css = fs.readFileSync(cssPath, 'utf8');
+  const html = readPublicFile('public', 'index.html');
+  const css = readPublicFile('public', 'styles.css');
+  const resizeBody = getFunctionBody(html, 'resizeUserInput');
+  const bindDomEventsBody = getFunctionBody(html, 'bindDomEvents');
 
-  assert.ok(html.includes('<textarea'), 'should render a textarea for chat input');
-  assert.ok(html.includes('id="userInput"'), 'should keep the existing chat input id');
-  assert.ok(html.includes('function resizeUserInput() {'), 'should define auto-resize logic');
-  assert.ok(html.includes("userInputEl.style.height = 'auto';"), 'should reset height before measuring');
-  assert.ok(html.includes('userInputEl.style.height = `${Math.min(userInputEl.scrollHeight, 160)}px`;'), 'should cap the auto-resize height');
-  assert.ok(html.includes('resizeUserInput();'), 'should resize after input mutations');
-  assert.ok(html.includes("if (e.key === 'Enter' && !e.shiftKey) {"), 'should keep Enter as submit');
-  assert.ok(css.includes('resize: none;'), 'should disable manual textarea resizing');
-  assert.ok(css.includes('max-height: 160px;'), 'should cap textarea growth in CSS as well');
-  assert.ok(css.includes('overflow-y: auto;'), 'should scroll internally after reaching max height');
+  assertContainsAll(html, [
+    '<textarea',
+    'id="userInput"'
+  ], 'missing chat textarea contract');
+  assertContainsAll(resizeBody, [
+    "userInputEl.style.height = 'auto';",
+    'userInputEl.style.height = `${Math.min(userInputEl.scrollHeight, 160)}px`;',
+    'Math.min(userInputEl.scrollHeight, 160)'
+  ], 'missing textarea resize behavior');
+  assertContainsAll(bindDomEventsBody, [
+    'resizeUserInput();',
+    "if (e.key === 'Enter' && !e.shiftKey) {"
+  ], 'missing textarea keyboard/input binding');
+  assertContainsAll(css, [
+    'resize: none;',
+    'max-height: 160px;',
+    'overflow-y: auto;'
+  ], 'missing textarea CSS contract');
+});
+
+test('React 页面会通过共享的当前会话设置组件渲染链路配置并绑定更新控件', () => {
+  const html = readPublicFile('public', 'index.html');
+  const sessionSettingsCardBody = getArrowComponentBody(html, 'SessionSettingsCard');
+  const saveBody = getFunctionBody(html, 'saveSessionSettings');
+
+  assert.equal(countMatches(html, /<SessionSettingsCard\s+variant="desktop"\s*\/>/g), 1, 'desktop sessions panel should render the shared settings component once');
+  assert.equal(countMatches(html, /<SessionSettingsCard\s+variant="mobile"\s*\/>/g), 1, 'mobile sessions panel should render the shared settings component once');
+  assert.match(sessionSettingsCardBody, /data-session-settings-variant=\{variant\}/, 'shared settings component should expose a stable variant marker');
+  assert.match(sessionSettingsCardBody, /data-session-setting="agentChainMaxHops"/, 'shared settings component should expose hop-count inputs via stable setting markers');
+  assert.match(sessionSettingsCardBody, /data-session-setting="agentChainMaxCallsPerAgent"/, 'shared settings component should expose same-agent limit inputs via stable setting markers');
+  assert.match(sessionSettingsCardBody, /data-session-setting="agentChainMaxCallsUnlimited"/, 'shared settings component should expose the unlimited toggle via a stable setting marker');
+  assert.match(sessionSettingsCardBody, /data-session-setting-save="agentChainMaxHops"/, 'shared settings component should expose save control markers for hop limit');
+  assert.match(sessionSettingsCardBody, /data-session-setting-save="agentChainMaxCallsPerAgent"/, 'shared settings component should expose save control markers for same-agent limit');
+  assert.match(saveBody, /fetch\('\/api\/sessions\/update', \{/, 'should submit session settings via the update API');
+});
+
+test('React 页面会在当前会话设置中支持“不限制”语义并从会话数据同步状态', () => {
+  const html = readPublicFile('public', 'index.html');
+  const sessionSettingsCardBody = getArrowComponentBody(html, 'SessionSettingsCard');
+  const renderBody = getFunctionBody(html, 'renderSessionSettings');
+  const loadHistoryBody = getFunctionBody(html, 'loadHistory');
+
+  assert.ok(sessionSettingsCardBody.includes('不限制'), 'should render the unlimited toggle label inside the settings block');
+  assert.ok(sessionSettingsCardBody.includes('data-session-setting-row="agentChainMaxCallsPerAgent"'), 'should keep the bounded/unbounded same-agent limit row under a stable marker');
+  assertContainsAll(renderBody, [
+    'const isUnlimited = agentChainMaxCallsPerAgent === null;',
+    'el.hidden = isUnlimited;'
+  ], 'missing unlimited render-state behavior');
+  assertContainsAll(loadHistoryBody, [
+    'chatSessions = data.chatSessions || [];',
+    'activeSessionId = data.activeSessionId || null;',
+    'syncSessionSettingsState(data.session || null);'
+  ], 'missing history hydration for session settings');
+});
+
+test('React 页面会在移动端会话面板中复用同一当前会话设置组件', () => {
+  const html = readPublicFile('public', 'index.html');
+  const sessionSettingsCardBody = getArrowComponentBody(html, 'SessionSettingsCard');
+
+  assert.equal(countMatches(html, /<SessionSettingsCard\s+variant="mobile"\s*\/>/g), 1, 'mobile sessions panel should render the shared settings component once');
+  assert.match(sessionSettingsCardBody, /data-session-setting-action="saveAgentChainMaxHops"/, 'shared settings component should expose a stable save marker for the hop control');
+  assert.match(sessionSettingsCardBody, /data-session-setting-action="saveAgentChainMaxCallsPerAgent"/, 'shared settings component should expose a stable save marker for the same-agent control');
+});
+
+test('React 页面在会话设置保存失败时会回滚到服务端会话状态并弹出错误提示', () => {
+  const html = readPublicFile('public', 'index.html');
+  const saveBody = getFunctionBody(html, 'saveSessionSettings');
+  const unlimitedToggleBody = getFunctionBody(html, 'handleAgentChainUnlimitedToggle');
+  const syncBody = getFunctionBody(html, 'syncSessionSettingsState');
+
+  assertContainsAll(saveBody, [
+    'syncSessionSettingsState(data.session);',
+    'await loadHistory();',
+    "setSessionSettingsFeedback(error.message || '保存失败', 'error');",
+    "alert(error.message || '保存失败');"
+  ], 'missing save rollback behavior');
+  assert.ok(unlimitedToggleBody.includes('renderSessionSettings();'), 'failed or deferred unlimited-toggle flow should restore row visibility from shared state');
+  assert.ok(syncBody.includes("setSessionSettingsFeedback('');"), 'session sync should clear stale success and error feedback');
+});
+
+test('React 页面会使用同步后的会话设置状态保存，避免在桌面和移动端之间串用旧输入值', () => {
+  const html = readPublicFile('public', 'index.html');
+  const sessionSettingsCardBody = getArrowComponentBody(html, 'SessionSettingsCard');
+  const hopsSaveBody = getFunctionBody(html, 'saveAgentChainMaxHops');
+  const callsSaveBody = getFunctionBody(html, 'saveAgentChainMaxCallsPerAgent');
+
+  assert.match(sessionSettingsCardBody, /data-session-setting-action="saveAgentChainMaxHops"/, 'should expose a stable action marker for hop-limit saves');
+  assert.match(sessionSettingsCardBody, /data-session-setting-action="saveAgentChainMaxCallsPerAgent"/, 'should expose a stable action marker for same-agent-limit saves');
+  assertContainsAll(hopsSaveBody, ["parsePositiveIntegerSetting(agentChainMaxHops, '最多传播轮数')"], 'missing synchronized hop save behavior');
+  assertContainsAll(callsSaveBody, ["parsePositiveIntegerSetting(agentChainMaxCallsPerAgent, '单个智能体最多调用次数')"], 'missing synchronized same-agent save behavior');
+  assertOmitsAll(hopsSaveBody, ['.find('], 'hop-limit saves should not scan duplicated inputs');
+  assertOmitsAll(callsSaveBody, ['.find('], 'same-agent-limit saves should not scan duplicated inputs');
+});
+
+test('React 页面会用触发变更的复选框显式状态处理“不限制”切换，避免扫描重复控件', () => {
+  const html = readPublicFile('public', 'index.html');
+  const bindDomEventsBody = getFunctionBody(html, 'bindDomEvents');
+  const unlimitedToggleBody = getFunctionBody(html, 'handleAgentChainUnlimitedToggle');
+
+  assert.ok(bindDomEventsBody.includes('handleAgentChainUnlimitedToggle(el.checked)'), 'checkbox bindings should pass the explicit checked state through the DOM event binder');
+  assert.doesNotMatch(html, /onChange=\{\(event\)\s*=>\s*window\.handleAgentChainUnlimitedToggle/, 'should not duplicate the unlimited toggle binding inline');
+  assert.ok(unlimitedToggleBody.includes('function handleAgentChainUnlimitedToggle(isUnlimited)'), 'unlimited toggle handler should accept explicit toggle state');
+  assertOmitsAll(unlimitedToggleBody, ['agentChainMaxCallsUnlimitedInputEls.some('], 'unlimited toggle handler should not scan duplicate checkboxes');
 });

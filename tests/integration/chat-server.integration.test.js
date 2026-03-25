@@ -15,6 +15,51 @@ async function enableAgents(fixture, agentNames) {
   }
 }
 
+function createCyclingClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
+const apiUrl = process.env.BOT_ROOM_API_URL || '';
+const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+
+async function post(content) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+(async () => {
+  if (agentName === 'Alice') {
+    await post('@Bob 继续');
+  } else if (agentName === 'Bob') {
+    await post('@Alice 继续');
+  } else {
+    await post(\`\${agentName} 已完成\`);
+  }
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
 test('未登录时聊天相关接口会返回 401，登录后可正常聊天', async () => {
   const fixture = await createChatServerFixture();
 
@@ -511,6 +556,141 @@ EOF
     assert.ok(messages.some(msg => msg.includes('stage=start')));
     assert.ok(messages.some(msg => msg.includes('stage=cli_done')));
     assert.ok(!messages.some(msg => msg.includes('stage=empty_visible_message')));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('agentChainMaxCallsPerAgent 为 null 时，同智能体循环提及不会被截断', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-chain-unlimited-'));
+  createCyclingClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'unlimited chain' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          agentChainMaxHops: 4,
+          agentChainMaxCallsPerAgent: null
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 开始循环协作' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob', 'Alice', 'Bob', 'Alice']);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('当前会话的 agentChainMaxHops 会限制链式传播轮数', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-chain-hops-'));
+  createCyclingClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'hop-limited chain' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          agentChainMaxHops: 2,
+          agentChainMaxCallsPerAgent: null
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 开始受限链式协作' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob', 'Alice']);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('agentChainMaxCallsPerAgent 为正整数时，会限制重复同智能体调用', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-chain-limited-'));
+  createCyclingClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'limited chain' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          agentChainMaxHops: 4,
+          agentChainMaxCallsPerAgent: 1
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 开始循环协作' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob']);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

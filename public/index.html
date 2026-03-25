@@ -106,6 +106,125 @@
       </div>
     );
 
+    const SessionSettingsCard = ({ variant = 'desktop' }) => {
+      const isDesktop = variant === 'desktop';
+      const cardClassName = 'session-settings-card';
+      const introText = isDesktop
+        ? '控制链式 @ 传播的最多传播轮数，以及单个智能体在一次链路中的重复调用上限。'
+        : '移动端也可直接调整链式传播与同智能体调用上限。';
+      const helperText = isDesktop
+        ? '“最多传播轮数”会限制链式扩散的总轮数；关闭“不限制”后，可限制同一智能体在一次链路中的重复出场次数。'
+        : '与桌面端保持一致：不限制表示允许同一智能体在一条链路中重复出场。';
+      const desktopIds = isDesktop ? {
+        card: 'currentSessionSettings',
+        badge: 'currentSessionSettingsBadge',
+        hopsInput: 'agentChainMaxHopsInput',
+        hopsSave: 'saveAgentChainMaxHopsBtn',
+        unlimitedInput: 'agentChainMaxCallsUnlimitedInput',
+        callsRow: 'agentChainMaxCallsLimitRow',
+        callsInput: 'agentChainMaxCallsPerAgentInput',
+        callsSave: 'saveAgentChainMaxCallsPerAgentBtn',
+        feedback: 'sessionSettingsFeedback'
+      } : {};
+
+      return (
+        <div
+          className={cardClassName}
+          data-session-settings-variant={variant}
+          {...(desktopIds.card ? { id: desktopIds.card } : {})}
+        >
+          <div className="session-settings-card__header">
+            <div>
+              <div className="sessions-label">当前会话设置</div>
+              <p className="context-section__intro">{introText}</p>
+            </div>
+            <span
+              className="session-settings-card__pill"
+              data-session-settings-badge
+              {...(desktopIds.badge ? { id: desktopIds.badge } : {})}
+            >
+              未选择会话
+            </span>
+          </div>
+          <label
+            className="session-settings-field"
+            {...(desktopIds.hopsInput ? { htmlFor: desktopIds.hopsInput } : {})}
+          >
+            <span className="session-settings-field__label">最多传播轮数</span>
+            <div className="session-settings-field__control">
+              <input
+                data-session-setting="agentChainMaxHops"
+                type="number"
+                min="1"
+                step="1"
+                inputMode="numeric"
+                placeholder="例如 4"
+                {...(desktopIds.hopsInput ? { id: desktopIds.hopsInput } : {})}
+              />
+              <button
+                className="btn-session"
+                data-session-setting-save="agentChainMaxHops"
+                data-session-setting-action="saveAgentChainMaxHops"
+                type="button"
+                onClick={() => window.saveAgentChainMaxHops && window.saveAgentChainMaxHops()}
+                {...(desktopIds.hopsSave ? { id: desktopIds.hopsSave } : {})}
+              >
+                保存
+              </button>
+            </div>
+          </label>
+          <div className="session-settings-field">
+            <span className="session-settings-field__label">单个智能体最多调用次数</span>
+            <label
+              className="session-settings-toggle"
+              {...(desktopIds.unlimitedInput ? { htmlFor: desktopIds.unlimitedInput } : {})}
+            >
+              <input
+                data-session-setting="agentChainMaxCallsUnlimited"
+                type="checkbox"
+                {...(desktopIds.unlimitedInput ? { id: desktopIds.unlimitedInput } : {})}
+              />
+              <span>不限制</span>
+            </label>
+          </div>
+          <div
+            className="session-settings-field"
+            data-session-setting-row="agentChainMaxCallsPerAgent"
+            {...(desktopIds.callsRow ? { id: desktopIds.callsRow } : {})}
+          >
+            <div className="session-settings-field__control">
+              <input
+                data-session-setting="agentChainMaxCallsPerAgent"
+                type="number"
+                min="1"
+                step="1"
+                inputMode="numeric"
+                placeholder="例如 2"
+                {...(desktopIds.callsInput ? { id: desktopIds.callsInput } : {})}
+              />
+              <button
+                className="btn-session"
+                data-session-setting-save="agentChainMaxCallsPerAgent"
+                data-session-setting-action="saveAgentChainMaxCallsPerAgent"
+                type="button"
+                onClick={() => window.saveAgentChainMaxCallsPerAgent && window.saveAgentChainMaxCallsPerAgent()}
+                {...(desktopIds.callsSave ? { id: desktopIds.callsSave } : {})}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+          <p className="session-settings-helper">{helperText}</p>
+          <div
+            className="session-settings-feedback"
+            data-session-settings-feedback
+            aria-live="polite"
+            {...(desktopIds.feedback ? { id: desktopIds.feedback } : {})}
+          ></div>
+        </div>
+      );
+    };
+
     const App = () => (
       <>
         <div className="auth-overlay" id="authOverlay" style={{ display: 'none' }}>
@@ -207,6 +326,7 @@
                   <button className="btn-session" onClick={() => window.renameSession && window.renameSession()}>重命名</button>
                   <button className="btn-session btn-session--danger" onClick={() => window.deleteSession && window.deleteSession()}>删除会话</button>
                 </div>
+                <SessionSettingsCard variant="desktop" />
               </section>
 
               <section className="context-section" data-section="workdir">
@@ -264,6 +384,7 @@
                   <button className="btn-session" onClick={() => window.renameSession && window.renameSession()}>重命名</button>
                   <button className="btn-session btn-session--danger" onClick={() => window.deleteSession && window.deleteSession()}>删除会话</button>
                 </div>
+                <SessionSettingsCard variant="mobile" />
               </section>
               <section className="context-section context-section--mobile" data-section="agents">
                 <div className="mobile-agents-mirror" id="mobileAgentsMirror"></div>
@@ -294,8 +415,11 @@
     let currentAgentWillExpire = false;
     let chatSessions = [];
     let activeSessionId = null;
+    let activeSession = null;
     let agentWorkdirs = {};
     let enabledAgents = new Set();
+    let agentChainMaxHops = '';
+    let agentChainMaxCallsPerAgent = null;
     const chatWorkdirState = { root: '', level2: '', level3: '', custom: '' };
 
     // DOM 元素
@@ -334,6 +458,14 @@
     let mobileWorkdirMirrorEl;
     let sessionSearchInputEl;
     let recentSessionsEl;
+    let currentSessionSettingsBadgeEls = [];
+    let agentChainMaxHopsInputEls = [];
+    let saveAgentChainMaxHopsBtnEls = [];
+    let agentChainMaxCallsUnlimitedInputEls = [];
+    let agentChainMaxCallsPerAgentInputEls = [];
+    let saveAgentChainMaxCallsPerAgentBtnEls = [];
+    let agentChainMaxCallsLimitRowEls = [];
+    let sessionSettingsFeedbackEls = [];
 
     let activeContextTab = 'sessions';
     let sessionSearchQuery = '';
@@ -377,6 +509,14 @@
       mobileWorkdirMirrorEl = document.getElementById('mobileWorkdirMirror');
       sessionSearchInputEl = document.getElementById('sessionSearchInput');
       recentSessionsEl = document.getElementById('recentSessions');
+      currentSessionSettingsBadgeEls = Array.from(document.querySelectorAll('[data-session-settings-badge]'));
+      agentChainMaxHopsInputEls = Array.from(document.querySelectorAll('[data-session-setting="agentChainMaxHops"]'));
+      saveAgentChainMaxHopsBtnEls = Array.from(document.querySelectorAll('[data-session-setting-save="agentChainMaxHops"]'));
+      agentChainMaxCallsUnlimitedInputEls = Array.from(document.querySelectorAll('[data-session-setting="agentChainMaxCallsUnlimited"]'));
+      agentChainMaxCallsPerAgentInputEls = Array.from(document.querySelectorAll('[data-session-setting="agentChainMaxCallsPerAgent"]'));
+      saveAgentChainMaxCallsPerAgentBtnEls = Array.from(document.querySelectorAll('[data-session-setting-save="agentChainMaxCallsPerAgent"]'));
+      agentChainMaxCallsLimitRowEls = Array.from(document.querySelectorAll('[data-session-setting-row="agentChainMaxCallsPerAgent"]'));
+      sessionSettingsFeedbackEls = Array.from(document.querySelectorAll('[data-session-settings-feedback]'));
       cacheMessageChromeElements();
     }
 
@@ -458,12 +598,16 @@
         history = [];
         chatSessions = [];
         activeSessionId = null;
+        activeSession = null;
+        agentChainMaxHops = '';
+        agentChainMaxCallsPerAgent = null;
         sessionSearchQuery = '';
         if (sessionSearchInputEl) sessionSearchInputEl.value = '';
         enabledAgents = new Set();
         currentAgent = null;
         currentAgentWillExpire = false;
         renderSessionList();
+        renderSessionSettings();
         renderAgentsList();
         updateCurrentAgentUI();
         renderMessages();
@@ -505,6 +649,190 @@
     function updateSessionSearch() {
       sessionSearchQuery = sessionSearchInputEl ? sessionSearchInputEl.value : '';
       renderSessionList();
+    }
+
+    function setSessionSettingsFeedback(message = '', tone = '') {
+      sessionSettingsFeedbackEls.forEach((el) => {
+        el.textContent = message;
+        el.classList.remove('is-success', 'is-error');
+        if (tone === 'success') {
+          el.classList.add('is-success');
+        } else if (tone === 'error') {
+          el.classList.add('is-error');
+        }
+      });
+    }
+
+    function syncSessionSettingsState(session) {
+      activeSession = session || null;
+      agentChainMaxHops = session && Number.isInteger(session.agentChainMaxHops)
+        ? session.agentChainMaxHops
+        : '';
+      agentChainMaxCallsPerAgent = session && Object.prototype.hasOwnProperty.call(session, 'agentChainMaxCallsPerAgent')
+        ? session.agentChainMaxCallsPerAgent
+        : null;
+      setSessionSettingsFeedback('');
+      renderSessionSettings();
+    }
+
+    function renderSessionSettings() {
+      if (agentChainMaxHopsInputEls.length === 0 || agentChainMaxCallsUnlimitedInputEls.length === 0 || agentChainMaxCallsPerAgentInputEls.length === 0 || agentChainMaxCallsLimitRowEls.length === 0) {
+        return;
+      }
+
+      const hasActiveSession = !!activeSession;
+      const isUnlimited = agentChainMaxCallsPerAgent === null;
+
+      agentChainMaxHopsInputEls.forEach((el) => {
+        el.value = agentChainMaxHops === '' ? '' : String(agentChainMaxHops);
+        el.disabled = !hasActiveSession;
+      });
+      agentChainMaxCallsUnlimitedInputEls.forEach((el) => {
+        el.checked = isUnlimited;
+        el.disabled = !hasActiveSession;
+      });
+      agentChainMaxCallsPerAgentInputEls.forEach((el) => {
+        el.value = isUnlimited || agentChainMaxCallsPerAgent === null ? '' : String(agentChainMaxCallsPerAgent);
+        el.disabled = !hasActiveSession || isUnlimited;
+      });
+      agentChainMaxCallsLimitRowEls.forEach((el) => {
+        el.hidden = isUnlimited;
+      });
+      saveAgentChainMaxHopsBtnEls.forEach((el) => {
+        el.disabled = !hasActiveSession;
+      });
+      saveAgentChainMaxCallsPerAgentBtnEls.forEach((el) => {
+        el.disabled = !hasActiveSession || isUnlimited;
+      });
+
+      currentSessionSettingsBadgeEls.forEach((el) => {
+        el.textContent = hasActiveSession ? activeSession.name : '未选择会话';
+      });
+
+      if (!hasActiveSession) {
+        setSessionSettingsFeedback('请选择一个会话后再调整链路限制。');
+      }
+    }
+
+    function parsePositiveIntegerSetting(rawValue, label) {
+      const normalized = String(rawValue || '').trim();
+      if (!normalized) {
+        throw new Error(`${label} 不能为空`);
+      }
+
+      const parsed = Number(normalized);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error(`${label} 必须是正整数`);
+      }
+
+      return parsed;
+    }
+
+    function applySessionResponseData(data, options = {}) {
+      const {
+        replaceMessages = false,
+        replaceCurrentAgent = false,
+        replaceEnabledAgents = false,
+        replaceAgentWorkdirs = false
+      } = options;
+
+      if (replaceMessages) {
+        history = data.messages || (data.session && data.session.history) || [];
+      }
+      if (replaceCurrentAgent) {
+        currentAgent = Object.prototype.hasOwnProperty.call(data, 'currentAgent')
+          ? data.currentAgent
+          : (data.session ? data.session.currentAgent || null : null);
+        currentAgentWillExpire = false;
+      }
+      if (replaceEnabledAgents || data.enabledAgents) {
+        enabledAgents = new Set(data.enabledAgents || (data.session && data.session.enabledAgents) || []);
+      }
+      if (replaceAgentWorkdirs) {
+        agentWorkdirs = data.agentWorkdirs || (data.session && data.session.agentWorkdirs) || {};
+      }
+
+      chatSessions = data.chatSessions || chatSessions;
+      activeSessionId = data.activeSessionId || (data.session && data.session.id) || null;
+      syncSessionSettingsState(data.session || null);
+
+      renderSessionList();
+      renderAgentsList();
+      updateCurrentAgentUI();
+      renderMessages();
+    }
+
+    async function saveSessionSettings(patch, successMessage) {
+      if (!activeSessionId) {
+        setSessionSettingsFeedback('请先选择一个会话。', 'error');
+        return;
+      }
+
+      setSessionSettingsFeedback('正在保存...');
+
+      try {
+        const response = await fetch('/api/sessions/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ sessionId: activeSessionId, patch })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (data.session) {
+            syncSessionSettingsState(data.session);
+          } else {
+            await loadHistory();
+          }
+          const message = data.error || '保存失败';
+          setSessionSettingsFeedback(message, 'error');
+          alert(message);
+          return;
+        }
+
+        applySessionResponseData(data, { replaceEnabledAgents: true });
+        setSessionSettingsFeedback(successMessage, 'success');
+      } catch (error) {
+        console.error('保存会话链路设置失败:', error);
+        await loadHistory();
+        setSessionSettingsFeedback(error.message || '保存失败', 'error');
+        alert(error.message || '保存失败');
+      }
+    }
+
+    async function saveAgentChainMaxHops() {
+      try {
+        const value = parsePositiveIntegerSetting(agentChainMaxHops, '最多传播轮数');
+        await saveSessionSettings({ agentChainMaxHops: value }, '传播轮数已更新。');
+      } catch (error) {
+        setSessionSettingsFeedback(error.message, 'error');
+      }
+    }
+
+    async function saveAgentChainMaxCallsPerAgent() {
+      try {
+        const value = parsePositiveIntegerSetting(agentChainMaxCallsPerAgent, '单个智能体最多调用次数');
+        await saveSessionSettings({ agentChainMaxCallsPerAgent: value }, '同智能体调用上限已更新。');
+      } catch (error) {
+        setSessionSettingsFeedback(error.message, 'error');
+      }
+    }
+
+    function handleAgentChainUnlimitedToggle(isUnlimited) {
+      agentChainMaxCallsUnlimitedInputEls.forEach((peer) => {
+        peer.checked = !!isUnlimited;
+      });
+
+      if (isUnlimited) {
+        void saveSessionSettings({ agentChainMaxCallsPerAgent: null }, '同智能体调用上限已切换为不限制。');
+        return;
+      }
+
+      agentChainMaxCallsPerAgent = activeSession && Number.isInteger(activeSession.agentChainMaxCallsPerAgent)
+        ? activeSession.agentChainMaxCallsPerAgent
+        : '';
+      renderSessionSettings();
+      setSessionSettingsFeedback('请填写单个智能体最多调用次数后再保存。');
     }
 
     function renderSessionList() {
@@ -602,7 +930,13 @@
           renderSessionList();
           return;
         }
-        await loadHistory();
+        const data = await response.json();
+        applySessionResponseData(data, {
+          replaceMessages: true,
+          replaceCurrentAgent: true,
+          replaceEnabledAgents: true,
+          replaceAgentWorkdirs: true
+        });
         closeMobileControlHub();
       } catch (error) {
         console.error('切换会话失败:', error);
@@ -623,7 +957,13 @@
         alert('创建会话失败');
         return;
       }
-      await loadHistory();
+      const data = await response.json();
+      applySessionResponseData(data, {
+        replaceMessages: true,
+        replaceCurrentAgent: true,
+        replaceEnabledAgents: true,
+        replaceAgentWorkdirs: true
+      });
     }
 
     async function renameSession() {
@@ -644,6 +984,9 @@
       }
 
       const data = await response.json();
+      if (data.session && activeSessionId && data.session.id === activeSessionId) {
+        syncSessionSettingsState({ ...(activeSession || {}), ...data.session });
+      }
       chatSessions = data.chatSessions || chatSessions;
       renderSessionList();
     }
@@ -671,6 +1014,8 @@
       enabledAgents = new Set(data.enabledAgents || []);
       activeSessionId = data.activeSessionId || null;
       chatSessions = data.chatSessions || [];
+      agentWorkdirs = (data.session && data.session.agentWorkdirs) || {};
+      syncSessionSettingsState(data.session || null);
       renderSessionList();
       renderAgentsList();
       updateCurrentAgentUI();
@@ -1700,6 +2045,7 @@
           agentWorkdirs = data.agentWorkdirs || {};
           chatSessions = data.chatSessions || [];
           activeSessionId = data.activeSessionId || null;
+          syncSessionSettingsState(data.session || null);
           renderSessionList();
           renderMessages();
         }
@@ -1745,6 +2091,9 @@
     window.switchAgent = switchAgent;
     window.applyAgentWorkdir = applyAgentWorkdir;
     window.toggleSessionAgent = toggleSessionAgent;
+    window.saveAgentChainMaxHops = saveAgentChainMaxHops;
+    window.saveAgentChainMaxCallsPerAgent = saveAgentChainMaxCallsPerAgent;
+    window.handleAgentChainUnlimitedToggle = handleAgentChainUnlimitedToggle;
     window.dismissPwaBanner = dismissPwaBanner;
     window.triggerPwaInstall = async function triggerPwaInstall() {
       if (!deferredInstallPrompt) return;
@@ -1765,6 +2114,33 @@
       if (sessionSearchInputEl) {
         sessionSearchInputEl.addEventListener('input', updateSessionSearch);
       }
+
+      agentChainMaxHopsInputEls.forEach((el) => {
+        el.addEventListener('input', () => {
+          agentChainMaxHops = el.value;
+          agentChainMaxHopsInputEls.forEach((peer) => {
+            if (peer !== el) peer.value = el.value;
+          });
+        });
+      });
+
+      agentChainMaxCallsPerAgentInputEls.forEach((el) => {
+        el.addEventListener('input', () => {
+          agentChainMaxCallsPerAgent = el.value;
+          agentChainMaxCallsPerAgentInputEls.forEach((peer) => {
+            if (peer !== el) peer.value = el.value;
+          });
+        });
+      });
+
+      agentChainMaxCallsUnlimitedInputEls.forEach((el) => {
+        el.addEventListener('change', () => {
+          agentChainMaxCallsUnlimitedInputEls.forEach((peer) => {
+            if (peer !== el) peer.checked = el.checked;
+          });
+          handleAgentChainUnlimitedToggle(el.checked);
+        });
+      });
 
       userInputEl.addEventListener('blur', () => {
         setTimeout(() => hideMentionSuggestions(), 120);
