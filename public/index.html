@@ -1911,6 +1911,7 @@
       statusEl.textContent = '发送中...';
 
       const thinkingAgents = new Set();
+      let streamReceivedAgentMessage = false;
 
       try {
         const response = await fetch('/api/chat-stream', {
@@ -1953,6 +1954,7 @@
                   statusEl.textContent = `${agentName} 思考中...`;
                   showThinkingIndicator(agentName);
                 } else if (eventType === 'agent_message') {
+                  streamReceivedAgentMessage = true;
                   thinkingAgents.delete(data.sender);
                   hideThinkingIndicator(data.sender);
                   history.push(data);
@@ -1983,15 +1985,20 @@
 
       } catch (error) {
         console.error('发送失败:', error);
-        statusEl.textContent = '流式连接失败，尝试降级...';
-        const recovered = await recoverViaDirectChat(text);
-        if (!recovered) {
-          statusEl.textContent = '连接失败';
-          addMessage({
-            role: 'assistant',
-            sender: '系统',
-            text: `❌ 发送失败: ${error.message}`
-          });
+        if (!streamReceivedAgentMessage) {
+          statusEl.textContent = '流式连接失败，尝试降级...';
+          const recovered = await recoverViaDirectChat(text);
+          if (!recovered) {
+            statusEl.textContent = '连接失败';
+            addMessage({
+              role: 'assistant',
+              sender: '系统',
+              text: `❌ 发送失败: ${error.message}`
+            });
+          }
+        } else {
+          statusEl.textContent = '连接中断';
+          showSystemNotice('本次对话已收到部分回复。为避免重复执行，未自动重发；如需继续，请手动再发一次。');
         }
       } finally {
         isLoading = false;

@@ -201,6 +201,121 @@ EOF
   }
 });
 
+test('流式连接中断后不会继续执行后续被 @ 的智能体链路', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-stream-abort-'));
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
+const apiUrl = process.env.BOT_ROOM_API_URL || '';
+const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+
+async function post(content) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+(async () => {
+  if (agentName === 'Alice') {
+    await post('@Bob 请继续跟进');
+  } else if (agentName === 'Bob') {
+    await post('Bob 不应该在断流后继续执行');
+  } else {
+    await post(\`\${agentName} 未命中测试分支\`);
+  }
+  await new Promise(resolve => setTimeout(resolve, 120));
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const controller = new AbortController();
+    const response = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice 发起协作' }),
+      signal: controller.signal
+    });
+
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let thinkingSeen = false;
+
+    const thinkingDeadline = Date.now() + 5000;
+    while (!thinkingSeen) {
+      assert.ok(Date.now() < thinkingDeadline, 'stream should emit Alice thinking before timeout');
+      const { done, value } = await reader.read();
+      assert.equal(done, false, 'stream should emit thinking event before closing');
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      let eventType = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          const payload = JSON.parse(line.slice(6));
+          if (eventType === 'agent_thinking' && payload.agent === 'Alice') {
+            thinkingSeen = true;
+            break;
+          }
+          eventType = '';
+        }
+      }
+    }
+
+    controller.abort();
+    await reader.cancel().catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    const assistantSenders = historyResponse.body.messages
+      .filter(item => item.role === 'assistant')
+      .map(item => item.sender);
+
+    assert.ok(assistantSenders.includes('Alice'), 'current in-flight agent may still finish');
+    assert.ok(!assistantSenders.includes('Bob'), 'disconnect should stop chained Bob execution');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('支持带中文标点的 @Codex架构师 提及', async () => {
   const fixture = await createChatServerFixture();
 
@@ -480,6 +595,53 @@ EOF
     assert.ok(streamResponse.text.includes('"sender":"Alice"'));
     assert.ok(streamResponse.text.includes('"sender":"Bob"'));
     assert.ok(streamResponse.text.includes('Bob 流式补充完成'));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('chat-stream 客户端中途断开时会记录明确的断流日志', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-claude-stream-disconnect-log-'));
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+sleep 2
+printf '{"output_text":"late reply"}\\n'
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Claude']);
+
+    const abortController = new AbortController();
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Claude 触发断流日志验证' }),
+      signal: abortController.signal
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 150));
+    abortController.abort();
+    await streamResponse.body?.cancel().catch(() => {});
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    const logsResponse = await fixture.request('/api/dependencies/logs?dependency=chat-exec&keyword=stream_disconnect');
+    assert.equal(logsResponse.status, 200);
+    const messages = logsResponse.body.logs.map(item => item.message);
+    assert.ok(messages.some(msg => msg.includes('stage=stream_disconnect')));
+    assert.ok(messages.some(msg => msg.includes('reason=client_disconnect')));
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

@@ -897,16 +897,26 @@ async function executeAgentTurn(params: {
   stream: boolean;
   onThinking?: (agentName: string) => void;
   onMessage?: (message: Message) => void;
+  shouldContinue?: () => boolean;
 }): Promise<Message[]> {
-  const { userKey, session, initialTasks, stream, onThinking, onMessage } = params;
+  const { userKey, session, initialTasks, stream, onThinking, onMessage, shouldContinue } = params;
   type QueuedAgentDispatchTask = AgentDispatchTask & { dispatchKind: 'initial' | 'chained' };
   const queue: QueuedAgentDispatchTask[] = initialTasks.map(task => ({ ...task, dispatchKind: 'initial' }));
   const aiMessages: Message[] = [];
   const callCounts = new Map<string, number>();
   const { agentChainMaxHops, agentChainMaxCallsPerAgent } = normalizeSessionChainSettings(session);
   let chainedCalls = 0;
+  let streamStopped = false;
+
+  const canContinue = () => shouldContinue ? shouldContinue() : true;
 
   while (queue.length > 0) {
+    if (!canContinue()) {
+      streamStopped = true;
+      appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=stream_stop reason=client_disconnect`);
+      break;
+    }
+
     const task = queue.shift()!;
     if (task.dispatchKind === 'chained' && chainedCalls >= agentChainMaxHops) {
       appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=chain_stop reason=max_hops hops=${agentChainMaxHops}`);
@@ -944,6 +954,12 @@ async function executeAgentTurn(params: {
       touchSession(session);
       onMessage?.(message);
 
+      if (!canContinue()) {
+        streamStopped = true;
+        appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=stream_stop_after_message reason=client_disconnect`);
+        break;
+      }
+
       for (const mention of chainedMentions) {
         const queuedChainedCalls = queue.filter(item => item.dispatchKind === 'chained').length;
         if (chainedCalls + queuedChainedCalls >= agentChainMaxHops) {
@@ -964,6 +980,14 @@ async function executeAgentTurn(params: {
           dispatchKind: 'chained'
         });
       }
+
+      if (streamStopped) {
+        break;
+      }
+    }
+
+    if (streamStopped) {
+      break;
     }
   }
 
@@ -1726,14 +1750,33 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       'X-Accel-Buffering': 'no' // 禁用 Nginx 缓冲
     });
 
+    let streamClosed = false;
+    let streamCompleted = false;
+    const markStreamClosed = (source: 'req_aborted' | 'req_close' | 'res_close') => {
+      if (streamClosed) {
+        return;
+      }
+      streamClosed = true;
+      if (!streamCompleted) {
+        appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=stream_disconnect reason=client_disconnect source=${source}`);
+      }
+    };
+    req.on('aborted', () => markStreamClosed('req_aborted'));
+    req.on('close', () => markStreamClosed('req_close'));
+    res.on('close', () => markStreamClosed('res_close'));
+
     // 发送用户消息事件
     const sendEvent = (event: string, data: unknown) => {
+      if (streamClosed || res.writableEnded || res.destroyed) {
+        return false;
+      }
       res.write(`event: ${event}\n`);
       res.write(`data: ${JSON.stringify(data)}\n\n`);
       // 强制刷新缓冲区，确保数据立即发送
       if (typeof (res as any).flush === 'function') {
         (res as any).flush();
       }
+      return true;
     };
 
     sendEvent('user_message', userMessage);
@@ -1742,6 +1785,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     if (agentsToRespond.length === 0) {
       sendEvent('notice', { notice: buildNoEnabledAgentsNotice(session, ignoredMentions) });
       sendEvent('done', { currentAgent: getUserCurrentAgent(userKey, session.id) });
+      streamCompleted = true;
       res.end();
       return;
     }
@@ -1755,6 +1799,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
         includeHistory: mentions.length === 0
       })),
       stream: true,
+      shouldContinue: () => !streamClosed && !res.writableEnded && !res.destroyed,
       onThinking: (agentName) => {
         sendEvent('agent_thinking', { agent: agentName });
       },
@@ -1763,11 +1808,16 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       }
     });
 
+    if (streamClosed || res.writableEnded || res.destroyed) {
+      return;
+    }
+
     // 发送完成事件
     if (ignoredMentions.length > 0) {
       sendEvent('notice', { notice: `${ignoredMentions.join('、')} 已停用，未参与本次对话。` });
     }
     sendEvent('done', { currentAgent: getUserCurrentAgent(userKey, session.id) });
+    streamCompleted = true;
     res.end();
 
   } catch (error: unknown) {

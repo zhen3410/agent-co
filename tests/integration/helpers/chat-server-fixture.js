@@ -150,6 +150,11 @@ async function createChatServerFixture(options = {}) {
     port,
     request,
     login,
+    getCookieHeader() {
+      return Array.from(cookieJar.entries())
+        .map(([key, value]) => `${key}=${value}`)
+        .join('; ');
+    },
     async cleanup() {
       if (!child.killed) {
         child.kill('SIGTERM');

@@ -523,6 +523,32 @@
       padding: var(--space-md);
     }
 
+    .prompt-preview-modal {
+      width: min(1000px, 92vw);
+      max-width: min(1000px, 92vw);
+    }
+
+    .prompt-preview-compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-md);
+      margin-top: var(--space-md);
+    }
+
+    .prompt-preview-pane {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-sm);
+    }
+
+    .prompt-preview-pane textarea {
+      min-height: 320px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
     /* ============================================
        状态标签
        ============================================ */
@@ -841,6 +867,26 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="promptPreviewModal">
+    <div class="modal prompt-preview-modal">
+      <h3 id="promptPreviewTitle">模板提示词预览</h3>
+      <p>以下内容仅供预览，不会覆盖当前已保存的提示词。左侧为当前值，右侧为模板默认值。</p>
+      <div class="prompt-preview-compare">
+        <div class="prompt-preview-pane">
+          <label class="form-label">当前提示词</label>
+          <textarea id="promptPreviewCurrent" readonly></textarea>
+        </div>
+        <div class="prompt-preview-pane">
+          <label class="form-label">模板默认值</label>
+          <textarea id="promptPreviewTemplate" readonly></textarea>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closePromptPreviewModal()">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast 通知 -->
   <div class="toast" id="toast"></div>
 
@@ -848,6 +894,7 @@
     let adminToken = '';
     let currentEditUser = '';
     let editingAgentName = '';
+    const professionalTemplateAgents = new Set(['Codex架构师', 'BACKEND', 'FRONTEND', 'QA', 'OPS', 'SECURITY', 'PERF']);
     const workdirState = { root: '', level2: '', level3: '', custom: '' };
 
     function setSelectOptions(selectId, options, placeholder) {
@@ -1168,6 +1215,10 @@
       currentEditUser = '';
     }
 
+    function closePromptPreviewModal() {
+      document.getElementById('promptPreviewModal').classList.remove('show');
+    }
+
     async function submitPasswordChange() {
       const newPassword = document.getElementById('modalNewPassword').value;
       const confirmPassword = document.getElementById('modalConfirmPassword').value;
@@ -1299,6 +1350,12 @@
               <div class="agent-actions">
                 <button class="btn btn-secondary btn-sm" data-action="edit-agent" data-index="${idx}">编辑</button>
                 <button class="btn btn-secondary btn-sm" onclick="editPrompt('${agent.name}')">保存提示词</button>
+                ${professionalTemplateAgents.has(agent.name)
+                  ? `<button class="btn btn-secondary btn-sm" onclick="previewTemplatePrompt('${agent.name}')">预览模板提示词</button>`
+                  : ''}
+                ${professionalTemplateAgents.has(agent.name)
+                  ? `<button class="btn btn-secondary btn-sm" onclick="restoreTemplatePrompt('${agent.name}')">恢复模板提示词</button>`
+                  : ''}
                 <button class="btn btn-danger btn-sm" onclick="deleteAgent('${agent.name}')">删除</button>
               </div>
             </div>
@@ -1408,6 +1465,43 @@
       } catch (error) {
         showToast('请求失败: ' + error.message, 'error');
       }
+    }
+
+    async function restoreTemplatePrompt(name) {
+      const applyMode = document.getElementById('agentApplyMode').value;
+      try {
+        const response = await fetch(`/api/agents/${encodeURIComponent(name)}/prompt/restore-template`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+          body: JSON.stringify({ applyMode })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '恢复失败');
+        showToast(`已恢复模板提示词（${applyMode === 'immediate' ? '立即生效' : '会话后生效'}）`);
+        loadAgents();
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    async function previewTemplatePrompt(name) {
+      try {
+        const response = await fetch(`/api/agents/${encodeURIComponent(name)}/prompt/template`, {
+          headers: { 'x-admin-token': adminToken }
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '预览失败');
+        showPromptPreview(name, data.currentPrompt || '', data.templatePrompt || '');
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    function showPromptPreview(name, currentPrompt, templatePrompt) {
+      document.getElementById('promptPreviewTitle').textContent = `${name} 模板提示词预览`;
+      document.getElementById('promptPreviewCurrent').value = currentPrompt;
+      document.getElementById('promptPreviewTemplate').value = templatePrompt;
+      document.getElementById('promptPreviewModal').classList.add('show');
     }
 
     function cssEscape(value) {

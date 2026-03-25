@@ -278,3 +278,63 @@ test('管理端可按层级读取当前环境目录用于工作目录下拉', as
   const invalid = await fixture.request('/api/system/dirs?path=./relative', { headers });
   assert.equal(invalid.status, 400);
 });
+
+test('管理端可将专业智能体提示词恢复为共享模板默认值', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+  const agentName = 'Codex架构师';
+
+  const customPrompt = '这是后台手动修改过的临时提示词';
+  const update = await fixture.request(`/api/agents/${encodeURIComponent(agentName)}/prompt`, {
+    method: 'PUT',
+    headers,
+    body: {
+      systemPrompt: customPrompt,
+      applyMode: 'immediate'
+    }
+  });
+  assert.equal(update.status, 200);
+
+  const restore = await fixture.request(`/api/agents/${encodeURIComponent(agentName)}/prompt/restore-template`, {
+    method: 'POST',
+    headers,
+    body: {
+      applyMode: 'immediate'
+    }
+  });
+  assert.equal(restore.status, 200);
+
+  const list = await fixture.request('/api/agents', { headers });
+  assert.equal(list.status, 200);
+  const agent = list.body.agents.find(item => item.name === agentName);
+  assert.ok(agent);
+  assert.notEqual(agent.systemPrompt, customPrompt);
+  assert.match(agent.systemPrompt, /公开聊天室/);
+  assert.match(agent.systemPrompt, /职责：/);
+  assert.match(agent.systemPrompt, /边界：/);
+  assert.match(agent.systemPrompt, /输出：/);
+});
+
+test('管理端可预览专业智能体的模板默认提示词而不覆盖当前配置', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+  const agentName = 'Codex架构师';
+
+  const before = await fixture.request('/api/agents', { headers });
+  assert.equal(before.status, 200);
+  const current = before.body.agents.find(item => item.name === agentName);
+  assert.ok(current);
+
+  const preview = await fixture.request(`/api/agents/${encodeURIComponent(agentName)}/prompt/template`, {
+    headers
+  });
+  assert.equal(preview.status, 200);
+  assert.equal(typeof preview.body.currentPrompt, 'string');
+  assert.equal(typeof preview.body.templatePrompt, 'string');
+  assert.equal(preview.body.currentPrompt, current.systemPrompt);
+  assert.match(preview.body.templatePrompt, /公开聊天室/);
+  assert.match(preview.body.templatePrompt, /职责：/);
+
+  const after = await fixture.request('/api/agents', { headers });
+  const unchanged = after.body.agents.find(item => item.name === agentName);
+  assert.ok(unchanged);
+  assert.equal(unchanged.systemPrompt, current.systemPrompt, 'preview should not overwrite the stored prompt');
+});
