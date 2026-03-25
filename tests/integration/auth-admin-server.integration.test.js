@@ -177,6 +177,8 @@ test('手动新增智能体时可持久化 cli 类型为 codex', async () => {
 
   assert.equal(create.status, 201);
   assert.equal(create.body.agent.cli, 'codex');
+  assert.equal(create.body.agent.executionMode, undefined);
+  assert.equal(create.body.agent.apiConnectionId, undefined);
 
   const list = await fixture.request('/api/agents', { headers });
   assert.equal(list.status, 200);

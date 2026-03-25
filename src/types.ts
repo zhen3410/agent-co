@@ -33,6 +33,33 @@ export interface ChecklistBlock {
 export type RichBlock = CardBlock | ChecklistBlock;
 
 // ============================================
+// Agent 执行与连接类型
+// ============================================
+
+export type AgentExecutionMode = 'cli' | 'api';
+export type AgentCliName = 'claude' | 'codex';
+
+export interface ApiConnectionConfig {
+  id: string;
+  name: string;
+  baseURL: string;
+  apiKey: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ApiConnectionSummary {
+  id: string;
+  name: string;
+  baseURL: string;
+  apiKeyMasked: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ============================================
 // 消息类型
 // ============================================
 
@@ -57,7 +84,13 @@ export interface AIAgent {
   avatar: string;
   systemPrompt: string;
   color: string;  // 用于前端显示
-  cli?: 'claude' | 'codex';
+  executionMode?: AgentExecutionMode;
+  cliName?: AgentCliName;
+  apiConnectionId?: string;
+  apiModel?: string;
+  apiTemperature?: number;
+  apiMaxTokens?: number;
+  cli?: 'claude' | 'codex';  // legacy
   workdir?: string;
 }
 
@@ -67,8 +100,26 @@ export interface AIAgentConfig {
   personality: string;
   color: string;
   systemPrompt?: string;
-  cli?: 'claude' | 'codex';
+  executionMode?: AgentExecutionMode;
+  cliName?: AgentCliName;
+  apiConnectionId?: string;
+  apiModel?: string;
+  apiTemperature?: number;
+  apiMaxTokens?: number;
+  cli?: 'claude' | 'codex';  // legacy
   workdir?: string;
+}
+
+export interface AgentInvokeResult {
+  text: string;
+  blocks: RichBlock[];
+  rawText?: string;
+  finishReason?: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
 }
 
 // ============================================
