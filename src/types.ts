@@ -92,16 +92,16 @@ interface AgentExecutionLegacyFields {
 interface AgentCliExecutionFields {
   executionMode: 'cli';
   cliName?: AgentCliName;
-  apiConnectionId?: never;
-  apiModel?: never;
-  apiTemperature?: never;
-  apiMaxTokens?: never;
+  apiConnectionId?: string;
+  apiModel?: string;
+  apiTemperature?: number;
+  apiMaxTokens?: number;
   cli?: AgentCliName;  // legacy
 }
 
 interface AgentApiExecutionFields {
   executionMode: 'api';
-  cliName?: never;
+  cliName?: AgentCliName;
   apiConnectionId: string;
   apiModel: string;
   apiTemperature?: number;

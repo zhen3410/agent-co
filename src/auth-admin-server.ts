@@ -415,7 +415,7 @@ const server = http.createServer(async (req, res) => {
           throw new Error('新的智能体名称已存在');
         }
         const cloned = [...agents];
-        cloned[index] = { ...agents[index], ...normalized } as AIAgentConfig;
+        cloned[index] = { ...agents[index], ...normalized };
         return cloned;
       });
       saveAgentStore(AGENT_DATA_FILE, next);
@@ -447,11 +447,11 @@ const server = http.createServer(async (req, res) => {
           throw new Error('智能体不存在');
         }
         const current = agents[index];
-        const updated = {
+        const updated: AIAgentConfig = {
           ...current,
           personality: nextPersonality || current.personality,
           systemPrompt: nextPrompt || current.systemPrompt
-        } as AIAgentConfig;
+        };
         const validationError = validateAgentConfig(updated);
         if (validationError) {
           throw new Error(validationError);
@@ -488,10 +488,10 @@ const server = http.createServer(async (req, res) => {
           throw new Error('智能体不存在');
         }
         const current = agents[index];
-        const updated = {
+        const updated: AIAgentConfig = {
           ...current,
           systemPrompt: restoredPrompt
-        } as AIAgentConfig;
+        };
         const validationError = validateAgentConfig(updated);
         if (validationError) {
           throw new Error(validationError);
