@@ -79,38 +79,6 @@ export interface Message {
 // AI Agent 类型
 // ============================================
 
-interface AgentExecutionLegacyFields {
-  executionMode?: undefined;
-  cliName?: AgentCliName;
-  apiConnectionId?: string;
-  apiModel?: string;
-  apiTemperature?: number;
-  apiMaxTokens?: number;
-  cli?: AgentCliName;  // legacy
-}
-
-interface AgentCliExecutionFields {
-  executionMode: 'cli';
-  cliName?: AgentCliName;
-  apiConnectionId?: string;
-  apiModel?: string;
-  apiTemperature?: number;
-  apiMaxTokens?: number;
-  cli?: AgentCliName;  // legacy
-}
-
-interface AgentApiExecutionFields {
-  executionMode: 'api';
-  cliName?: AgentCliName;
-  apiConnectionId: string;
-  apiModel: string;
-  apiTemperature?: number;
-  apiMaxTokens?: number;
-  cli?: AgentCliName;
-}
-
-type AgentExecutionConfig = AgentExecutionLegacyFields | AgentCliExecutionFields | AgentApiExecutionFields;
-
 interface AIAgentBase {
   name: string;
   avatar: string;
@@ -119,7 +87,15 @@ interface AIAgentBase {
   workdir?: string;
 }
 
-export type AIAgent = AIAgentBase & AgentExecutionConfig;
+export interface AIAgent extends AIAgentBase {
+  executionMode?: AgentExecutionMode;
+  cliName?: AgentCliName;
+  apiConnectionId?: string;
+  apiModel?: string;
+  apiTemperature?: number;
+  apiMaxTokens?: number;
+  cli?: AgentCliName;  // legacy
+}
 
 interface AIAgentConfigBase {
   name: string;
@@ -130,7 +106,15 @@ interface AIAgentConfigBase {
   workdir?: string;
 }
 
-export type AIAgentConfig = AIAgentConfigBase & AgentExecutionConfig;
+export interface AIAgentConfig extends AIAgentConfigBase {
+  executionMode?: AgentExecutionMode;
+  cliName?: AgentCliName;
+  apiConnectionId?: string;
+  apiModel?: string;
+  apiTemperature?: number;
+  apiMaxTokens?: number;
+  cli?: AgentCliName;  // legacy
+}
 
 export interface AgentInvokeResult {
   text: string;
