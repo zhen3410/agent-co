@@ -1,6 +1,20 @@
 const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const { mkdtempSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
 const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
+const {
+  loadApiConnectionStore,
+  maskApiKey,
+  normalizeApiConnectionConfig,
+  saveApiConnectionStore,
+  validateApiConnectionConfig
+} = require('../../dist/api-connection-store.js');
+const {
+  normalizeAgentConfig,
+  validateAgentConfig
+} = require('../../dist/agent-config-store.js');
 
 let fixture;
 
@@ -338,3 +352,136 @@ test('管理端可预览专业智能体的模板默认提示词而不覆盖当�
   assert.ok(unchanged);
   assert.equal(unchanged.systemPrompt, current.systemPrompt, 'preview should not overwrite the stored prompt');
 });
+
+test('API connection 存储辅助函数会规范化输入并脱敏 apiKey', () => {
+  const normalized = normalizeApiConnectionConfig({
+    name: '  OpenAI Gateway  ',
+    baseURL: ' https://api.example.com/v1/ ',
+    apiKey: 'sk-test-1234567890abcdef',
+    enabled: true
+  });
+
+  assert.equal(normalized.name, 'OpenAI Gateway');
+  assert.equal(normalized.baseURL, 'https://api.example.com/v1');
+  assert.equal(normalized.apiKey, 'sk-test-1234567890abcdef');
+  assert.equal(normalized.enabled, true);
+  assert.equal(validateApiConnectionConfig(normalized), null);
+
+  const masked = maskApiKey(normalized.apiKey);
+  assert.notEqual(masked, normalized.apiKey);
+  assert.match(masked, /\*/);
+});
+
+test('API connection 验证会拒绝非法 baseURL', () => {
+  const error = validateApiConnectionConfig({
+    id: 'conn-1',
+    name: 'Gateway',
+    baseURL: 'not-a-url',
+    apiKey: 'secret',
+    enabled: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+
+  assert.equal(typeof error, 'string');
+  assert.match(error, /URL|合法/);
+});
+
+test('API connection store 可以保存并重新读取', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-api-conn-'));
+  const filePath = join(tempDir, 'api-connections.json');
+
+  try {
+    const initial = loadApiConnectionStore(filePath);
+    assert.equal(initial.apiConnections.length, 0);
+
+    const store = {
+      apiConnections: [
+        normalizeApiConnectionConfig({
+          id: 'conn-1',
+          name: 'Gateway',
+          baseURL: 'https://api.example.com/v1/',
+          apiKey: 'sk-test-1234567890abcdef',
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 2
+        })
+      ],
+      updatedAt: 123
+    };
+
+    saveApiConnectionStore(filePath, store);
+
+    const loaded = loadApiConnectionStore(filePath);
+    assert.equal(loaded.updatedAt, 123);
+    assert.equal(loaded.apiConnections.length, 1);
+    assert.equal(loaded.apiConnections[0].name, 'Gateway');
+    assert.equal(loaded.apiConnections[0].baseURL, 'https://api.example.com/v1');
+    assert.equal(loaded.apiConnections[0].apiKey, 'sk-test-1234567890abcdef');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('agent 配置会把旧 cli 字段映射为 cli 运行模式', () => {
+  const normalized = normalizeAgentConfig({
+    name: 'LegacyAgent',
+    avatar: '🤖',
+    color: '#123456',
+    personality: '兼容旧配置',
+    cli: 'codex'
+  });
+
+  assert.equal(normalized.executionMode, 'cli');
+  assert.equal(normalized.cliName, 'codex');
+  assert.equal(validateAgentConfig(normalized), null);
+});
+
+test('agent 配置在 API 模式下缺少 connection 或 model 时会失败', () => {
+  const error = validateAgentConfig(normalizeAgentConfig({
+    name: 'ApiAgent',
+    avatar: '🤖',
+    color: '#123456',
+    personality: 'API 运行模式',
+    executionMode: 'api'
+  }));
+
+  assert.equal(typeof error, 'string');
+  assert.match(error, /apiConnectionId|apiModel|API/);
+});
+
+test('agent 配置会拒绝超出范围的 apiTemperature', () => {
+  const error = validateAgentConfig(normalizeAgentConfig({
+    name: 'ApiTemperature',
+    avatar: '🤖',
+    color: '#123456',
+    personality: 'API 运行模式',
+    executionMode: 'api',
+    apiConnectionId: 'conn-1',
+    apiModel: 'gpt-4o-mini',
+    apiTemperature: 3
+  }));
+
+  assert.equal(error, 'apiTemperature 必须在 0~2 之间');
+});
+
+test('agent 配置会拒绝非正整数 apiMaxTokens', () => {
+  const error = validateAgentConfig(normalizeAgentConfig({
+    name: 'ApiMaxTokens',
+    avatar: '🤖',
+    color: '#123456',
+    personality: 'API 运行模式',
+    executionMode: 'api',
+    apiConnectionId: 'conn-1',
+    apiModel: 'gpt-4o-mini',
+    apiMaxTokens: 0
+  }));
+
+  assert.equal(error, 'apiMaxTokens 必须是正整数');
+});
+
+test.skip('API connection 路由：创建 connection 成功', async () => {});
+test.skip('API connection 路由：重名创建失败', async () => {});
+test.skip('API connection 路由：非法 URL 创建失败', async () => {});
+test.skip('API connection 路由：列表返回时 key 被脱敏', async () => {});
+test.skip('API connection 路由：被 agent 引用时删除失败', async () => {});

@@ -92,9 +92,40 @@ export function validateAgentConfig(config: AIAgentConfig): string | null {
     return '颜色必须是 6 位十六进制格式，例如 #22c55e';
   }
 
+  const executionMode = config.executionMode || (config.cli ? 'cli' : undefined);
+  const cliName = config.cliName || config.cli;
 
-  if (config.cli && config.cli !== 'claude' && config.cli !== 'codex') {
-    return 'cli 仅支持 claude 或 codex';
+  if (executionMode && executionMode !== 'cli' && executionMode !== 'api') {
+    return 'executionMode 仅支持 cli 或 api';
+  }
+
+  if (cliName && cliName !== 'claude' && cliName !== 'codex') {
+    return 'cliName 仅支持 claude 或 codex';
+  }
+
+  if (executionMode === 'cli' && !cliName) {
+    return 'executionMode=cli 时必须提供 cliName';
+  }
+
+  if (executionMode === 'api') {
+    if (!config.apiConnectionId || !config.apiConnectionId.trim()) {
+      return 'executionMode=api 时必须提供 apiConnectionId';
+    }
+    if (!config.apiModel || !config.apiModel.trim()) {
+      return 'executionMode=api 时必须提供 apiModel';
+    }
+  }
+
+  if (config.apiTemperature !== undefined) {
+    if (typeof config.apiTemperature !== 'number' || !Number.isFinite(config.apiTemperature) || config.apiTemperature < 0 || config.apiTemperature > 2) {
+      return 'apiTemperature 必须在 0~2 之间';
+    }
+  }
+
+  if (config.apiMaxTokens !== undefined) {
+    if (!Number.isInteger(config.apiMaxTokens) || config.apiMaxTokens <= 0) {
+      return 'apiMaxTokens 必须是正整数';
+    }
   }
 
   if (config.workdir) {
@@ -117,6 +148,14 @@ export function validateAgentConfig(config: AIAgentConfig): string | null {
 }
 
 export function normalizeAgentConfig(config: AIAgentConfig): AIAgentConfig {
+  const normalizedCli = config.cli === 'codex' || config.cli === 'claude' ? config.cli : undefined;
+  const normalizedCliName = config.cliName === 'codex' || config.cliName === 'claude'
+    ? config.cliName
+    : normalizedCli;
+  const normalizedExecutionMode = config.executionMode === 'cli' || config.executionMode === 'api'
+    ? config.executionMode
+    : (normalizedCliName ? 'cli' : undefined);
+
   return {
     ...config,
     name: config.name.trim(),
@@ -124,7 +163,13 @@ export function normalizeAgentConfig(config: AIAgentConfig): AIAgentConfig {
     color: config.color.trim(),
     personality: (config.personality || '').trim(),
     systemPrompt: (config.systemPrompt || '').trim() || undefined,
-    cli: config.cli === 'codex' || config.cli === 'claude' ? config.cli : undefined,
+    executionMode: normalizedExecutionMode,
+    cliName: normalizedCliName,
+    cli: normalizedCli,
+    apiConnectionId: (config.apiConnectionId || '').trim() || undefined,
+    apiModel: (config.apiModel || '').trim() || undefined,
+    apiTemperature: config.apiTemperature,
+    apiMaxTokens: config.apiMaxTokens,
     workdir: (config.workdir || '').trim() || undefined
   };
 }
