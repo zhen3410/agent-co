@@ -28,8 +28,8 @@ function getRandomPort() {
 }
 
 async function createAuthAdminFixture(options = {}) {
+  const maxAttempts = options.maxAttempts || 5;
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-auth-it-'));
-  const port = getRandomPort();
   const adminToken = options.adminToken || 'integration-test-admin-token-1234567890';
   const usersFile = join(tempDir, 'users.json');
   const agentsFile = join(tempDir, 'agents.json');
@@ -39,31 +39,51 @@ async function createAuthAdminFixture(options = {}) {
     writeFileSync(agentsFile, JSON.stringify(options.initialAgentStore, null, 2), 'utf-8');
   }
 
-  const child = spawn('node', ['dist/auth-admin-server.js'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      AUTH_ADMIN_PORT: String(port),
-      AUTH_ADMIN_TOKEN: options.authAdminTokenEnv || adminToken,
-      AUTH_DATA_FILE: usersFile,
-      AGENT_DATA_FILE: agentsFile,
-      BOT_ROOM_DEFAULT_USER: 'admin',
-      BOT_ROOM_DEFAULT_PASSWORD: 'Admin1234!@#'
-    },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-
+  let port = getRandomPort();
+  let child = null;
   let stderr = '';
-  child.stderr.on('data', chunk => {
-    stderr += chunk.toString();
-  });
+  let lastStartupError = null;
 
-  try {
-    await waitForHealth(port);
-  } catch (error) {
-    child.kill('SIGKILL');
-    throw new Error(`${error.message}\n${stderr}`);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    port = getRandomPort();
+    stderr = '';
+    child = spawn('node', ['dist/auth-admin-server.js'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        NODE_ENV: 'test',
+        AUTH_ADMIN_PORT: String(port),
+        AUTH_ADMIN_TOKEN: options.authAdminTokenEnv || adminToken,
+        AUTH_DATA_FILE: usersFile,
+        AGENT_DATA_FILE: agentsFile,
+        BOT_ROOM_DEFAULT_USER: 'admin',
+        BOT_ROOM_DEFAULT_PASSWORD: 'Admin1234!@#'
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString();
+    });
+
+    try {
+      await waitForHealth(port);
+      lastStartupError = null;
+      break;
+    } catch (error) {
+      lastStartupError = error;
+      child.kill('SIGKILL');
+      child = null;
+      if (!String(stderr).includes('EADDRINUSE') || attempt === maxAttempts - 1) {
+        rmSync(tempDir, { recursive: true, force: true });
+        throw new Error(`${error.message}\n${stderr}`);
+      }
+    }
+  }
+
+  if (lastStartupError || !child) {
+    rmSync(tempDir, { recursive: true, force: true });
+    throw new Error(`auth admin server failed to start after ${maxAttempts} attempts`);
   }
 
   async function request(path, options = {}) {

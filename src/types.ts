@@ -94,6 +94,10 @@ export interface HistoryResponse {
   agents: AIAgentConfig[];
   currentAgent?: string;  // 当前对话的智能体
   enabledAgents?: string[];
+  agentWorkdirs?: Record<string, string>;
+  session?: ChatSession;
+  chatSessions?: ChatSessionSummary[];
+  activeSessionId?: string;
 }
 
 export interface SessionState {
@@ -109,6 +113,23 @@ export interface SessionState {
 export interface SessionData {
   blocks: RichBlock[];
   createdAt: number;
+}
+
+export interface ChatSessionSummary {
+  id: string;
+  name: string;
+  messageCount: number;
+  updatedAt: number;
+  createdAt: number;
+  agentChainMaxHops: number;
+  agentChainMaxCallsPerAgent: number | null;
+}
+
+export interface ChatSession extends ChatSessionSummary {
+  history: Message[];
+  currentAgent: string | null;
+  enabledAgents: string[];
+  agentWorkdirs: Record<string, string>;
 }
 
 // ============================================

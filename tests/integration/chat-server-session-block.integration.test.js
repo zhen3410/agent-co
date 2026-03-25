@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
+const { withIsolatedChatSessionState, isRedisSessionStateAvailable } = require('./helpers/redis-session-state-fixture');
 
 test('会话接口支持创建、切换、重命名与删除（需先登录）', async () => {
   const fixture = await createChatServerFixture();
@@ -16,6 +17,9 @@ test('会话接口支持创建、切换、重命名与删除（需先登录）',
     assert.equal(initialHistory.status, 200);
     assert.equal(Array.isArray(initialHistory.body.chatSessions), true);
     assert.equal(initialHistory.body.chatSessions.length, 1);
+    assert.equal(initialHistory.body.session.id, 'default');
+    assert.equal(initialHistory.body.session.agentChainMaxHops > 0, true);
+    assert.equal(initialHistory.body.session.agentChainMaxCallsPerAgent, null);
 
     const createResponse = await fixture.request('/api/sessions', {
       method: 'POST',
@@ -34,6 +38,9 @@ test('会话接口支持创建、切换、重命名与删除（需先登录）',
     assert.equal(selectResponse.status, 200);
     assert.equal(selectResponse.body.success, true);
     assert.equal(selectResponse.body.activeSessionId, newSessionId);
+    assert.equal(selectResponse.body.session.id, newSessionId);
+    assert.equal(selectResponse.body.session.agentChainMaxHops > 0, true);
+    assert.equal(selectResponse.body.session.agentChainMaxCallsPerAgent, null);
 
     const renameResponse = await fixture.request('/api/sessions/rename', {
       method: 'POST',
@@ -55,6 +62,9 @@ test('会话接口支持创建、切换、重命名与删除（需先登录）',
     });
     assert.equal(deleteDefault.status, 200);
     assert.equal(deleteDefault.body.success, true);
+    assert.equal(deleteDefault.body.session.id, newSessionId);
+    assert.equal(deleteDefault.body.session.agentChainMaxHops > 0, true);
+    assert.equal(deleteDefault.body.session.agentChainMaxCallsPerAgent, null);
 
     const deleteLastSession = await fixture.request('/api/sessions/delete', {
       method: 'POST',
@@ -148,6 +158,7 @@ test('切换会话后 /api/history 返回对应会话记录（需先登录）', 
     const defaultHistory = await fixture.request('/api/history');
     assert.equal(defaultHistory.status, 200);
     assert.equal(defaultHistory.body.activeSessionId, 'default');
+    assert.equal(defaultHistory.body.session.id, 'default');
     assert.equal(defaultHistory.body.messages.some((msg) => msg.text === 'default session message'), true);
     assert.equal(defaultHistory.body.messages.some((msg) => msg.text === 'second session message'), false);
 
@@ -157,10 +168,12 @@ test('切换会话后 /api/history 返回对应会话记录（需先登录）', 
     });
     assert.equal(selectSecond.status, 200);
     assert.equal(selectSecond.body.activeSessionId, secondSessionId);
+    assert.equal(selectSecond.body.session.id, secondSessionId);
 
     const secondHistory = await fixture.request('/api/history');
     assert.equal(secondHistory.status, 200);
     assert.equal(secondHistory.body.activeSessionId, secondSessionId);
+    assert.equal(secondHistory.body.session.id, secondSessionId);
     assert.equal(secondHistory.body.messages.some((msg) => msg.text === 'second session message'), true);
     assert.equal(secondHistory.body.messages.some((msg) => msg.text === 'default session message'), false);
   } finally {
@@ -317,6 +330,357 @@ test('关闭当前对话智能体后，从下一条消息开始失效', async ()
     assert.equal(followup.body.aiMessages.length, 0);
     assert.equal(followup.body.currentAgent, null);
     assert.match(followup.body.notice || '', /没有启用智能体|先启用/i);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('新建会话会返回链式传播设置字段，并在会话列表中可见', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'chain settings' }
+    });
+
+    assert.equal(createResponse.status, 200);
+    assert.equal(createResponse.body.success, true);
+    assert.equal(createResponse.body.session.agentChainMaxHops > 0, true);
+    assert.equal(createResponse.body.session.agentChainMaxCallsPerAgent, null);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    const summary = historyResponse.body.chatSessions.find((session) => session.id === createResponse.body.session.id);
+    assert.ok(summary);
+    assert.equal(summary.agentChainMaxHops, createResponse.body.session.agentChainMaxHops);
+    assert.equal(summary.agentChainMaxCallsPerAgent, createResponse.body.session.agentChainMaxCallsPerAgent);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('旧会话数据缺少链路字段时会自动回填默认值', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      'user:admin': [{
+        id: 'legacy-session',
+        name: 'legacy session',
+        history: [],
+        currentAgent: null,
+        enabledAgents: [],
+        agentWorkdirs: {},
+        createdAt: Date.now() - 1000,
+        updatedAt: Date.now() - 1000
+      }]
+    },
+    userActiveChatSession: {
+      'user:admin': 'legacy-session'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        BOT_ROOM_DISABLE_REDIS: 'false',
+        BOT_ROOM_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.login();
+      assert.equal(loginResponse.status, 200);
+
+      const historyResponse = await fixture.request('/api/history');
+      assert.equal(historyResponse.status, 200);
+      const legacySession = historyResponse.body.chatSessions.find((session) => session.id === 'legacy-session');
+      assert.ok(legacySession);
+      assert.equal(typeof legacySession.agentChainMaxHops, 'number');
+      assert.equal(legacySession.agentChainMaxHops > 0, true);
+      assert.equal(legacySession.agentChainMaxCallsPerAgent, null);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+test('POST /api/sessions/update 支持更新单个或两个链路字段，并将超限值钳制到 1000', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'chain settings patch' }
+    });
+    assert.equal(createResponse.status, 200);
+    const sessionId = createResponse.body.session.id;
+
+    const updateHopsOnly = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { agentChainMaxHops: 12 }
+      }
+    });
+    assert.equal(updateHopsOnly.status, 200);
+    assert.equal(updateHopsOnly.body.session.agentChainMaxHops, 12);
+    assert.equal(updateHopsOnly.body.session.agentChainMaxCallsPerAgent, null);
+
+    const updateBoth = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: {
+          agentChainMaxHops: 2001,
+          agentChainMaxCallsPerAgent: 3000
+        }
+      }
+    });
+    assert.equal(updateBoth.status, 200);
+    assert.equal(updateBoth.body.session.agentChainMaxHops, 1000);
+    assert.equal(updateBoth.body.session.agentChainMaxCallsPerAgent, 1000);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('POST /api/sessions/update 支持仅更新 agentChainMaxCallsPerAgent 而不修改 agentChainMaxHops', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'calls-only patch' }
+    });
+    assert.equal(createResponse.status, 200);
+    const sessionId = createResponse.body.session.id;
+    const originalHops = createResponse.body.session.agentChainMaxHops;
+
+    const updateCallsOnly = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { agentChainMaxCallsPerAgent: 3 }
+      }
+    });
+    assert.equal(updateCallsOnly.status, 200);
+    assert.equal(updateCallsOnly.body.session.agentChainMaxCallsPerAgent, 3);
+    assert.equal(updateCallsOnly.body.session.agentChainMaxHops, originalHops);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('POST /api/sessions/update 会拒绝无效的链路设置', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'invalid chain settings' }
+    });
+    assert.equal(createResponse.status, 200);
+    const sessionId = createResponse.body.session.id;
+
+    const invalidHops = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { agentChainMaxHops: 0 }
+      }
+    });
+    assert.equal(invalidHops.status, 400);
+
+    const invalidCalls = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { agentChainMaxCallsPerAgent: 0 }
+      }
+    });
+    assert.equal(invalidCalls.status, 400);
+
+    const emptyPatch = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: {}
+      }
+    });
+    assert.equal(emptyPatch.status, 400);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('POST /api/sessions/update 会拒绝不支持的 patch 字段', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'unsupported patch field' }
+    });
+    assert.equal(createResponse.status, 200);
+    const sessionId = createResponse.body.session.id;
+
+    const response = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { unsupportedField: 1 }
+      }
+    });
+    assert.equal(response.status, 400);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('POST /api/sessions/update 会在 sessionId 不存在时返回 400', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const response = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: 'missing-session-id',
+        patch: { agentChainMaxHops: 2 }
+      }
+    });
+    assert.equal(response.status, 400);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('POST /api/sessions/update 会拒绝空字符串、负数、小数和非数字输入', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'invalid value variants' }
+    });
+    assert.equal(createResponse.status, 200);
+    const sessionId = createResponse.body.session.id;
+
+    const invalidCases = [
+      { patch: { agentChainMaxHops: '' } },
+      { patch: { agentChainMaxHops: -1 } },
+      { patch: { agentChainMaxHops: 1.5 } },
+      { patch: { agentChainMaxHops: 'abc' } },
+      { patch: { agentChainMaxCallsPerAgent: '' } },
+      { patch: { agentChainMaxCallsPerAgent: -2 } },
+      { patch: { agentChainMaxCallsPerAgent: 2.5 } },
+      { patch: { agentChainMaxCallsPerAgent: 'xyz' } }
+    ];
+
+    for (const body of invalidCases) {
+      const response = await fixture.request('/api/sessions/update', {
+        method: 'POST',
+        body: {
+          sessionId,
+          ...body
+        }
+      });
+      assert.equal(response.status, 400);
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('切换会话后，链路设置在各会话之间保持隔离', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const sessionAResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'session A' }
+    });
+    assert.equal(sessionAResponse.status, 200);
+    const sessionAId = sessionAResponse.body.session.id;
+
+    const sessionBResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'session B' }
+    });
+    assert.equal(sessionBResponse.status, 200);
+    const sessionBId = sessionBResponse.body.session.id;
+
+    const updateA = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: sessionAId,
+        patch: {
+          agentChainMaxHops: 7,
+          agentChainMaxCallsPerAgent: null
+        }
+      }
+    });
+    assert.equal(updateA.status, 200);
+
+    const updateB = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: sessionBId,
+        patch: {
+          agentChainMaxHops: 3,
+          agentChainMaxCallsPerAgent: 2
+        }
+      }
+    });
+    assert.equal(updateB.status, 200);
+
+    const selectA = await fixture.request('/api/sessions/select', {
+      method: 'POST',
+      body: { sessionId: sessionAId }
+    });
+    assert.equal(selectA.status, 200);
+
+    const historyA = await fixture.request('/api/history');
+    assert.equal(historyA.status, 200);
+    assert.equal(historyA.body.activeSessionId, sessionAId);
+    assert.equal(historyA.body.chatSessions.find((session) => session.id === sessionAId).agentChainMaxHops, 7);
+    assert.equal(historyA.body.chatSessions.find((session) => session.id === sessionBId).agentChainMaxCallsPerAgent, 2);
+
+    const selectB = await fixture.request('/api/sessions/select', {
+      method: 'POST',
+      body: { sessionId: sessionBId }
+    });
+    assert.equal(selectB.status, 200);
+
+    const historyB = await fixture.request('/api/history');
+    assert.equal(historyB.status, 200);
+    assert.equal(historyB.body.activeSessionId, sessionBId);
+    assert.equal(historyB.body.chatSessions.find((session) => session.id === sessionAId).agentChainMaxCallsPerAgent, null);
+    assert.equal(historyB.body.chatSessions.find((session) => session.id === sessionBId).agentChainMaxHops, 3);
   } finally {
     await fixture.cleanup();
   }

@@ -37,8 +37,8 @@ const REDIS_REQUIRED = process.env.BOT_ROOM_REDIS_REQUIRED !== 'false';
 const REDIS_DISABLED = process.env.BOT_ROOM_DISABLE_REDIS === 'true';
 const CALLBACK_AUTH_TOKEN = process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
 const CALLBACK_AUTH_HEADER = 'x-bot-room-callback-token';
-const AGENT_CHAIN_MAX_HOPS = Math.max(1, Number(process.env.BOT_ROOM_AGENT_CHAIN_MAX_HOPS || 4));
-const AGENT_CHAIN_MAX_CALLS_PER_TURN = Math.max(1, Number(process.env.BOT_ROOM_AGENT_CHAIN_MAX_CALLS_PER_TURN || 2));
+const SESSION_CHAIN_SETTINGS_MAX = 1000;
+const DEFAULT_AGENT_CHAIN_MAX_HOPS = normalizePositiveSessionSetting(process.env.BOT_ROOM_AGENT_CHAIN_MAX_HOPS, 4, false) as number;
 
 // 速率限制配置
 const RATE_LIMIT_MAX_REQUESTS = 100; // 每分钟最多 100 次请求
@@ -53,6 +53,8 @@ interface UserChatSession {
   currentAgent: string | null;
   enabledAgents?: string[];
   agentWorkdirs?: Record<string, string>;
+  agentChainMaxHops?: number;
+  agentChainMaxCallsPerAgent?: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -185,6 +187,118 @@ interface RedisPersistedState {
   userActiveChatSession: Record<string, string>;
 }
 
+type NormalizedUserChatSession = UserChatSession & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>>;
+type SessionChainPatch = Partial<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>>;
+
+function normalizePositiveSessionSetting(value: unknown, fallback: number | null, allowNull: boolean): number | null {
+  if (value === null) {
+    return allowNull ? null : fallback;
+  }
+
+  if (typeof value === 'undefined') {
+    return fallback;
+  }
+
+  let parsed: number;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed || !/^-?\d+$/.test(trimmed)) {
+      return fallback;
+    }
+    parsed = Number(trimmed);
+  } else if (typeof value === 'number') {
+    parsed = value;
+  } else {
+    return fallback;
+  }
+
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return fallback;
+  }
+
+  return Math.min(SESSION_CHAIN_SETTINGS_MAX, parsed);
+}
+
+function normalizeSessionChainSettings(source?: SessionChainPatch): Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>> {
+  return {
+    agentChainMaxHops: normalizePositiveSessionSetting(source?.agentChainMaxHops, DEFAULT_AGENT_CHAIN_MAX_HOPS, false) as number,
+    agentChainMaxCallsPerAgent: normalizePositiveSessionSetting(source?.agentChainMaxCallsPerAgent, null, true)
+  };
+}
+
+function applyNormalizedSessionChainSettings<T extends UserChatSession>(session: T): T & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>> {
+  const normalized = normalizeSessionChainSettings(session);
+  session.agentChainMaxHops = normalized.agentChainMaxHops;
+  session.agentChainMaxCallsPerAgent = normalized.agentChainMaxCallsPerAgent;
+  return session as T & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>>;
+}
+
+function parseSessionChainPatch(patch: unknown): SessionChainPatch {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    throw new Error('patch 必须是对象');
+  }
+
+  const entries = Object.entries(patch as Record<string, unknown>);
+  if (entries.length === 0) {
+    throw new Error('patch 不能为空');
+  }
+
+  const allowedFields = new Set(['agentChainMaxHops', 'agentChainMaxCallsPerAgent']);
+  const normalizedPatch: SessionChainPatch = {};
+
+  for (const [key, value] of entries) {
+    if (!allowedFields.has(key)) {
+      throw new Error(`不支持的 session 字段: ${key}`);
+    }
+
+    if (key === 'agentChainMaxHops') {
+      const normalized = normalizePositiveSessionSetting(value, null, false);
+      if (normalized === null) {
+        throw new Error('agentChainMaxHops 必须是 1 到 1000 的整数');
+      }
+      normalizedPatch.agentChainMaxHops = normalized;
+      continue;
+    }
+
+    if (value === null) {
+      normalizedPatch.agentChainMaxCallsPerAgent = null;
+      continue;
+    }
+
+    const normalized = normalizePositiveSessionSetting(value, null, false);
+    if (normalized === null) {
+      throw new Error('agentChainMaxCallsPerAgent 必须是 null 或 1 到 1000 的整数');
+    }
+    normalizedPatch.agentChainMaxCallsPerAgent = normalized;
+  }
+
+  return normalizedPatch;
+}
+
+function buildSessionResponse(session: UserChatSession): NormalizedUserChatSession {
+  const normalized = normalizeSessionChainSettings(session);
+  return {
+    ...session,
+    history: Array.isArray(session.history) ? [...session.history] : [],
+    enabledAgents: Array.isArray(session.enabledAgents) ? [...session.enabledAgents] : undefined,
+    agentWorkdirs: session.agentWorkdirs ? { ...session.agentWorkdirs } : {},
+    agentChainMaxHops: normalized.agentChainMaxHops,
+    agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent
+  };
+}
+
+function buildDetailedSessionResponse(session: UserChatSession): NormalizedUserChatSession & {
+  enabledAgents: string[];
+  agentWorkdirs: Record<string, string>;
+} {
+  const normalizedSession = buildSessionResponse(session);
+  return {
+    ...normalizedSession,
+    enabledAgents: getSessionEnabledAgents(normalizedSession),
+    agentWorkdirs: normalizedSession.agentWorkdirs || {}
+  };
+}
+
 async function loadRuntimeConfigFromRedis(): Promise<void> {
   if (REDIS_DISABLED) return;
   try {
@@ -282,6 +396,7 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
           agentWorkdirs: session.agentWorkdirs && typeof session.agentWorkdirs === 'object'
             ? session.agentWorkdirs
             : {},
+          ...normalizeSessionChainSettings(session),
           createdAt: Number(session.createdAt) || Date.now(),
           updatedAt: Number(session.updatedAt) || Date.now()
         });
@@ -426,6 +541,7 @@ function createUserSession(name?: string): UserChatSession {
     currentAgent: null,
     enabledAgents: [],
     agentWorkdirs: {},
+    ...normalizeSessionChainSettings(),
     createdAt: now,
     updatedAt: now
   };
@@ -441,6 +557,7 @@ function ensureUserSessions(userKey: string): Map<string, UserChatSession> {
       currentAgent: null,
       enabledAgents: [],
       agentWorkdirs: {},
+      ...normalizeSessionChainSettings(),
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -476,7 +593,7 @@ function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<stri
   for (const [sessionId, sourceSession] of source.entries()) {
     const existing = target.get(sessionId);
     if (!existing) {
-      target.set(sessionId, sourceSession);
+      target.set(sessionId, applyNormalizedSessionChainSettings(sourceSession));
       continue;
     }
 
@@ -484,6 +601,9 @@ function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<stri
     existing.currentAgent = existing.currentAgent || sourceSession.currentAgent;
     existing.enabledAgents = sanitizeEnabledAgents(sourceSession.enabledAgents, existing.enabledAgents);
     existing.agentWorkdirs = { ...(sourceSession.agentWorkdirs || {}), ...(existing.agentWorkdirs || {}) };
+    const normalized = normalizeSessionChainSettings(sourceSession);
+    existing.agentChainMaxHops = normalized.agentChainMaxHops;
+    existing.agentChainMaxCallsPerAgent = normalized.agentChainMaxCallsPerAgent;
     existing.createdAt = Math.min(existing.createdAt, sourceSession.createdAt);
     existing.updatedAt = Math.max(existing.updatedAt, sourceSession.updatedAt);
     if (sourceSession.history.length > existing.history.length) {
@@ -534,17 +654,22 @@ function resolveChatSession(req: http.IncomingMessage): { userKey: string; sessi
   return { userKey, session: activeSession };
 }
 
-function getSessionSummaries(userKey: string): Array<{ id: string; name: string; messageCount: number; updatedAt: number; createdAt: number }> {
+function getSessionSummaries(userKey: string): Array<{ id: string; name: string; messageCount: number; updatedAt: number; createdAt: number; agentChainMaxHops: number; agentChainMaxCallsPerAgent: number | null }> {
   const sessions = ensureUserSessions(userKey);
   return Array.from(sessions.values())
     .sort((a, b) => b.updatedAt - a.updatedAt)
-    .map(session => ({
+    .map((session) => {
+      const normalized = normalizeSessionChainSettings(session);
+      return {
       id: session.id,
       name: session.name,
       messageCount: session.history.length,
       updatedAt: session.updatedAt,
-      createdAt: session.createdAt
-    }));
+      createdAt: session.createdAt,
+      agentChainMaxHops: normalized.agentChainMaxHops,
+      agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent
+      };
+    });
 }
 
 function getAllAgentNames(): string[] {
@@ -778,17 +903,18 @@ async function executeAgentTurn(params: {
   const queue: QueuedAgentDispatchTask[] = initialTasks.map(task => ({ ...task, dispatchKind: 'initial' }));
   const aiMessages: Message[] = [];
   const callCounts = new Map<string, number>();
+  const { agentChainMaxHops, agentChainMaxCallsPerAgent } = normalizeSessionChainSettings(session);
   let chainedCalls = 0;
 
   while (queue.length > 0) {
     const task = queue.shift()!;
-    if (task.dispatchKind === 'chained' && chainedCalls >= AGENT_CHAIN_MAX_HOPS) {
-      appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=chain_stop reason=max_hops hops=${AGENT_CHAIN_MAX_HOPS}`);
+    if (task.dispatchKind === 'chained' && chainedCalls >= agentChainMaxHops) {
+      appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=chain_stop reason=max_hops hops=${agentChainMaxHops}`);
       break;
     }
 
     const currentCalls = callCounts.get(task.agentName) || 0;
-    if (currentCalls >= AGENT_CHAIN_MAX_CALLS_PER_TURN) {
+    if (agentChainMaxCallsPerAgent !== null && currentCalls >= agentChainMaxCallsPerAgent) {
       appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=chain_skip reason=max_calls count=${currentCalls}`);
       continue;
     }
@@ -820,13 +946,13 @@ async function executeAgentTurn(params: {
 
       for (const mention of chainedMentions) {
         const queuedChainedCalls = queue.filter(item => item.dispatchKind === 'chained').length;
-        if (chainedCalls + queuedChainedCalls >= AGENT_CHAIN_MAX_HOPS) {
+        if (chainedCalls + queuedChainedCalls >= agentChainMaxHops) {
           break;
         }
 
         const queuedCalls = callCounts.get(mention) || 0;
         const pendingCalls = queue.filter(item => item.agentName === mention).length;
-        if (queuedCalls + pendingCalls >= AGENT_CHAIN_MAX_CALLS_PER_TURN) {
+        if (agentChainMaxCallsPerAgent !== null && queuedCalls + pendingCalls >= agentChainMaxCallsPerAgent) {
           appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${mention} stage=chain_skip reason=max_calls_pending count=${queuedCalls} pending=${pendingCalls}`);
           continue;
         }
@@ -1665,16 +1791,18 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
 function handleGetHistory(req: http.IncomingMessage, res: http.ServerResponse): void {
   syncAgentsFromStore();
   const { userKey, session } = resolveChatSession(req);
+  const normalizedSession = buildDetailedSessionResponse(session);
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
-    messages: session.history,
+    messages: normalizedSession.history,
     agents: agentManager.getAgentConfigs(),
-    currentAgent: getUserCurrentAgent(userKey, session.id),
-    enabledAgents: getSessionEnabledAgents(session),
-    agentWorkdirs: session.agentWorkdirs || {},
+    currentAgent: getUserCurrentAgent(userKey, normalizedSession.id),
+    enabledAgents: getSessionEnabledAgents(normalizedSession),
+    agentWorkdirs: normalizedSession.agentWorkdirs || {},
+    session: normalizedSession,
     chatSessions: getSessionSummaries(userKey),
-    activeSessionId: session.id
+    activeSessionId: normalizedSession.id
   }));
 }
 
@@ -1816,7 +1944,7 @@ async function handleCreateChatSession(req: http.IncomingMessage, res: http.Serv
   try {
     const body = await parseBody<{ name?: string }>(req);
     const userKey = getUserKeyFromRequest(req);
-    const session = createChatSessionForUser(userKey, body.name);
+    const session = buildSessionResponse(createChatSessionForUser(userKey, body.name));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
@@ -1845,13 +1973,14 @@ async function handleSelectChatSession(req: http.IncomingMessage, res: http.Serv
     }
 
     const sessions = ensureUserSessions(userKey);
-    const session = sessions.get(sessionId)!;
+    const session = buildDetailedSessionResponse(sessions.get(sessionId)!);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
       messages: session.history,
       currentAgent: getUserCurrentAgent(userKey, session.id),
       enabledAgents: getSessionEnabledAgents(session),
+      session,
       activeSessionId: session.id,
       chatSessions: getSessionSummaries(userKey)
     }));
@@ -1879,7 +2008,7 @@ async function handleRenameChatSession(req: http.IncomingMessage, res: http.Serv
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
-      session: renamed,
+      session: buildSessionResponse(renamed),
       chatSessions: getSessionSummaries(userKey)
     }));
   } catch (error: unknown) {
@@ -1903,7 +2032,7 @@ async function handleDeleteChatSession(req: http.IncomingMessage, res: http.Serv
     }
 
     const sessions = ensureUserSessions(userKey);
-    const active = sessions.get(result.activeSessionId)!;
+    const active = buildDetailedSessionResponse(sessions.get(result.activeSessionId)!);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
@@ -1911,7 +2040,57 @@ async function handleDeleteChatSession(req: http.IncomingMessage, res: http.Serv
       messages: active.history,
       currentAgent: getUserCurrentAgent(userKey, active.id),
       enabledAgents: getSessionEnabledAgents(active),
+      session: active,
       chatSessions: getSessionSummaries(userKey)
+    }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+async function handleUpdateChatSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseBody<{ sessionId?: string; patch?: unknown }>(req);
+    const userKey = getUserKeyFromRequest(req);
+    const sessionId = (body.sessionId || '').trim();
+
+    if (!sessionId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'sessionId 不能为空' }));
+      return;
+    }
+
+    const session = ensureUserSessions(userKey).get(sessionId);
+    if (!session) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '会话不存在' }));
+      return;
+    }
+
+    let patch: SessionChainPatch;
+    try {
+      patch = parseSessionChainPatch(body.patch);
+    } catch (error: unknown) {
+      const err = error as Error;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+      return;
+    }
+
+    Object.assign(session, patch);
+    applyNormalizedSessionChainSettings(session);
+    touchSession(session);
+    const normalizedSession = buildSessionResponse(session);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      session: normalizedSession,
+      enabledAgents: getSessionEnabledAgents(normalizedSession),
+      chatSessions: getSessionSummaries(userKey),
+      activeSessionId: userActiveChatSession.get(userKey) || normalizedSession.id
     }));
   } catch (error: unknown) {
     const err = error as Error;
@@ -2159,6 +2338,8 @@ const server = http.createServer(async (req, res) => {
     await handleCreateChatSession(req, res);
   } else if (requestUrl.pathname === '/api/sessions/select' && method === 'POST') {
     await handleSelectChatSession(req, res);
+  } else if (requestUrl.pathname === '/api/sessions/update' && method === 'POST') {
+    await handleUpdateChatSession(req, res);
   } else if (requestUrl.pathname === '/api/sessions/rename' && method === 'POST') {
     await handleRenameChatSession(req, res);
   } else if (requestUrl.pathname === '/api/sessions/delete' && method === 'POST') {

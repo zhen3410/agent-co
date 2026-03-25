@@ -38,39 +38,61 @@ function parseSetCookie(setCookieHeader) {
 }
 
 async function createChatServerFixture(options = {}) {
+  const maxAttempts = options.maxAttempts || 5;
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-it-'));
-  const port = getRandomPort();
   const agentDataFile = join(tempDir, 'agents.json');
-  const authFixture = await createAuthAdminFixture();
-
-  const child = spawn('node', ['dist/server.js'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      PORT: String(port),
-      BOT_ROOM_AUTH_ENABLED: 'true',
-      BOT_ROOM_REDIS_REQUIRED: 'false',
-      BOT_ROOM_DISABLE_REDIS: 'true',
-      AGENT_DATA_FILE: agentDataFile,
-      AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
-      AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
-      ...(options.env || {})
-    },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-
+  let authFixture = null;
+  let child = null;
   let stderr = '';
-  child.stderr.on('data', chunk => {
-    stderr += chunk.toString();
-  });
+  let port = getRandomPort();
+  let lastStartupError = null;
 
-  try {
-    await waitForServer(port);
-  } catch (error) {
-    child.kill('SIGKILL');
-    await authFixture.cleanup();
-    throw new Error(`${error.message}\n${stderr}`);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    port = getRandomPort();
+    stderr = '';
+    authFixture = await createAuthAdminFixture();
+    child = spawn('node', ['dist/server.js'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        NODE_ENV: 'test',
+        PORT: String(port),
+        BOT_ROOM_AUTH_ENABLED: 'true',
+        BOT_ROOM_REDIS_REQUIRED: 'false',
+        BOT_ROOM_DISABLE_REDIS: 'true',
+        AGENT_DATA_FILE: agentDataFile,
+        AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
+        AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
+        ...(options.env || {})
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString();
+    });
+
+    try {
+      await waitForServer(port);
+      lastStartupError = null;
+      break;
+    } catch (error) {
+      lastStartupError = error;
+      child.kill('SIGKILL');
+      await authFixture.cleanup();
+      child = null;
+      authFixture = null;
+
+      if (!String(stderr).includes('EADDRINUSE') || attempt === maxAttempts - 1) {
+        rmSync(tempDir, { recursive: true, force: true });
+        throw new Error(`${error.message}\n${stderr}`);
+      }
+    }
+  }
+
+  if (lastStartupError || !child || !authFixture) {
+    rmSync(tempDir, { recursive: true, force: true });
+    throw new Error(`chat server failed to start after ${maxAttempts} attempts`);
   }
 
   const cookieJar = new Map();
