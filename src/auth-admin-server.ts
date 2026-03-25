@@ -19,6 +19,7 @@ import {
   updateAgentStore,
   validateAgentConfig
 } from './agent-config-store';
+import { buildProfessionalAgentPrompt, isProfessionalAgentName } from './professional-agent-prompts';
 
 type UserRecord = {
   username: string;
@@ -203,7 +204,17 @@ function parseApplyMode(input?: string | null): ApplyMode {
   return input === 'after_chat' ? 'after_chat' : 'immediate';
 }
 
-function parseAgentPath(pathname: string): { name: string; action: 'base' | 'prompt' } | null {
+function parseAgentPath(pathname: string): { name: string; action: 'base' | 'prompt' | 'restore-template' | 'template' } | null {
+  const templateMatch = pathname.match(/^\/api\/agents\/([^/]+)\/prompt\/template$/);
+  if (templateMatch) {
+    return { name: decodeURIComponent(templateMatch[1]), action: 'template' };
+  }
+
+  const restoreMatch = pathname.match(/^\/api\/agents\/([^/]+)\/prompt\/restore-template$/);
+  if (restoreMatch) {
+    return { name: decodeURIComponent(restoreMatch[1]), action: 'restore-template' };
+  }
+
   const promptMatch = pathname.match(/^\/api\/agents\/([^/]+)\/prompt$/);
   if (promptMatch) {
     return { name: decodeURIComponent(promptMatch[1]), action: 'prompt' };
@@ -451,6 +462,74 @@ const server = http.createServer(async (req, res) => {
       });
       saveAgentStore(AGENT_DATA_FILE, next);
       sendJson(res, 200, { success: true, applyMode });
+    } catch (error: unknown) {
+      const err = error as Error;
+      sendJson(res, 400, { error: err.message });
+    }
+    return;
+  }
+
+  if (agentPath && method === 'POST' && agentPath.action === 'restore-template') {
+    try {
+      const targetName = agentPath.name;
+      if (!isProfessionalAgentName(targetName)) {
+        sendJson(res, 400, { error: '该智能体暂无可恢复的共享模板提示词' });
+        return;
+      }
+
+      const body = await parseBody<{ applyMode?: ApplyMode }>(req);
+      const applyMode = parseApplyMode(body.applyMode);
+      const restoredPrompt = buildProfessionalAgentPrompt(targetName);
+
+      const store = loadAgentStore(AGENT_DATA_FILE);
+      const next = updateAgentStore(store, applyMode, agents => {
+        const index = agents.findIndex(agent => agent.name === targetName);
+        if (index === -1) {
+          throw new Error('智能体不存在');
+        }
+        const current = agents[index];
+        const updated: AIAgentConfig = {
+          ...current,
+          systemPrompt: restoredPrompt
+        };
+        const validationError = validateAgentConfig(updated);
+        if (validationError) {
+          throw new Error(validationError);
+        }
+        const cloned = [...agents];
+        cloned[index] = updated;
+        return cloned;
+      });
+      saveAgentStore(AGENT_DATA_FILE, next);
+      sendJson(res, 200, { success: true, applyMode, systemPrompt: restoredPrompt });
+    } catch (error: unknown) {
+      const err = error as Error;
+      sendJson(res, 400, { error: err.message });
+    }
+    return;
+  }
+
+  if (agentPath && method === 'GET' && agentPath.action === 'template') {
+    try {
+      const targetName = agentPath.name;
+      if (!isProfessionalAgentName(targetName)) {
+        sendJson(res, 400, { error: '该智能体暂无可预览的共享模板提示词' });
+        return;
+      }
+
+      const store = loadAgentStore(AGENT_DATA_FILE);
+      const current = store.activeAgents.find(agent => agent.name === targetName);
+      if (!current) {
+        sendJson(res, 404, { error: '智能体不存在' });
+        return;
+      }
+
+      const templatePrompt = buildProfessionalAgentPrompt(targetName);
+      sendJson(res, 200, {
+        success: true,
+        currentPrompt: current.systemPrompt || '',
+        templatePrompt
+      });
     } catch (error: unknown) {
       const err = error as Error;
       sendJson(res, 400, { error: err.message });

@@ -1773,6 +1773,78 @@
       });
     }
 
+    function clearResumeChainNotice() {
+      const noticeEl = document.getElementById('resumeChainNotice');
+      if (noticeEl) {
+        noticeEl.remove();
+      }
+    }
+
+    function showResumeChainNotice() {
+      clearResumeChainNotice();
+      appendMessageMarkup(`
+        <div class="message message--assistant" id="resumeChainNotice">
+          <div class="message__avatar">🧩</div>
+          <div class="message__content">
+            <div class="message__sender">系统</div>
+            <div class="message__text message__text--markdown">本次对话已收到部分回复，连接已中断。</div>
+            <div class="message__blocks">
+              <button class="btn-switch" onclick="window.resumePendingChain && window.resumePendingChain()">继续剩余执行</button>
+            </div>
+          </div>
+        </div>
+      `);
+    }
+
+    async function resumePendingChain() {
+      if (isLoading) return;
+
+      clearResumeChainNotice();
+      isLoading = true;
+      sendBtnEl.disabled = true;
+      sendBtnEl.textContent = '...';
+      statusEl.textContent = '继续执行剩余链路...';
+
+      try {
+        const response = await fetch('/api/chat-resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({})
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (Array.isArray(data.aiMessages)) {
+          for (const aiMsg of data.aiMessages) {
+            history.push(aiMsg);
+            addMessage(aiMsg);
+          }
+        }
+        currentAgent = data.currentAgent || null;
+        currentAgentWillExpire = false;
+        updateCurrentAgentUI();
+        showSystemNotice(data.notice);
+        statusEl.textContent = '已连接';
+      } catch (error) {
+        console.error('继续剩余执行失败:', error);
+        statusEl.textContent = '连接失败';
+        showResumeChainNotice();
+        addMessage({
+          role: 'assistant',
+          sender: '系统',
+          text: `❌ 继续剩余执行失败: ${error.message}`
+        });
+      } finally {
+        isLoading = false;
+        sendBtnEl.disabled = false;
+        sendBtnEl.textContent = '发送';
+      }
+    }
+
     function escapeHtml(text) {
       if (!text) return '';
       const div = document.createElement('div');
@@ -1900,6 +1972,7 @@
 
       userInputEl.value = '';
       resizeUserInput();
+      clearResumeChainNotice();
 
       const userMsg = { role: 'user', sender: '用户', text: text };
       addMessage(userMsg);
@@ -1911,6 +1984,7 @@
       statusEl.textContent = '发送中...';
 
       const thinkingAgents = new Set();
+      let streamReceivedAgentMessage = false;
 
       try {
         const response = await fetch('/api/chat-stream', {
@@ -1953,6 +2027,7 @@
                   statusEl.textContent = `${agentName} 思考中...`;
                   showThinkingIndicator(agentName);
                 } else if (eventType === 'agent_message') {
+                  streamReceivedAgentMessage = true;
                   thinkingAgents.delete(data.sender);
                   hideThinkingIndicator(data.sender);
                   history.push(data);
@@ -1983,15 +2058,20 @@
 
       } catch (error) {
         console.error('发送失败:', error);
-        statusEl.textContent = '流式连接失败，尝试降级...';
-        const recovered = await recoverViaDirectChat(text);
-        if (!recovered) {
-          statusEl.textContent = '连接失败';
-          addMessage({
-            role: 'assistant',
-            sender: '系统',
-            text: `❌ 发送失败: ${error.message}`
-          });
+        if (!streamReceivedAgentMessage) {
+          statusEl.textContent = '流式连接失败，尝试降级...';
+          const recovered = await recoverViaDirectChat(text);
+          if (!recovered) {
+            statusEl.textContent = '连接失败';
+            addMessage({
+              role: 'assistant',
+              sender: '系统',
+              text: `❌ 发送失败: ${error.message}`
+            });
+          }
+        } else {
+          statusEl.textContent = '连接中断';
+          showResumeChainNotice();
         }
       } finally {
         isLoading = false;
@@ -2088,6 +2168,7 @@
     window.logout = logout;
     window.clearHistory = clearHistory;
     window.sendMessage = sendMessage;
+    window.resumePendingChain = resumePendingChain;
     window.switchAgent = switchAgent;
     window.applyAgentWorkdir = applyAgentWorkdir;
     window.toggleSessionAgent = toggleSessionAgent;

@@ -55,6 +55,8 @@ interface UserChatSession {
   agentWorkdirs?: Record<string, string>;
   agentChainMaxHops?: number;
   agentChainMaxCallsPerAgent?: number | null;
+  pendingAgentTasks?: PendingAgentDispatchTask[];
+  pendingVisibleMessages?: Message[];
   createdAt: number;
   updatedAt: number;
 }
@@ -68,6 +70,10 @@ interface AgentDispatchTask {
   agentName: string;
   prompt: string;
   includeHistory: boolean;
+}
+
+interface PendingAgentDispatchTask extends AgentDispatchTask {
+  dispatchKind: 'initial' | 'chained';
 }
 
 // ============================================
@@ -282,6 +288,12 @@ function buildSessionResponse(session: UserChatSession): NormalizedUserChatSessi
     history: Array.isArray(session.history) ? [...session.history] : [],
     enabledAgents: Array.isArray(session.enabledAgents) ? [...session.enabledAgents] : undefined,
     agentWorkdirs: session.agentWorkdirs ? { ...session.agentWorkdirs } : {},
+    pendingAgentTasks: Array.isArray(session.pendingAgentTasks)
+      ? session.pendingAgentTasks.map(task => ({ ...task }))
+      : undefined,
+    pendingVisibleMessages: Array.isArray(session.pendingVisibleMessages)
+      ? session.pendingVisibleMessages.map(message => ({ ...message }))
+      : undefined,
     agentChainMaxHops: normalized.agentChainMaxHops,
     agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent
   };
@@ -396,6 +408,19 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
           agentWorkdirs: session.agentWorkdirs && typeof session.agentWorkdirs === 'object'
             ? session.agentWorkdirs
             : {},
+          pendingAgentTasks: Array.isArray(session.pendingAgentTasks)
+            ? session.pendingAgentTasks
+              .filter(task => task && typeof task.agentName === 'string' && typeof task.prompt === 'string')
+              .map(task => ({
+                agentName: task.agentName,
+                prompt: task.prompt,
+                includeHistory: task.includeHistory !== false,
+                dispatchKind: task.dispatchKind === 'chained' ? 'chained' : 'initial'
+              }))
+            : undefined,
+          pendingVisibleMessages: Array.isArray(session.pendingVisibleMessages)
+            ? session.pendingVisibleMessages.filter(message => message && typeof message.id === 'string')
+            : undefined,
           ...normalizeSessionChainSettings(session),
           createdAt: Number(session.createdAt) || Date.now(),
           updatedAt: Number(session.updatedAt) || Date.now()
@@ -897,16 +922,28 @@ async function executeAgentTurn(params: {
   stream: boolean;
   onThinking?: (agentName: string) => void;
   onMessage?: (message: Message) => void;
-}): Promise<Message[]> {
-  const { userKey, session, initialTasks, stream, onThinking, onMessage } = params;
-  type QueuedAgentDispatchTask = AgentDispatchTask & { dispatchKind: 'initial' | 'chained' };
-  const queue: QueuedAgentDispatchTask[] = initialTasks.map(task => ({ ...task, dispatchKind: 'initial' }));
+  shouldContinue?: () => boolean;
+  pendingTasks?: PendingAgentDispatchTask[];
+}): Promise<{ aiMessages: Message[]; pendingTasks: PendingAgentDispatchTask[] }> {
+  const { userKey, session, initialTasks, stream, onThinking, onMessage, shouldContinue } = params;
+  const queue: PendingAgentDispatchTask[] = Array.isArray(params.pendingTasks)
+    ? params.pendingTasks.map(task => ({ ...task }))
+    : initialTasks.map(task => ({ ...task, dispatchKind: 'initial' }));
   const aiMessages: Message[] = [];
   const callCounts = new Map<string, number>();
   const { agentChainMaxHops, agentChainMaxCallsPerAgent } = normalizeSessionChainSettings(session);
   let chainedCalls = 0;
+  let streamStopped = false;
+
+  const canContinue = () => shouldContinue ? shouldContinue() : true;
 
   while (queue.length > 0) {
+    if (!canContinue()) {
+      streamStopped = true;
+      appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=stream_stop reason=client_disconnect`);
+      break;
+    }
+
     const task = queue.shift()!;
     if (task.dispatchKind === 'chained' && chainedCalls >= agentChainMaxHops) {
       appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=chain_stop reason=max_hops hops=${agentChainMaxHops}`);
@@ -943,31 +980,56 @@ async function executeAgentTurn(params: {
       aiMessages.push(message);
       touchSession(session);
       onMessage?.(message);
+      if (stream) {
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      const pendingMentionsToQueue: PendingAgentDispatchTask[] = [];
 
       for (const mention of chainedMentions) {
         const queuedChainedCalls = queue.filter(item => item.dispatchKind === 'chained').length;
-        if (chainedCalls + queuedChainedCalls >= agentChainMaxHops) {
+        if (chainedCalls + queuedChainedCalls + pendingMentionsToQueue.length >= agentChainMaxHops) {
           break;
         }
 
         const queuedCalls = callCounts.get(mention) || 0;
-        const pendingCalls = queue.filter(item => item.agentName === mention).length;
+        const pendingCalls = queue.filter(item => item.agentName === mention).length
+          + pendingMentionsToQueue.filter(item => item.agentName === mention).length;
         if (agentChainMaxCallsPerAgent !== null && queuedCalls + pendingCalls >= agentChainMaxCallsPerAgent) {
           appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${mention} stage=chain_skip reason=max_calls_pending count=${queuedCalls} pending=${pendingCalls}`);
           continue;
         }
 
-        queue.push({
+        pendingMentionsToQueue.push({
           agentName: mention,
           prompt: message.text || '',
           includeHistory: true,
           dispatchKind: 'chained'
         });
       }
+
+      if (!canContinue()) {
+        streamStopped = true;
+        queue.unshift(...pendingMentionsToQueue);
+        appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=stream_stop_after_message reason=client_disconnect`);
+        break;
+      }
+
+      queue.push(...pendingMentionsToQueue);
+
+      if (streamStopped) {
+        break;
+      }
+    }
+
+    if (streamStopped) {
+      break;
     }
   }
 
-  return aiMessages;
+  return {
+    aiMessages,
+    pendingTasks: streamStopped ? queue.map(task => ({ ...task })) : []
+  };
 }
 
 function getSessionById(sessionId: string): UserChatSession | null {
@@ -1571,6 +1633,8 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
     const sessionId = `${userKey}::${session.id}`;
     const userHistory = session.history;
     const currentAgent = expireDisabledCurrentAgent(userKey, session);
+    session.pendingAgentTasks = undefined;
+    session.pendingVisibleMessages = undefined;
 
     console.log(`\n[Chat] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
 
@@ -1622,7 +1686,8 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       return;
     }
 
-    const aiMessages = await executeAgentTurn({
+    session.pendingAgentTasks = undefined;
+    const { aiMessages } = await executeAgentTurn({
       userKey,
       session,
       initialTasks: agentsToRespond.map(agentName => ({
@@ -1682,6 +1747,8 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     const sessionId = `${userKey}::${session.id}`;
     const userHistory = session.history;
     const currentAgent = expireDisabledCurrentAgent(userKey, session);
+    session.pendingAgentTasks = undefined;
+    session.pendingVisibleMessages = undefined;
 
     console.log(`\n[ChatStream] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
 
@@ -1726,14 +1793,34 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       'X-Accel-Buffering': 'no' // 禁用 Nginx 缓冲
     });
 
+    let streamClosed = false;
+    let streamCompleted = false;
+    const undeliveredMessages: Message[] = [];
+    const markStreamClosed = (source: 'req_aborted' | 'req_close' | 'res_close') => {
+      if (streamClosed) {
+        return;
+      }
+      streamClosed = true;
+      if (!streamCompleted) {
+        appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=stream_disconnect reason=client_disconnect source=${source}`);
+      }
+    };
+    req.on('aborted', () => markStreamClosed('req_aborted'));
+    req.on('close', () => markStreamClosed('req_close'));
+    res.on('close', () => markStreamClosed('res_close'));
+
     // 发送用户消息事件
     const sendEvent = (event: string, data: unknown) => {
+      if (streamClosed || res.writableEnded || res.destroyed) {
+        return false;
+      }
       res.write(`event: ${event}\n`);
       res.write(`data: ${JSON.stringify(data)}\n\n`);
       // 强制刷新缓冲区，确保数据立即发送
       if (typeof (res as any).flush === 'function') {
         (res as any).flush();
       }
+      return true;
     };
 
     sendEvent('user_message', userMessage);
@@ -1742,11 +1829,13 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     if (agentsToRespond.length === 0) {
       sendEvent('notice', { notice: buildNoEnabledAgentsNotice(session, ignoredMentions) });
       sendEvent('done', { currentAgent: getUserCurrentAgent(userKey, session.id) });
+      streamCompleted = true;
       res.end();
       return;
     }
 
-    await executeAgentTurn({
+    session.pendingAgentTasks = undefined;
+    const executionResult = await executeAgentTurn({
       userKey,
       session,
       initialTasks: agentsToRespond.map(agentName => ({
@@ -1755,19 +1844,34 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
         includeHistory: mentions.length === 0
       })),
       stream: true,
+      shouldContinue: () => !streamClosed && !res.writableEnded && !res.destroyed,
       onThinking: (agentName) => {
         sendEvent('agent_thinking', { agent: agentName });
       },
       onMessage: (visibleMessage) => {
-        sendEvent('agent_message', visibleMessage);
+        const delivered = sendEvent('agent_message', visibleMessage);
+        if (!delivered) {
+          undeliveredMessages.push(visibleMessage);
+        }
       }
     });
+    session.pendingAgentTasks = executionResult.pendingTasks.length > 0
+      ? executionResult.pendingTasks
+      : undefined;
+    session.pendingVisibleMessages = undeliveredMessages.length > 0
+      ? undeliveredMessages
+      : undefined;
+
+    if (streamClosed || res.writableEnded || res.destroyed) {
+      return;
+    }
 
     // 发送完成事件
     if (ignoredMentions.length > 0) {
       sendEvent('notice', { notice: `${ignoredMentions.join('、')} 已停用，未参与本次对话。` });
     }
     sendEvent('done', { currentAgent: getUserCurrentAgent(userKey, session.id) });
+    streamCompleted = true;
     res.end();
 
   } catch (error: unknown) {
@@ -1782,6 +1886,57 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
       res.end();
     }
+  }
+}
+
+async function handleResumePendingChat(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    syncAgentsFromStore();
+    const { userKey, session } = resolveChatSession(req);
+    const pendingVisibleMessages = Array.isArray(session.pendingVisibleMessages)
+      ? session.pendingVisibleMessages.map(message => ({ ...message }))
+      : [];
+    const pendingTasks = Array.isArray(session.pendingAgentTasks)
+      ? session.pendingAgentTasks.map(task => ({ ...task }))
+      : [];
+
+    if (pendingVisibleMessages.length === 0 && pendingTasks.length === 0) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        resumed: false,
+        aiMessages: [],
+        currentAgent: getUserCurrentAgent(userKey, session.id),
+        notice: '当前没有可继续执行的剩余链路。'
+      }));
+      return;
+    }
+
+    session.pendingVisibleMessages = undefined;
+    session.pendingAgentTasks = undefined;
+    const { aiMessages, pendingTasks: remainingTasks } = await executeAgentTurn({
+      userKey,
+      session,
+      initialTasks: [],
+      pendingTasks,
+      stream: false
+    });
+    session.pendingAgentTasks = remainingTasks.length > 0 ? remainingTasks : undefined;
+    const resumedMessages = [...pendingVisibleMessages, ...aiMessages];
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      resumed: true,
+      aiMessages: resumedMessages,
+      currentAgent: getUserCurrentAgent(userKey, session.id),
+      notice: remainingTasks.length > 0 ? '仍有未完成链路，可再次继续执行。' : undefined
+    }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('[ChatResume Error]', err);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
   }
 }
 
@@ -2330,6 +2485,8 @@ const server = http.createServer(async (req, res) => {
     await handleSendMessage(req, res);
   } else if (requestUrl.pathname === '/api/chat-stream' && method === 'POST') {
     await handleChatStream(req, res);
+  } else if (requestUrl.pathname === '/api/chat-resume' && method === 'POST') {
+    await handleResumePendingChat(req, res);
   } else if (requestUrl.pathname === '/api/history' && method === 'GET') {
     handleGetHistory(req, res);
   } else if (requestUrl.pathname === '/api/clear' && method === 'POST') {
@@ -2408,6 +2565,7 @@ async function startServer(): Promise<void> {
   console.log('API 端点:');
   console.log('  GET  /api/agents       - 获取智能体列表');
   console.log('  POST /api/chat        - 发送消息');
+  console.log('  POST /api/chat-resume - 继续执行中断后剩余链路');
   console.log('  GET  /api/history    - 获取历史记录');
   console.log('  POST /api/clear      - 清空历史');
   console.log('  POST /api/login      - 登录鉴权');
