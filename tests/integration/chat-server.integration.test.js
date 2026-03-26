@@ -60,6 +60,63 @@ EOF
   chmodSync(fakeClaude, 0o755);
 }
 
+test('统一 agent 调用入口会通过 CLI provider 返回结果', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-cli-'));
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+printf '%s\n' '{"output_text":"CLI provider reply"}'
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${tempDir}:${originalPath || ''}`;
+
+  try {
+    const { invokeAgent } = require('../../dist/agent-invoker.js');
+    const result = await invokeAgent({
+      userMessage: '你好',
+      agent: {
+        name: 'Alice',
+        avatar: '🤖',
+        systemPrompt: '你是 Alice',
+        color: '#fff',
+        executionMode: 'cli',
+        cliName: 'claude'
+      },
+      history: [],
+      includeHistory: true
+    });
+
+    assert.equal(result.text, 'CLI provider reply');
+    assert.deepEqual(result.blocks, []);
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('统一 agent 调用入口在 api 模式下会保留未实现接缝', async () => {
+  const { invokeAgent } = require('../../dist/agent-invoker.js');
+
+  await assert.rejects(
+    () => invokeAgent({
+      userMessage: '你好',
+      agent: {
+        name: 'Alice',
+        avatar: '🤖',
+        systemPrompt: '你是 Alice',
+        color: '#fff',
+        executionMode: 'api',
+        apiConnectionId: 'conn-1',
+        apiModel: 'gpt-test'
+      },
+      history: [],
+      includeHistory: true
+    }),
+    /API provider not implemented yet/
+  );
+});
+
 test('未登录时聊天相关接口会返回 401，登录后可正常聊天', async () => {
   const fixture = await createChatServerFixture();
 
