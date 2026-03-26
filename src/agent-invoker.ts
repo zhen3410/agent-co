@@ -1,5 +1,8 @@
+import * as path from 'path';
 import type { AIAgent, AgentCliName, AgentExecutionMode, AgentInvokeResult, Message } from './types';
+import { loadApiConnectionStore } from './api-connection-store';
 import { invokeCliProvider } from './providers/cli-provider';
+import { invokeOpenAICompatibleProvider } from './providers/openai-compatible-provider';
 
 export interface InvokeAgentParams {
   userMessage: string;
@@ -37,11 +40,35 @@ function normalizeInvokeTarget(agent: AIAgent): NormalizedInvokeTarget {
   };
 }
 
+function resolveModelConnectionDataFile(): string {
+  const agentDataFile = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
+  return process.env.MODEL_CONNECTION_DATA_FILE || path.join(path.dirname(agentDataFile), 'api-connections.json');
+}
+
 export async function invokeAgent(params: InvokeAgentParams): Promise<AgentInvokeResult> {
   const target = normalizeInvokeTarget(params.agent);
 
   if (target.executionMode === 'api') {
-    throw new Error('API provider not implemented yet');
+    const apiConnectionId = params.agent.apiConnectionId?.trim();
+    if (!apiConnectionId) {
+      throw new Error(`Agent ${params.agent.name} 缺少 apiConnectionId 配置`);
+    }
+    if (!params.agent.apiModel?.trim()) {
+      throw new Error(`Agent ${params.agent.name} 缺少 apiModel 配置`);
+    }
+
+    const store = loadApiConnectionStore(resolveModelConnectionDataFile());
+    const connection = store.apiConnections.find(item => item.id === apiConnectionId);
+
+    if (!connection) {
+      throw new Error(`找不到 API 连接配置：${apiConnectionId}`);
+    }
+
+    if (!connection.enabled) {
+      throw new Error(`API 连接已停用：${apiConnectionId}`);
+    }
+
+    return invokeOpenAICompatibleProvider(params, connection);
   }
 
   return invokeCliProvider({
