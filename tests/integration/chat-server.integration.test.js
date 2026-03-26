@@ -117,6 +117,46 @@ test('统一 agent 调用入口在 api 模式下会保留未实现接缝', async
   );
 });
 
+test('统一 agent 调用入口会优先按 cliName 路由到 Codex CLI', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-codex-'));
+  const fakeClaude = join(tempDir, 'claude');
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+printf '%s\n' '{"output_text":"CLAUDE path should not be used"}'
+`, 'utf8');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '%s\n' '{"output_text":"CODEX provider reply"}'
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+  chmodSync(fakeCodex, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${tempDir}:${originalPath || ''}`;
+
+  try {
+    const { invokeAgent } = require('../../dist/agent-invoker.js');
+    const result = await invokeAgent({
+      userMessage: '你好',
+      agent: {
+        name: 'Alice',
+        avatar: '🤖',
+        systemPrompt: '你是 Alice',
+        color: '#fff',
+        executionMode: 'cli',
+        cliName: 'codex',
+        cli: 'claude'
+      },
+      history: [],
+      includeHistory: true
+    });
+
+    assert.equal(result.text, 'CODEX provider reply');
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('未登录时聊天相关接口会返回 401，登录后可正常聊天', async () => {
   const fixture = await createChatServerFixture();
 

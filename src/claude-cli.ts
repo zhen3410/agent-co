@@ -146,6 +146,10 @@ function buildPrompt(userMessage: string, agent: AIAgent, history: Message[], in
 }
 
 function resolveCli(agent: AIAgent): CliKind {
+  if (agent.cliName === 'codex' || agent.cliName === 'claude') {
+    return agent.cliName;
+  }
+
   return agent.cli === 'codex' ? 'codex' : 'claude';
 }
 

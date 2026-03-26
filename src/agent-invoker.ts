@@ -1,4 +1,4 @@
-import type { AIAgent, AgentInvokeResult, Message } from './types';
+import type { AIAgent, AgentCliName, AgentExecutionMode, AgentInvokeResult, Message } from './types';
 import { invokeCliProvider } from './providers/cli-provider';
 
 export interface InvokeAgentParams {
@@ -9,20 +9,48 @@ export interface InvokeAgentParams {
   extraEnv?: Record<string, string>;
 }
 
-function resolveExecutionMode(agent: AIAgent): 'cli' | 'api' {
-  if (agent.executionMode === 'api') {
-    return 'api';
+interface NormalizedInvokeTarget {
+  executionMode: AgentExecutionMode;
+  cliName?: AgentCliName;
+}
+
+function normalizeCliName(agent: AIAgent): AgentCliName | undefined {
+  if (agent.cliName === 'claude' || agent.cliName === 'codex') {
+    return agent.cliName;
   }
 
-  return 'cli';
+  if (agent.cli === 'claude' || agent.cli === 'codex') {
+    return agent.cli;
+  }
+
+  return undefined;
+}
+
+function normalizeInvokeTarget(agent: AIAgent): NormalizedInvokeTarget {
+  if (agent.executionMode === 'api') {
+    return { executionMode: 'api' };
+  }
+
+  return {
+    executionMode: 'cli',
+    cliName: normalizeCliName(agent) || 'claude'
+  };
 }
 
 export async function invokeAgent(params: InvokeAgentParams): Promise<AgentInvokeResult> {
-  const executionMode = resolveExecutionMode(params.agent);
+  const target = normalizeInvokeTarget(params.agent);
 
-  if (executionMode === 'api') {
+  if (target.executionMode === 'api') {
     throw new Error('API provider not implemented yet');
   }
 
-  return invokeCliProvider(params);
+  return invokeCliProvider({
+    ...params,
+    agent: {
+      ...params.agent,
+      executionMode: 'cli',
+      cliName: target.cliName,
+      cli: target.cliName
+    }
+  });
 }
