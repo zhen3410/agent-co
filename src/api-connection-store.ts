@@ -32,6 +32,26 @@ function isPositiveFiniteTimestamp(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1' || normalized === '[::1]';
+}
+
+export function isAllowedCredentialedBaseURL(baseURL: string): boolean {
+  try {
+    const parsed = new URL(baseURL);
+    if (parsed.protocol === 'https:') {
+      return true;
+    }
+    if (parsed.protocol === 'http:') {
+      return isLoopbackHostname(parsed.hostname);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export function maskApiKey(apiKey: string): string {
   const trimmed = toStringOrEmpty(apiKey);
 
@@ -132,6 +152,9 @@ export function validateApiConnectionConfig(config: ApiConnectionConfig): string
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return 'baseURL 必须是合法 URL';
     }
+    if (!isAllowedCredentialedBaseURL(parsed.toString())) {
+      return 'baseURL 仅支持 https，若使用 http 则必须为 localhost、127.0.0.1 或 ::1';
+    }
   } catch {
     return 'baseURL 必须是合法 URL';
   }
@@ -181,9 +204,19 @@ export function loadApiConnectionStore(filePath: string): ApiConnectionStore {
       ? parsed.connections
       : [];
 
+  const seenIds = new Set<string>();
   const apiConnections = source
     .map(normalizeLoadedApiConnection)
-    .filter((item): item is ApiConnectionConfig => Boolean(item));
+    .filter((item): item is ApiConnectionConfig => {
+      if (!item) {
+        return false;
+      }
+      if (seenIds.has(item.id)) {
+        return false;
+      }
+      seenIds.add(item.id);
+      return true;
+    });
 
   return {
     apiConnections,

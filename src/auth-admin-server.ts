@@ -12,6 +12,7 @@ import * as path from 'path';
 import { URL } from 'url';
 import { AIAgentConfig } from './types';
 import {
+  isAllowedCredentialedBaseURL,
   isApiConnectionReferenced,
   loadApiConnectionStore,
   normalizeApiConnectionConfig,
@@ -273,36 +274,15 @@ function serializeModelConnection(connection: {
   };
 }
 
-function extractErrorSummary(rawText: string): string {
-  const text = rawText.trim();
-  if (!text) {
-    return '';
+function buildUpstreamErrorSummary(statusCode?: number): string {
+  if (!statusCode) {
+    return '连接测试失败';
   }
 
-  try {
-    const parsed = JSON.parse(text) as {
-      error?: string | { message?: string };
-      message?: string;
-    };
-    if (typeof parsed.error === 'string' && parsed.error.trim()) {
-      return parsed.error.trim();
-    }
-    if (
-      parsed.error
-      && typeof parsed.error === 'object'
-      && typeof parsed.error.message === 'string'
-      && parsed.error.message.trim()
-    ) {
-      return parsed.error.message.trim();
-    }
-    if (typeof parsed.message === 'string' && parsed.message.trim()) {
-      return parsed.message.trim();
-    }
-  } catch {
-    // ignore non-JSON body
-  }
-
-  return text.slice(0, 200);
+  const reason = http.STATUS_CODES[statusCode];
+  return reason
+    ? `上游服务返回 ${statusCode} ${reason}`
+    : `上游服务返回状态码 ${statusCode}`;
 }
 
 function testModelConnection(baseURL: string, apiKey: string): Promise<{ success: boolean; statusCode?: number; error?: string }> {
@@ -312,6 +292,14 @@ function testModelConnection(baseURL: string, apiKey: string): Promise<{ success
       endpoint = new URL('/models', `${baseURL.replace(/\/+$/, '')}/`);
     } catch {
       resolve({ success: false, error: 'baseURL 必须是合法 URL' });
+      return;
+    }
+
+    if (!isAllowedCredentialedBaseURL(endpoint.toString())) {
+      resolve({
+        success: false,
+        error: 'baseURL 仅支持 https，若使用 http 则必须为 localhost、127.0.0.1 或 ::1'
+      });
       return;
     }
 
@@ -333,17 +321,17 @@ function testModelConnection(baseURL: string, apiKey: string): Promise<{ success
           resolve({ success: true, statusCode });
           return;
         }
-        const summary = extractErrorSummary(body);
         resolve({
           success: false,
           statusCode,
-          error: summary || `请求失败，状态码 ${statusCode}`
+          error: buildUpstreamErrorSummary(statusCode)
         });
       });
     });
 
     request.on('error', error => {
-      resolve({ success: false, error: error.message });
+      const summary = error.message.includes('超时') ? '连接测试超时' : '连接测试失败';
+      resolve({ success: false, error: summary });
     });
     request.setTimeout(5000, () => {
       request.destroy(new Error('连接测试超时'));
@@ -546,7 +534,6 @@ const server = http.createServer(async (req, res) => {
   if (method === 'POST' && pathname === '/api/model-connections') {
     try {
       const body = await parseBody<{
-        id?: string;
         name?: string;
         baseURL?: string;
         baseUrl?: string;
@@ -554,7 +541,10 @@ const server = http.createServer(async (req, res) => {
         enabled?: boolean;
       }>(req);
       const store = loadApiConnectionStore(MODEL_CONNECTION_DATA_FILE);
-      const normalized = normalizeApiConnectionConfig(body);
+      const normalized = normalizeApiConnectionConfig({
+        ...body,
+        id: undefined
+      });
       const validationError = validateApiConnectionConfig(normalized)
         || validateApiConnectionNameUnique(store, normalized.name);
       if (validationError) {
@@ -583,6 +573,7 @@ const server = http.createServer(async (req, res) => {
   if (modelConnectionPath && method === 'PUT' && modelConnectionPath.action === 'base') {
     try {
       const body = await parseBody<{
+        id?: string;
         name?: string;
         baseURL?: string;
         baseUrl?: string;

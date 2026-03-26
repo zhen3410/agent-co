@@ -454,6 +454,53 @@ test('POST/PUT /api/model-connections 可创建和更新且不回显明文 key',
   assert.equal(listed.body.connections[0].apiKey, undefined);
 });
 
+test('POST /api/model-connections 会忽略客户端提供的 id，避免产生歧义或重复 ID', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const first = await fixture.request('/api/model-connections', {
+    method: 'POST',
+    headers,
+    body: {
+      id: 'client-supplied-id',
+      name: 'Client ID Gateway A',
+      baseURL: 'https://api.example.com/v1',
+      apiKey: 'sk-client-a-1234567890abcdef',
+      enabled: true
+    }
+  });
+  assert.equal(first.status, 201);
+  assert.notEqual(first.body.connection.id, 'client-supplied-id');
+
+  const second = await fixture.request('/api/model-connections', {
+    method: 'POST',
+    headers,
+    body: {
+      id: 'client-supplied-id',
+      name: 'Client ID Gateway B',
+      baseURL: 'https://api.example.com/v2',
+      apiKey: 'sk-client-b-1234567890abcdef',
+      enabled: true
+    }
+  });
+  assert.equal(second.status, 201);
+  assert.notEqual(second.body.connection.id, 'client-supplied-id');
+  assert.notEqual(second.body.connection.id, first.body.connection.id);
+
+  const update = await fixture.request(`/api/model-connections/${first.body.connection.id}`, {
+    method: 'PUT',
+    headers,
+    body: {
+      id: second.body.connection.id,
+      name: 'Client ID Gateway A Updated',
+      baseURL: 'https://api.example.com/v3',
+      apiKey: 'sk-client-a-updated-1234567890',
+      enabled: false
+    }
+  });
+  assert.equal(update.status, 200);
+  assert.equal(update.body.connection.id, first.body.connection.id);
+});
+
 test('DELETE /api/model-connections/:id 在未被引用时成功删除', async () => {
   const headers = { 'x-admin-token': fixture.adminToken };
 
@@ -582,6 +629,86 @@ test('POST /api/model-connections/:id/test 可返回测试成功和失败', asyn
   } finally {
     await okStub.close();
     await failStub.close();
+  }
+});
+
+test('POST /api/model-connections 会拒绝非本地明文 http baseURL，但允许 localhost 测试桩', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const externalHttp = await fixture.request('/api/model-connections', {
+    method: 'POST',
+    headers,
+    body: {
+      name: 'Insecure Gateway',
+      baseURL: 'http://example.com/v1',
+      apiKey: 'sk-insecure-1234567890abcdef',
+      enabled: true
+    }
+  });
+  assert.equal(externalHttp.status, 400);
+  assert.match(externalHttp.body.error, /https|localhost|127\.0\.0\.1|::1|本地/i);
+
+  const localStub = await createModelTestStub((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ data: [] }));
+  });
+
+  try {
+    const localHttp = await fixture.request('/api/model-connections', {
+      method: 'POST',
+      headers,
+      body: {
+        name: 'Local Gateway',
+        baseURL: localStub.baseURL,
+        apiKey: 'sk-local-1234567890abcdef',
+        enabled: true
+      }
+    });
+    assert.equal(localHttp.status, 201);
+  } finally {
+    await localStub.close();
+  }
+});
+
+test('POST /api/model-connections/:id/test 会对上游错误做脱敏摘要，不透传敏感响应体', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+  const leakStub = await createModelTestStub((req, res) => {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: {
+        message: 'bad api key: sk-live-secret-should-not-leak'
+      },
+      details: 'tenant=prod-secret'
+    }));
+  });
+
+  try {
+    const create = await fixture.request('/api/model-connections', {
+      method: 'POST',
+      headers,
+      body: {
+        name: 'Leak Test Gateway',
+        baseURL: leakStub.baseURL,
+        apiKey: 'sk-leak-1234567890abcdef',
+        enabled: true
+      }
+    });
+    assert.equal(create.status, 201);
+
+    const tested = await fixture.request(`/api/model-connections/${create.body.connection.id}/test`, {
+      method: 'POST',
+      headers
+    });
+
+    assert.ok([400, 502].includes(tested.status));
+    assert.equal(tested.body.success, false);
+    assert.equal(tested.body.statusCode, 401);
+    assert.match(tested.body.error, /401|Unauthorized|请求失败/i);
+    assert.doesNotMatch(tested.body.error, /sk-live-secret-should-not-leak/);
+    assert.doesNotMatch(tested.body.error, /tenant=prod-secret/);
+    assert.doesNotMatch(JSON.stringify(tested.body), /sk-live-secret-should-not-leak/);
+  } finally {
+    await leakStub.close();
   }
 });
 
