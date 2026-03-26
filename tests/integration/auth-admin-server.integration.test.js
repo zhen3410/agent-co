@@ -1,5 +1,6 @@
 const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const { createServer } = require('node:http');
 const { mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -31,6 +32,24 @@ afterEach(async () => {
     fixture = null;
   }
 });
+
+async function createModelTestStub(handler) {
+  const server = createServer(handler);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+
+  const address = server.address();
+  return {
+    baseURL: `http://127.0.0.1:${address.port}`,
+    async close() {
+      await new Promise((resolve, reject) => {
+        server.close(error => (error ? reject(error) : resolve()));
+      });
+    }
+  };
+}
 
 test('默认账号可登录，错误密码会被拒绝', async () => {
   const ok = await fixture.request('/api/auth/verify', {
@@ -354,6 +373,294 @@ test('管理端可预览专业智能体的模板默认提示词而不覆盖当�
   const unchanged = after.body.agents.find(item => item.name === agentName);
   assert.ok(unchanged);
   assert.equal(unchanged.systemPrompt, current.systemPrompt, 'preview should not overwrite the stored prompt');
+});
+
+test('GET /api/model-connections 返回空列表，并在创建后返回已有列表', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const empty = await fixture.request('/api/model-connections', { headers });
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.body.connections, []);
+
+  const created = await fixture.request('/api/model-connections', {
+    method: 'POST',
+    headers,
+    body: {
+      name: 'OpenAI Gateway',
+      baseURL: 'https://api.example.com/v1/',
+      apiKey: 'sk-test-1234567890abcdef',
+      enabled: true
+    }
+  });
+
+  assert.equal(created.status, 201);
+  assert.equal(created.body.connection.name, 'OpenAI Gateway');
+  assert.equal(created.body.connection.baseURL, 'https://api.example.com/v1');
+  assert.equal(created.body.connection.apiKey, undefined);
+  assert.match(created.body.connection.apiKeyMasked, /\*/);
+
+  const listed = await fixture.request('/api/model-connections', { headers });
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.connections.length, 1);
+  assert.equal(listed.body.connections[0].name, 'OpenAI Gateway');
+  assert.equal(listed.body.connections[0].apiKey, undefined);
+  assert.match(listed.body.connections[0].apiKeyMasked, /\*/);
+});
+
+test('POST/PUT /api/model-connections 可创建和更新且不回显明文 key', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const create = await fixture.request('/api/model-connections', {
+    method: 'POST',
+    headers,
+    body: {
+      name: 'Primary Gateway',
+      baseURL: 'https://api.example.com/v1',
+      apiKey: 'sk-create-1234567890abcdef',
+      enabled: true
+    }
+  });
+
+  assert.equal(create.status, 201);
+  const connectionId = create.body.connection.id;
+  assert.ok(connectionId);
+  assert.equal(create.body.connection.apiKey, undefined);
+  assert.notEqual(create.body.connection.apiKeyMasked, 'sk-create-1234567890abcdef');
+
+  const update = await fixture.request(`/api/model-connections/${connectionId}`, {
+    method: 'PUT',
+    headers,
+    body: {
+      name: 'Updated Gateway',
+      baseURL: 'https://api.example.com/v2/',
+      apiKey: 'sk-update-abcdef1234567890',
+      enabled: false
+    }
+  });
+
+  assert.equal(update.status, 200);
+  assert.equal(update.body.connection.id, connectionId);
+  assert.equal(update.body.connection.name, 'Updated Gateway');
+  assert.equal(update.body.connection.baseURL, 'https://api.example.com/v2');
+  assert.equal(update.body.connection.enabled, false);
+  assert.equal(update.body.connection.apiKey, undefined);
+  assert.notEqual(update.body.connection.apiKeyMasked, 'sk-update-abcdef1234567890');
+
+  const listed = await fixture.request('/api/model-connections', { headers });
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.connections[0].name, 'Updated Gateway');
+  assert.equal(listed.body.connections[0].baseURL, 'https://api.example.com/v2');
+  assert.equal(listed.body.connections[0].enabled, false);
+  assert.equal(listed.body.connections[0].apiKey, undefined);
+});
+
+test('DELETE /api/model-connections/:id 在未被引用时成功删除', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const create = await fixture.request('/api/model-connections', {
+    method: 'POST',
+    headers,
+    body: {
+      name: 'Disposable Gateway',
+      baseURL: 'https://api.example.com/v1',
+      apiKey: 'sk-delete-1234567890abcdef',
+      enabled: true
+    }
+  });
+
+  const connectionId = create.body.connection.id;
+  const removed = await fixture.request(`/api/model-connections/${connectionId}`, {
+    method: 'DELETE',
+    headers
+  });
+
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.id, connectionId);
+
+  const listed = await fixture.request('/api/model-connections', { headers });
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.body.connections, []);
+});
+
+test('DELETE /api/model-connections/:id 在被 agent 引用时返回冲突', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const createConnection = await fixture.request('/api/model-connections', {
+    method: 'POST',
+    headers,
+    body: {
+      name: 'Referenced Gateway',
+      baseURL: 'https://api.example.com/v1',
+      apiKey: 'sk-ref-1234567890abcdef',
+      enabled: true
+    }
+  });
+  const connectionId = createConnection.body.connection.id;
+
+  const createAgent = await fixture.request('/api/agents', {
+    method: 'POST',
+    headers,
+    body: {
+      applyMode: 'immediate',
+      agent: {
+        name: 'ApiRunner',
+        avatar: '🤖',
+        color: '#2563eb',
+        personality: '通过 API 调用模型',
+        executionMode: 'api',
+        apiConnectionId: connectionId,
+        apiModel: 'gpt-4o-mini',
+        apiTemperature: 0.4,
+        apiMaxTokens: 512
+      }
+    }
+  });
+  assert.equal(createAgent.status, 201);
+
+  const removed = await fixture.request(`/api/model-connections/${connectionId}`, {
+    method: 'DELETE',
+    headers
+  });
+
+  assert.ok([400, 409].includes(removed.status));
+  assert.match(removed.body.error, /引用|使用|删除/);
+});
+
+test('POST /api/model-connections/:id/test 可返回测试成功和失败', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+  const okStub = await createModelTestStub((req, res) => {
+    assert.equal(req.url, '/models');
+    assert.equal(req.headers.authorization, 'Bearer sk-test-ok-1234567890');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ data: [] }));
+  });
+
+  const failStub = await createModelTestStub((req, res) => {
+    assert.equal(req.url, '/models');
+    assert.equal(req.headers.authorization, 'Bearer sk-test-fail-1234567890');
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'bad api key' } }));
+  });
+
+  try {
+    const okConnection = await fixture.request('/api/model-connections', {
+      method: 'POST',
+      headers,
+      body: {
+        name: 'OK Gateway',
+        baseURL: okStub.baseURL,
+        apiKey: 'sk-test-ok-1234567890',
+        enabled: true
+      }
+    });
+    const failConnection = await fixture.request('/api/model-connections', {
+      method: 'POST',
+      headers,
+      body: {
+        name: 'Fail Gateway',
+        baseURL: failStub.baseURL,
+        apiKey: 'sk-test-fail-1234567890',
+        enabled: true
+      }
+    });
+
+    const okTest = await fixture.request(`/api/model-connections/${okConnection.body.connection.id}/test`, {
+      method: 'POST',
+      headers
+    });
+    assert.equal(okTest.status, 200);
+    assert.equal(okTest.body.success, true);
+
+    const failTest = await fixture.request(`/api/model-connections/${failConnection.body.connection.id}/test`, {
+      method: 'POST',
+      headers
+    });
+    assert.ok([400, 502].includes(failTest.status));
+    assert.equal(failTest.body.success, false);
+    assert.equal(failTest.body.statusCode, 401);
+    assert.match(failTest.body.error, /bad api key|401/i);
+  } finally {
+    await okStub.close();
+    await failStub.close();
+  }
+});
+
+test('agent 的 POST/PUT 接口接受 API 模式字段', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const connection = await fixture.request('/api/model-connections', {
+    method: 'POST',
+    headers,
+    body: {
+      name: 'Agent API Gateway',
+      baseURL: 'https://api.example.com/v1',
+      apiKey: 'sk-agent-1234567890abcdef',
+      enabled: true
+    }
+  });
+  const connectionId = connection.body.connection.id;
+
+  const create = await fixture.request('/api/agents', {
+    method: 'POST',
+    headers,
+    body: {
+      applyMode: 'immediate',
+      agent: {
+        name: 'ApiModeAgent',
+        avatar: '🛰️',
+        color: '#7c3aed',
+        personality: '使用 API 模式运行',
+        executionMode: 'api',
+        apiConnectionId: connectionId,
+        apiModel: 'gpt-4o-mini',
+        apiTemperature: 0.8,
+        apiMaxTokens: 1024
+      }
+    }
+  });
+
+  assert.equal(create.status, 201);
+  assert.equal(create.body.agent.executionMode, 'api');
+  assert.equal(create.body.agent.apiConnectionId, connectionId);
+  assert.equal(create.body.agent.apiModel, 'gpt-4o-mini');
+  assert.equal(create.body.agent.apiTemperature, 0.8);
+  assert.equal(create.body.agent.apiMaxTokens, 1024);
+  assert.equal(create.body.agent.cli, undefined);
+  assert.equal(create.body.agent.cliName, undefined);
+
+  const update = await fixture.request('/api/agents/ApiModeAgent', {
+    method: 'PUT',
+    headers,
+    body: {
+      applyMode: 'immediate',
+      agent: {
+        name: 'ApiModeAgent',
+        avatar: '🛰️',
+        color: '#7c3aed',
+        personality: '更新 API 模式参数',
+        executionMode: 'api',
+        apiConnectionId: connectionId,
+        apiModel: 'gpt-4.1-mini',
+        apiTemperature: 1.1,
+        apiMaxTokens: 2048
+      }
+    }
+  });
+
+  assert.equal(update.status, 200);
+  assert.equal(update.body.agent.executionMode, 'api');
+  assert.equal(update.body.agent.apiModel, 'gpt-4.1-mini');
+  assert.equal(update.body.agent.apiTemperature, 1.1);
+  assert.equal(update.body.agent.apiMaxTokens, 2048);
+
+  const list = await fixture.request('/api/agents', { headers });
+  const updated = list.body.agents.find(agent => agent.name === 'ApiModeAgent');
+  assert.ok(updated);
+  assert.equal(updated.executionMode, 'api');
+  assert.equal(updated.apiConnectionId, connectionId);
+  assert.equal(updated.apiModel, 'gpt-4.1-mini');
+  assert.equal(updated.apiTemperature, 1.1);
+  assert.equal(updated.apiMaxTokens, 2048);
 });
 
 test('API connection 存储辅助函数会规范化输入并脱敏 apiKey', () => {
