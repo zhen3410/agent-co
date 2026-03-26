@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { ApiConnectionConfig } from './types';
+import { AIAgentConfig, ApiConnectionConfig, ApiConnectionSummary } from './types';
 
 export interface ApiConnectionStore {
   apiConnections: ApiConnectionConfig[];
@@ -28,6 +28,10 @@ function normalizeBaseURL(baseURL: string): string {
   return baseURL.trim().replace(/\/+$/, '');
 }
 
+function isPositiveFiniteTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
 export function maskApiKey(apiKey: string): string {
   const trimmed = toStringOrEmpty(apiKey);
 
@@ -44,6 +48,46 @@ export function maskApiKey(apiKey: string): string {
   }
 
   return `${trimmed.slice(0, 4)}${'*'.repeat(trimmed.length - 8)}${trimmed.slice(-4)}`;
+}
+
+export function toApiConnectionSummaries(connections: ApiConnectionConfig[]): ApiConnectionSummary[] {
+  return connections.map(connection => ({
+    id: connection.id,
+    name: connection.name,
+    baseURL: connection.baseURL,
+    apiKeyMasked: maskApiKey(connection.apiKey),
+    enabled: connection.enabled,
+    createdAt: connection.createdAt,
+    updatedAt: connection.updatedAt
+  }));
+}
+
+export function isApiConnectionReferenced(
+  apiConnectionId: string,
+  agents: AIAgentConfig[]
+): boolean {
+  return agents.some(agent => agent.apiConnectionId === apiConnectionId);
+}
+
+export function validateApiConnectionNameUnique(
+  store: ApiConnectionStore,
+  name: string,
+  excludeId?: string
+): string | null {
+  const normalizedName = toStringOrEmpty(name);
+
+  if (!normalizedName) {
+    return '连接名称不能为空';
+  }
+
+  const duplicate = store.apiConnections.some(connection => {
+    if (excludeId && connection.id === excludeId) {
+      return false;
+    }
+    return connection.name === normalizedName;
+  });
+
+  return duplicate ? '连接名称已存在' : null;
 }
 
 export function normalizeApiConnectionConfig(input: Partial<ApiConnectionConfig> & { baseUrl?: string }): ApiConnectionConfig {
@@ -143,7 +187,7 @@ export function loadApiConnectionStore(filePath: string): ApiConnectionStore {
 
   return {
     apiConnections,
-    updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now()
+    updatedAt: isPositiveFiniteTimestamp(parsed.updatedAt) ? parsed.updatedAt : Date.now()
   };
 }
 

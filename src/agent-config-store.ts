@@ -99,10 +99,6 @@ export function validateAgentConfig(config: AIAgentConfig): string | null {
     return 'executionMode 仅支持 cli 或 api';
   }
 
-  if (cliName && cliName !== 'claude' && cliName !== 'codex') {
-    return 'cliName 仅支持 claude 或 codex';
-  }
-
   if (executionMode === 'cli' && !cliName) {
     return 'executionMode=cli 时必须提供 cliName';
   }
@@ -114,6 +110,8 @@ export function validateAgentConfig(config: AIAgentConfig): string | null {
     if (!config.apiModel || !config.apiModel.trim()) {
       return 'executionMode=api 时必须提供 apiModel';
     }
+  } else if (cliName && cliName !== 'claude' && cliName !== 'codex') {
+    return 'cliName 仅支持 claude 或 codex';
   }
 
   if (config.apiTemperature !== undefined) {
@@ -156,6 +154,27 @@ export function normalizeAgentConfig(config: AIAgentConfig): AIAgentConfig {
     ? config.executionMode
     : (normalizedCliName ? 'cli' : undefined);
 
+  if (normalizedExecutionMode === 'api') {
+    return {
+      ...config,
+      name: config.name.trim(),
+      avatar: config.avatar.trim(),
+      color: config.color.trim(),
+      personality: (config.personality || '').trim(),
+      systemPrompt: (config.systemPrompt || '').trim() || undefined,
+      executionMode: 'api',
+      cliName: undefined,
+      cli: undefined,
+      apiConnectionId: (config.apiConnectionId || '').trim() || undefined,
+      apiModel: (config.apiModel || '').trim() || undefined,
+      apiTemperature: config.apiTemperature,
+      apiMaxTokens: config.apiMaxTokens,
+      workdir: (config.workdir || '').trim() || undefined
+    };
+  }
+
+  const cliModeCliName = normalizedCliName || undefined;
+
   return {
     ...config,
     name: config.name.trim(),
@@ -164,12 +183,12 @@ export function normalizeAgentConfig(config: AIAgentConfig): AIAgentConfig {
     personality: (config.personality || '').trim(),
     systemPrompt: (config.systemPrompt || '').trim() || undefined,
     executionMode: normalizedExecutionMode,
-    cliName: normalizedCliName,
-    cli: normalizedCli,
-    apiConnectionId: (config.apiConnectionId || '').trim() || undefined,
-    apiModel: (config.apiModel || '').trim() || undefined,
-    apiTemperature: config.apiTemperature,
-    apiMaxTokens: config.apiMaxTokens,
+    cliName: cliModeCliName,
+    cli: cliModeCliName,
+    apiConnectionId: undefined,
+    apiModel: undefined,
+    apiTemperature: undefined,
+    apiMaxTokens: undefined,
     workdir: (config.workdir || '').trim() || undefined
   };
 }

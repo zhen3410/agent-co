@@ -1,14 +1,17 @@
 const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { mkdtempSync, rmSync } = require('node:fs');
+const { mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
 const {
   loadApiConnectionStore,
+  isApiConnectionReferenced,
   maskApiKey,
   normalizeApiConnectionConfig,
   saveApiConnectionStore,
+  toApiConnectionSummaries,
+  validateApiConnectionNameUnique,
   validateApiConnectionConfig
 } = require('../../dist/api-connection-store.js');
 const {
@@ -423,6 +426,92 @@ test('API connection store 可以保存并重新读取', () => {
   }
 });
 
+test('API connection store 在读取非法 updatedAt 时会回退为当前时间', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-api-conn-'));
+  const filePath = join(tempDir, 'api-connections.json');
+
+  try {
+    writeFileSync(filePath, JSON.stringify({
+      apiConnections: [],
+      updatedAt: -1
+    }), 'utf-8');
+
+    const loaded = loadApiConnectionStore(filePath);
+    assert.ok(loaded.updatedAt > 0);
+    assert.notEqual(loaded.updatedAt, -1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('API connection summary 转换会脱敏 apiKey', () => {
+  const store = {
+    apiConnections: [
+      normalizeApiConnectionConfig({
+        id: 'conn-1',
+        name: 'Gateway',
+        baseURL: 'https://api.example.com/v1/',
+        apiKey: 'sk-test-1234567890abcdef',
+        enabled: true,
+        createdAt: 1,
+        updatedAt: 2
+      })
+    ],
+    updatedAt: 123
+  };
+
+  const summaries = toApiConnectionSummaries(store.apiConnections);
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].name, 'Gateway');
+  assert.equal(summaries[0].baseURL, 'https://api.example.com/v1');
+  assert.equal(summaries[0].apiKeyMasked, maskApiKey('sk-test-1234567890abcdef'));
+  assert.notEqual(summaries[0].apiKeyMasked, 'sk-test-1234567890abcdef');
+});
+
+test('API connection 名称重复时会被识别为不可创建', () => {
+  const store = {
+    apiConnections: [
+      normalizeApiConnectionConfig({
+        id: 'conn-1',
+        name: 'Gateway',
+        baseURL: 'https://api.example.com/v1/',
+        apiKey: 'sk-test-1234567890abcdef',
+        enabled: true,
+        createdAt: 1,
+        updatedAt: 2
+      })
+    ],
+    updatedAt: 123
+  };
+
+  assert.equal(validateApiConnectionNameUnique(store, 'Gateway'), '连接名称已存在');
+  assert.equal(validateApiConnectionNameUnique(store, 'Gateway', 'conn-1'), null);
+});
+
+test('API connection 被 agent 引用时会被识别为不可删除', () => {
+  const agents = [
+    normalizeAgentConfig({
+      name: 'ApiAgent',
+      avatar: '🤖',
+      color: '#123456',
+      personality: 'API 运行模式',
+      executionMode: 'api',
+      apiConnectionId: 'conn-1',
+      apiModel: 'gpt-4o-mini'
+    }),
+    normalizeAgentConfig({
+      name: 'CliAgent',
+      avatar: '🤖',
+      color: '#123456',
+      personality: 'CLI 运行模式',
+      cli: 'codex'
+    })
+  ];
+
+  assert.equal(isApiConnectionReferenced('conn-1', agents), true);
+  assert.equal(isApiConnectionReferenced('conn-2', agents), false);
+});
+
 test('agent 配置会把旧 cli 字段映射为 cli 运行模式', () => {
   const normalized = normalizeAgentConfig({
     name: 'LegacyAgent',
@@ -434,6 +523,60 @@ test('agent 配置会把旧 cli 字段映射为 cli 运行模式', () => {
 
   assert.equal(normalized.executionMode, 'cli');
   assert.equal(normalized.cliName, 'codex');
+  assert.equal(normalized.cli, 'codex');
+  assert.equal(normalized.apiConnectionId, undefined);
+  assert.equal(normalized.apiModel, undefined);
+  assert.equal(normalized.apiTemperature, undefined);
+  assert.equal(normalized.apiMaxTokens, undefined);
+  assert.equal(validateAgentConfig(normalized), null);
+});
+
+test('agent 配置在 API 模式下会清空 CLI 元数据并保留 API 字段', () => {
+  const normalized = normalizeAgentConfig({
+    name: 'ApiAgent',
+    avatar: '🤖',
+    color: '#123456',
+    personality: 'API 运行模式',
+    executionMode: 'api',
+    cli: 'codex',
+    cliName: 'claude',
+    apiConnectionId: 'conn-1',
+    apiModel: 'gpt-4o-mini',
+    apiTemperature: 1.2,
+    apiMaxTokens: 2048
+  });
+
+  assert.equal(normalized.executionMode, 'api');
+  assert.equal(normalized.cli, undefined);
+  assert.equal(normalized.cliName, undefined);
+  assert.equal(normalized.apiConnectionId, 'conn-1');
+  assert.equal(normalized.apiModel, 'gpt-4o-mini');
+  assert.equal(normalized.apiTemperature, 1.2);
+  assert.equal(normalized.apiMaxTokens, 2048);
+  assert.equal(validateAgentConfig(normalized), null);
+});
+
+test('agent 配置在 CLI 模式下会清空 API 字段', () => {
+  const normalized = normalizeAgentConfig({
+    name: 'CliAgent',
+    avatar: '🤖',
+    color: '#123456',
+    personality: 'CLI 运行模式',
+    executionMode: 'cli',
+    cliName: 'codex',
+    apiConnectionId: 'conn-1',
+    apiModel: 'gpt-4o-mini',
+    apiTemperature: 1.2,
+    apiMaxTokens: 2048
+  });
+
+  assert.equal(normalized.executionMode, 'cli');
+  assert.equal(normalized.cliName, 'codex');
+  assert.equal(normalized.cli, 'codex');
+  assert.equal(normalized.apiConnectionId, undefined);
+  assert.equal(normalized.apiModel, undefined);
+  assert.equal(normalized.apiTemperature, undefined);
+  assert.equal(normalized.apiMaxTokens, undefined);
   assert.equal(validateAgentConfig(normalized), null);
 });
 
@@ -479,9 +622,3 @@ test('agent 配置会拒绝非正整数 apiMaxTokens', () => {
 
   assert.equal(error, 'apiMaxTokens 必须是正整数');
 });
-
-test.skip('API connection 路由：创建 connection 成功', async () => {});
-test.skip('API connection 路由：重名创建失败', async () => {});
-test.skip('API connection 路由：非法 URL 创建失败', async () => {});
-test.skip('API connection 路由：列表返回时 key 被脱敏', async () => {});
-test.skip('API connection 路由：被 agent 引用时删除失败', async () => {});
