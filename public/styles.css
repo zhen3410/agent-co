@@ -932,6 +932,91 @@ body.context-panel-open .main-layout {
   box-shadow: var(--shadow-md);
 }
 
+.group-mention-preview {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 12px;
+  margin-bottom: 8px;
+  z-index: 10;
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.preview-icon {
+  font-size: 18px;
+}
+
+.preview-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.preview-count {
+  font-size: 12px;
+  color: #737373;
+}
+
+.preview-agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.preview-agent {
+  font-size: 12px;
+  color: #525252;
+  background: #f5f5f5;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.preview-actions .confirm-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.preview-actions .confirm-btn:hover {
+  background: #3b82f6;
+}
+
+.preview-actions .cancel-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  background: white;
+  color: #525252;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.preview-actions .cancel-btn:hover {
+  background: #f5f5f5;
+}
+
 .mention-suggestion {
   width: 100%;
   display: flex;

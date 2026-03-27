@@ -285,6 +285,7 @@
               <div className="input-area">
                 <form onSubmit={(event) => window.sendMessage && window.sendMessage(event)}>
                   <div className="mention-input-wrap">
+                    <div className="group-mention-preview" id="groupMentionPreview" style={{ display: 'none' }}></div>
                     <textarea
                       id="userInput"
                       placeholder="输入消息... 使用 @智能体名 召唤 AI"
@@ -424,6 +425,7 @@
     let groups = [];
     let expandedGroups = new Set();
     let activeGroup = null;
+    let groupMentionPreview = null;
 
     // DOM 元素
     let messagesEl;
@@ -469,6 +471,7 @@
     let saveAgentChainMaxCallsPerAgentBtnEls = [];
     let agentChainMaxCallsLimitRowEls = [];
     let sessionSettingsFeedbackEls = [];
+    let groupMentionPreviewEl;
 
     let activeContextTab = 'sessions';
     let sessionSearchQuery = '';
@@ -478,6 +481,7 @@
       pwaBannerTextEl = document.getElementById('pwaBannerText');
       pwaInstallBtnEl = document.getElementById('pwaInstallBtn');
       focusAgentSummaryEl = document.getElementById('focusAgentSummary');
+      groupMentionPreviewEl = document.getElementById('groupMentionPreview');
     }
 
     function cacheDomElements() {
@@ -1372,6 +1376,95 @@
       if (!userInputEl) return;
       userInputEl.style.height = 'auto';
       userInputEl.style.height = `${Math.min(userInputEl.scrollHeight, 160)}px`;
+    }
+
+    // 检测输入中的分组提及
+    function detectGroupMention(text) {
+      const mentionRegex = /@([^\s@，。！？、]+)/g;
+      const matches = text.match(mentionRegex);
+      if (!matches) return null;
+
+      for (const match of matches) {
+        const mentionName = match.slice(1); // 去掉 @
+        // 检查是否是分组名（按 id 或 name 匹配）
+        const group = groups.find(g =>
+          g.id === mentionName || g.name === mentionName
+        );
+        if (group) {
+          return group;
+        }
+      }
+      return null;
+    }
+
+    // 渲染分组提及预览
+    function renderGroupMentionPreview() {
+      if (!groupMentionPreview || !groupMentionPreviewEl) {
+        if (groupMentionPreviewEl) {
+          groupMentionPreviewEl.style.display = 'none';
+          groupMentionPreviewEl.innerHTML = '';
+        }
+        return;
+      }
+
+      const agentsHtml = groupMentionPreview.agentNames.map(name => {
+        const agent = agents.find(a => a.name === name);
+        return `
+          <span class="preview-agent">
+            ✓ ${agent?.avatar || '🤖'} ${escapeHtml(name)}
+          </span>
+        `;
+      }).join('');
+
+      groupMentionPreviewEl.innerHTML = `
+        <div class="preview-header">
+          <span class="preview-icon">${escapeHtml(groupMentionPreview.icon)}</span>
+          <span class="preview-name">${escapeHtml(groupMentionPreview.name)}</span>
+          <span class="preview-count">(${groupMentionPreview.agentNames.length} 个智能体)</span>
+        </div>
+        <div class="preview-agents">
+          ${agentsHtml}
+        </div>
+        <div class="preview-actions">
+          <button class="confirm-btn" onclick="confirmGroupMention()">确认召唤</button>
+          <button class="cancel-btn" onclick="cancelGroupMention()">取消</button>
+        </div>
+      `;
+      groupMentionPreviewEl.style.display = 'block';
+    }
+
+    // 确认分组提及
+    function confirmGroupMention() {
+      if (!groupMentionPreview) return;
+
+      // 将 @分组名 替换为 @智能体1 @智能体2 ...
+      const agentMentions = groupMentionPreview.agentNames
+        .map(name => `@${name}`)
+        .join(' ');
+      const newText = userInputEl.value.replace(
+        new RegExp(`@(${groupMentionPreview.id}|${groupMentionPreview.name})`),
+        agentMentions + ' '
+      );
+      userInputEl.value = newText;
+      groupMentionPreview = null;
+      renderGroupMentionPreview();
+      resizeUserInput();
+      userInputEl.focus();
+    }
+
+    // 取消分组提及
+    function cancelGroupMention() {
+      // 移除 @分组名
+      if (!groupMentionPreview) return;
+      const newText = userInputEl.value.replace(
+        new RegExp(`\\s*@(${groupMentionPreview.id}|${groupMentionPreview.name})\\s*`),
+        ' '
+      ).trim();
+      userInputEl.value = newText;
+      groupMentionPreview = null;
+      renderGroupMentionPreview();
+      resizeUserInput();
+      userInputEl.focus();
     }
 
     function switchAgent() {
@@ -2303,10 +2396,24 @@
       }
     };
 
+    window.selectMentionSuggestion = selectMentionSuggestion;
+    window.confirmGroupMention = confirmGroupMention;
+    window.cancelGroupMention = cancelGroupMention;
+
     function bindDomEvents() {
       userInputEl.addEventListener('input', () => {
         resizeUserInput();
         updateMentionSuggestions();
+
+        // 检测分组提及
+        const group = detectGroupMention(userInputEl.value);
+        if (group) {
+          groupMentionPreview = group;
+          renderGroupMentionPreview();
+        } else {
+          groupMentionPreview = null;
+          renderGroupMentionPreview();
+        }
       });
 
       if (sessionSearchInputEl) {
