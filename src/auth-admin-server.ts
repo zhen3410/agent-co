@@ -967,6 +967,15 @@ const server = http.createServer(async (req, res) => {
         }
         return filtered;
       });
+
+      // 级联清理分组引用
+      const groupStore = loadGroupStore(GROUP_DATA_FILE);
+      const cleanedGroupStore = removeAgentFromAllGroups(groupStore, targetName);
+      if (cleanedGroupStore.groups.length !== groupStore.groups.length ||
+          cleanedGroupStore.updatedAt !== groupStore.updatedAt) {
+        saveGroupStore(GROUP_DATA_FILE, cleanedGroupStore);
+      }
+
       saveAgentStore(AGENT_DATA_FILE, next);
       sendJson(res, 200, { success: true, applyMode, name: targetName });
     } catch (error: unknown) {
