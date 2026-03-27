@@ -601,6 +601,136 @@
     }
 
     /* ============================================
+       Tab 导航
+       ============================================ */
+
+    .tabs {
+      display: flex;
+      gap: var(--space-sm);
+      margin-bottom: var(--space-lg);
+      border-bottom: 1px solid var(--border-light);
+      padding-bottom: var(--space-sm);
+    }
+
+    .tab {
+      padding: var(--space-sm) var(--space-md);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      background: none;
+      border: none;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .tab:hover {
+      color: var(--text-secondary);
+      background: var(--bg-tertiary);
+    }
+
+    .tab.active {
+      color: var(--accent);
+      background: var(--accent-subtle);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    /* ============================================
+       分组列表
+       ============================================ */
+
+    .groups-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-md);
+    }
+
+    .group-item {
+      display: flex;
+      align-items: center;
+      padding: var(--space-md);
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+      gap: var(--space-md);
+    }
+
+    .group-item-icon {
+      font-size: 24px;
+    }
+
+    .group-item-info {
+      flex: 1;
+    }
+
+    .group-item-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .group-item-members {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-top: 4px;
+    }
+
+    .group-item-actions {
+      display: flex;
+      gap: var(--space-sm);
+    }
+
+    /* ============================================
+       复选框网格
+       ============================================ */
+
+    .checkboxes-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--space-sm);
+      max-height: 200px;
+      overflow-y: auto;
+      padding: var(--space-sm);
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+    }
+
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      padding: var(--space-xs);
+    }
+
+    .checkbox-item input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+    }
+
+    .checkbox-item label {
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    /* ============================================
+       表单提示
+       ============================================ */
+
+    .form-hint {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ============================================
        响应式
        ============================================ */
 
@@ -624,6 +754,11 @@
       .agent-grid {
         grid-template-columns: 1fr;
       }
+
+      .tabs {
+        overflow-x: auto;
+        white-space: nowrap;
+      }
     }
   </style>
 </head>
@@ -644,7 +779,15 @@
 
     <!-- 内容区 -->
     <main class="admin-content">
-      <!-- Token 验证 -->
+      <!-- Tab 导航 -->
+      <div class="tabs">
+        <button class="tab active" data-tab="agents">智能体管理</button>
+        <button class="tab" data-tab="groups">分组管理</button>
+        <button class="tab" data-tab="users">用户管理</button>
+        <button class="tab" data-tab="connections">连接管理</button>
+      </div>
+
+      <!-- Token 验证（始终显示） -->
       <div class="card token-section">
         <div class="card-body">
           <div class="form-group" style="margin-bottom: 0;">
@@ -663,8 +806,9 @@
         </div>
       </div>
 
-      <!-- 添加用户 -->
-      <div class="card">
+      <!-- 智能体管理 Tab -->
+      <div class="tab-content active" id="agents-tab">
+        <!-- 添加智能体 -->
         <div class="card-header">
           <h2 class="card-title">添加用户</h2>
         </div>
@@ -684,8 +828,25 @@
           </div>
         </div>
       </div>
+      </div>
 
-      <!-- 用户列表 -->
+      <!-- 连接管理 Tab -->
+      <div class="tab-content" id="connections-tab">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">连接状态</h3>
+          </div>
+          <div class="card-body">
+            <div class="info-box">
+              <span class="info-box-icon">🔗</span>
+              <div class="info-box-content">
+                连接管理功能开发中...
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
       <div class="card">
         <div class="card-header">
           <h2 class="card-title">用户列表</h2>
@@ -855,11 +1016,30 @@
           </div>
         </div>
       </div>
-    </main>
+      </div>
+
+      <!-- 分组管理 Tab -->
+      <div class="tab-content" id="groups-tab">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">分组列表</h3>
+            <button class="btn btn-primary btn-sm" onclick="showGroupModal()">+ 新建分组</button>
+          </div>
+          <div class="card-body">
+            <div id="groups-list" class="groups-list">
+              <!-- 分组列表将通过 JS 渲染 -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 用户管理 Tab -->
+      <div class="tab-content" id="users-tab">
+        <!-- 添加用户 -->
   </div>
 
   <!-- 修改密码模态框 -->
-  <div class="modal-overlay">
+  <div class="modal-overlay" id="password-modal">
     <div class="modal">
       <h3>修改密码</h3>
       <p>为用户 <strong>admin</strong> 设置新密码</p>
@@ -875,6 +1055,39 @@
         <button class="btn btn-secondary">取消</button>
         <button class="btn btn-primary">确认修改</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 分组管理模态框 -->
+  <div class="modal-overlay" id="group-modal">
+    <div class="modal">
+      <h3 id="group-modal-title">新建分组</h3>
+      <p>创建智能体分组，方便管理和快速切换。</p>
+      <form id="group-form">
+        <div class="form-group">
+          <label class="form-label">分组 ID</label>
+          <input type="text" id="group-id" placeholder="例如: dev_team" required>
+          <small class="form-hint">2-20 字符，仅字母数字下划线，创建后不可修改</small>
+        </div>
+        <div class="form-group">
+          <label class="form-label">分组名称</label>
+          <input type="text" id="group-name" placeholder="例如: 开发组" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">图标</label>
+          <input type="text" id="group-icon" placeholder="例如: 💻" maxlength="4" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">智能体成员</label>
+          <div id="group-agents-checkboxes" class="checkboxes-grid">
+            <!-- 智能体复选框将通过 JS 渲染 -->
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="hideGroupModal()">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -897,5 +1110,227 @@
       opacity: 0.8;
     }
   </style>
+
+  <script>
+    // 配置
+    const AUTH_ADMIN_URL = 'http://127.0.0.1:3003';
+    let adminToken = localStorage.getItem('adminToken') || '';
+    let agents = [];
+    let groups = [];
+    let editingGroupId = null;
+
+    // HTML 转义
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Toast 通知
+    function showToast(message, type = 'success') {
+      const existingToast = document.querySelector('.toast');
+      if (existingToast) {
+        existingToast.remove();
+      }
+
+      const toast = document.createElement('div');
+      toast.className = `toast ${type} show`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // Tab 切换
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        // 移除所有 active 状态
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+        // 添加 active 状态
+        tab.classList.add('active');
+        const tabName = tab.dataset.tab;
+        document.getElementById(`${tabName}-tab`).classList.add('active');
+
+        // 加载对应数据
+        if (tabName === 'groups') {
+          loadGroups();
+        } else if (tabName === 'agents') {
+          loadAgents();
+        }
+      });
+    });
+
+    // 加载智能体列表
+    async function loadAgents() {
+      try {
+        const res = await fetch(`${AUTH_ADMIN_URL}/api/agents`, {
+          headers: { 'x-admin-token': adminToken }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          agents = data.agents || [];
+        }
+      } catch (e) {
+        console.error('Failed to load agents:', e);
+      }
+    }
+
+    // 加载分组列表
+    async function loadGroups() {
+      try {
+        const res = await fetch(`${AUTH_ADMIN_URL}/api/groups`, {
+          headers: { 'x-admin-token': adminToken }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          groups = data.groups || [];
+          renderGroupsList();
+        } else {
+          showToast('加载分组失败', 'error');
+        }
+      } catch (e) {
+        console.error('Failed to load groups:', e);
+        showToast('加载分组失败', 'error');
+      }
+    }
+
+    // 渲染分组列表
+    function renderGroupsList() {
+      const container = document.getElementById('groups-list');
+      if (groups.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">📁</div>
+            <div class="empty-state-text">暂无分组，点击上方按钮创建</div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = groups.map(group => `
+        <div class="group-item">
+          <div class="group-item-icon">${escapeHtml(group.icon)}</div>
+          <div class="group-item-info">
+            <div class="group-item-name">${escapeHtml(group.name)} (${group.id})</div>
+            <div class="group-item-members">${group.agentNames.join(', ')}</div>
+          </div>
+          <div class="group-item-actions">
+            <button class="btn btn-secondary btn-sm" onclick="editGroup('${escapeHtml(group.id)}')">编辑</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteGroup('${escapeHtml(group.id)}')">删除</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // 显示分组弹窗
+    function showGroupModal(group = null) {
+      editingGroupId = group ? group.id : null;
+      document.getElementById('group-modal-title').textContent = group ? '编辑分组' : '新建分组';
+      document.getElementById('group-id').value = group ? group.id : '';
+      document.getElementById('group-id').disabled = !!group;
+      document.getElementById('group-name').value = group ? group.name : '';
+      document.getElementById('group-icon').value = group ? group.icon : '';
+
+      // 渲染智能体复选框
+      const checkboxesContainer = document.getElementById('group-agents-checkboxes');
+      const selectedAgents = group ? group.agentNames : [];
+      checkboxesContainer.innerHTML = agents.map(agent => `
+        <div class="checkbox-item">
+          <input type="checkbox" id="agent-${agent.name}" value="${agent.name}"
+                 ${selectedAgents.includes(agent.name) ? 'checked' : ''}>
+          <label for="agent-${agent.name}">${agent.avatar} ${agent.name}</label>
+        </div>
+      `).join('');
+
+      document.getElementById('group-modal').classList.add('show');
+    }
+
+    // 隐藏分组弹窗
+    function hideGroupModal() {
+      document.getElementById('group-modal').classList.remove('show');
+      editingGroupId = null;
+    }
+
+    // 编辑分组
+    function editGroup(id) {
+      const group = groups.find(g => g.id === id);
+      if (group) {
+        showGroupModal(group);
+      }
+    }
+
+    // 删除分组
+    async function deleteGroup(id) {
+      if (!confirm('确定要删除此分组吗？')) return;
+
+      try {
+        const res = await fetch(`${AUTH_ADMIN_URL}/api/groups/${id}`, {
+          method: 'DELETE',
+          headers: { 'x-admin-token': adminToken }
+        });
+        if (res.ok) {
+          showToast('分组已删除', 'success');
+          loadGroups();
+        } else {
+          const data = await res.json();
+          showToast(data.error || '删除失败', 'error');
+        }
+      } catch (e) {
+        showToast('删除失败', 'error');
+      }
+    }
+
+    // 提交分组表单
+    document.getElementById('group-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const id = document.getElementById('group-id').value.trim();
+      const name = document.getElementById('group-name').value.trim();
+      const icon = document.getElementById('group-icon').value.trim();
+
+      const checkboxes = document.querySelectorAll('#group-agents-checkboxes input:checked');
+      const agentNames = Array.from(checkboxes).map(cb => cb.value);
+
+      if (!id || !name || !icon || agentNames.length === 0) {
+        showToast('请填写所有字段并选择至少一个智能体', 'error');
+        return;
+      }
+
+      const url = editingGroupId
+        ? `${AUTH_ADMIN_URL}/api/groups/${editingGroupId}`
+        : `${AUTH_ADMIN_URL}/api/groups`;
+      const method = editingGroupId ? 'PUT' : 'POST';
+
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-token': adminToken
+          },
+          body: JSON.stringify({ id, name, icon, agentNames })
+        });
+
+        if (res.ok) {
+          showToast(editingGroupId ? '分组已更新' : '分组已创建', 'success');
+          hideGroupModal();
+          loadGroups();
+        } else {
+          const data = await res.json();
+          showToast(data.error || '操作失败', 'error');
+        }
+      } catch (e) {
+        showToast('操作失败', 'error');
+      }
+    });
+
+    // 初始化加载智能体
+    loadAgents();
+  </script>
 </body>
 </html>
