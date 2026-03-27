@@ -22,3 +22,24 @@ test('管理后台智能体列表展示并支持就地修改当前提示词', ()
   assert.ok(html.includes('保存提示词'), 'should provide save prompt action');
   assert.ok(html.includes('const promptInput = document.querySelector(`[data-agent-prompt="${cssEscape(name)}"]`);'), 'should read prompt from inline textarea');
 });
+
+test('管理后台包含 API connection 管理和 agent API 模式配置 UI', () => {
+  const htmlPath = path.join(__dirname, '..', '..', 'public-auth', 'admin.html');
+  const html = fs.readFileSync(htmlPath, 'utf8');
+
+  assert.ok(html.includes('模型连接'), 'should render model connection management section');
+  assert.ok(html.includes('/api/model-connections'), 'should call model connection CRUD endpoints');
+  assert.ok(html.includes('id="agentExecutionMode"'), 'should render execution mode selector');
+  assert.ok(html.includes('id="agentApiConnectionId"'), 'should render api connection selector');
+  assert.ok(html.includes('id="agentApiModel"'), 'should render api model input');
+  assert.ok(html.includes('id="agentApiTemperature"'), 'should render api temperature input');
+  assert.ok(html.includes('id="agentApiMaxTokens"'), 'should render api max tokens input');
+  assert.ok(html.includes('toggleAgentExecutionFields('), 'should toggle CLI/API field visibility');
+  assert.ok(html.includes("executionMode: document.getElementById('agentExecutionMode').value"), 'should submit execution mode');
+  assert.ok(html.includes("apiConnectionId: document.getElementById('agentApiConnectionId').value"), 'should submit api connection id');
+  assert.ok(html.includes("apiModel: document.getElementById('agentApiModel').value.trim()"), 'should submit api model');
+  assert.ok(html.includes("apiTemperature: parseOptionalNumber(document.getElementById('agentApiTemperature').value)"), 'should submit api temperature');
+  assert.ok(html.includes("apiMaxTokens: parseOptionalInteger(document.getElementById('agentApiMaxTokens').value)"), 'should submit api max tokens');
+  assert.ok(html.includes("agent.executionMode === 'api'"), 'should render API mode summary in agent cards');
+  assert.ok(html.includes('API · ${escapeHtml(connectionName)} · ${escapeHtml(agent.apiModel || \'\')}'), 'should show API summary in agent list');
+});

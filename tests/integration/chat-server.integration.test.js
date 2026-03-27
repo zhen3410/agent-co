@@ -446,6 +446,95 @@ printf '%s\n' '{"output_text":"CODEX provider reply"}'
   }
 });
 
+test('聊天主链在 API 模式下会通过统一 invoker 调用 OpenAI-compatible provider', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-api-agent-'));
+  const connectionStub = await createOpenAICompatibleStub((req, res) => {
+    assert.equal(req.method, 'POST');
+    assert.equal(req.url, '/v1/chat/completions');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      choices: [
+        {
+          index: 0,
+          finish_reason: 'stop',
+          message: {
+            role: 'assistant',
+            content: 'API 聊天主链回复'
+          }
+        }
+      ]
+    }));
+  });
+  const connectionFile = writeApiConnectionStore(tempDir, [{
+    id: 'conn-1',
+    name: 'Gateway',
+    baseURL: connectionStub.baseURL,
+    apiKey: 'sk-test-123',
+    enabled: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }]);
+  const agentDataFile = join(tempDir, 'agents.json');
+  writeFileSync(agentDataFile, JSON.stringify({
+    activeAgents: [
+      {
+        name: 'Alice',
+        avatar: '🤖',
+        personality: 'API 智能体',
+        systemPrompt: '你是 API Alice',
+        color: '#3b82f6',
+        executionMode: 'api',
+        apiConnectionId: 'conn-1',
+        apiModel: 'gpt-4.1-mini',
+        apiTemperature: 0.3,
+        apiMaxTokens: 512
+      }
+    ],
+    pendingAgents: null,
+    pendingReason: null,
+    updatedAt: Date.now(),
+    pendingUpdatedAt: null
+  }, null, 2), 'utf8');
+
+  const fixture = await createChatServerFixture({
+    env: {
+      AGENT_DATA_FILE: agentDataFile,
+      MODEL_CONNECTION_DATA_FILE: connectionFile,
+      BOT_ROOM_VERBOSE_LOG_DIR: join(tempDir, 'verbose-logs')
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice']);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请走 API 模式回复' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.equal(chatResponse.body.success, true);
+    assert.deepEqual(
+      chatResponse.body.aiMessages.map(item => [item.sender, item.text]),
+      [['Alice', 'API 聊天主链回复']]
+    );
+    assert.equal(connectionStub.requests.length, 1);
+    assert.equal(connectionStub.requests[0].body.model, 'gpt-4.1-mini');
+
+    const logsResponse = await fixture.request('/api/dependencies/logs?dependency=chat-exec&keyword=Alice');
+    assert.equal(logsResponse.status, 200);
+    const messages = logsResponse.body.logs.map(item => item.message);
+    assert.ok(messages.some(msg => msg.includes('stage=api_start')));
+    assert.ok(messages.some(msg => msg.includes('stage=api_done')));
+    assert.ok(!messages.some(msg => msg.includes('stage=cli_done')));
+  } finally {
+    await fixture.cleanup();
+    await connectionStub.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('未登录时聊天相关接口会返回 401，登录后可正常聊天', async () => {
   const fixture = await createChatServerFixture();
 

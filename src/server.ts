@@ -9,10 +9,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
-import { Message, AIAgentConfig, ChatRequest, RichBlock } from './types';
+import { Message, AIAgentConfig, ChatRequest, RichBlock, AgentInvokeResult } from './types';
 import { AgentManager } from './agent-manager';
 import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
-import { callClaudeCLI, generateMockReply, ClaudeResult } from './claude-cli';
+import { generateMockReply } from './claude-cli';
+import { invokeAgent } from './agent-invoker';
 import { extractRichBlocks } from './rich-extract';
 import { addBlock, getStatus as getBlockBufferStatus } from './block-buffer';
 import { checkRateLimit, getClientIP } from './rate-limiter';
@@ -829,18 +830,18 @@ function consumeCallbackMessages(sessionId: string, agentName: string): Message[
   return queue;
 }
 
-function buildAgentVisibleMessages(agentName: string, cliResult: ClaudeResult | null, fallbackMessage: Message | null, callbackReplies: Message[]): Message[] {
+function buildAgentVisibleMessages(agentName: string, providerResult: AgentInvokeResult | null, fallbackMessage: Message | null, callbackReplies: Message[]): Message[] {
   if (callbackReplies.length > 0) {
     return callbackReplies;
   }
 
-  if (cliResult && (cliResult.text || cliResult.blocks.length > 0)) {
+  if (providerResult && (providerResult.text || providerResult.blocks.length > 0)) {
     return [{
       id: generateId(),
       role: 'assistant',
       sender: agentName,
-      text: cliResult.text,
-      blocks: cliResult.blocks as RichBlock[],
+      text: providerResult.text,
+      blocks: providerResult.blocks as RichBlock[],
       timestamp: Date.now()
     }];
   }
@@ -862,9 +863,14 @@ async function runAgentTask(params: {
   const runtimeWorkdir = getUserAgentWorkdir(userKey, session.id, agentName) || agent.workdir;
   const runtimeAgent = runtimeWorkdir ? { ...agent, workdir: runtimeWorkdir } : agent;
   const logTag = stream ? 'ChatStream' : 'Chat';
+  const isApiMode = runtimeAgent.executionMode === 'api';
+  const startStage = isApiMode ? 'api_start' : 'cli_start';
+  const doneStage = isApiMode ? 'api_done' : 'cli_done';
+  const errorStage = isApiMode ? 'api_error' : 'cli_error';
 
   console.log(`[${logTag}] 调用 AI: ${agentName}`);
   appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=start stream=${stream}`);
+  appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${startStage} stream=${stream}`);
 
   const callbackEnv: Record<string, string> = {
     BOT_ROOM_API_URL: `http://127.0.0.1:${PORT}`,
@@ -874,23 +880,28 @@ async function runAgentTask(params: {
   };
 
   let fallbackMessage: Message | null = null;
-  let cliResult: ClaudeResult | null = null;
+  let providerResult: AgentInvokeResult | null = null;
   try {
-    const result = await callClaudeCLI(prompt, runtimeAgent, session.history, {
+    const result = await invokeAgent({
+      userMessage: prompt,
+      agent: runtimeAgent,
+      history: session.history,
       includeHistory,
       extraEnv: callbackEnv
     });
-    cliResult = result;
-    appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_done text_len=${result.text.length} blocks=${result.blocks.length}`);
+    providerResult = result;
+    appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${doneStage} text_len=${result.text.length} blocks=${result.blocks.length}`);
   } catch (error: unknown) {
     const err = error as Error;
-    console.log(`[${logTag}] AI CLI 不可用: ${err.message}`);
-    if (!stream) {
+    console.log(`[${logTag}] AI 调用失败: ${err.message}`);
+    if (!stream && !isApiMode) {
       console.log('[Chat] 使用模拟回复');
     }
-    appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=cli_error error=${err.message}`);
-    const mockText = generateMockReply(prompt, agentName);
-    const extracted = extractRichBlocks(mockText);
+    appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=${errorStage} error=${err.message}`);
+    const fallbackText = isApiMode
+      ? `API 调用失败：${err.message}`
+      : generateMockReply(prompt, agentName);
+    const extracted = extractRichBlocks(fallbackText);
     fallbackMessage = {
       id: generateId(),
       role: 'assistant',
@@ -902,9 +913,9 @@ async function runAgentTask(params: {
   }
 
   const callbackReplies = consumeCallbackMessages(session.id, agentName);
-  const visibleMessages = buildAgentVisibleMessages(agentName, cliResult, fallbackMessage, callbackReplies);
+  const visibleMessages = buildAgentVisibleMessages(agentName, providerResult, fallbackMessage, callbackReplies);
 
-  if (callbackReplies.length === 0 && cliResult && (cliResult.text || cliResult.blocks.length > 0)) {
+  if (callbackReplies.length === 0 && providerResult && (providerResult.text || providerResult.blocks.length > 0)) {
     appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=direct_fallback reason=no_callback`);
   }
 
