@@ -1,0 +1,108 @@
+<h2>Session 级 Agent 启用方案</h2>
+<p class="subtitle">灰态 agent 保留在列表中、不可点击、排在最后；新会话默认全部关闭，并提示用户先启用。</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">方案 A: 聊天页顶部直接管理</div>
+    <div class="mockup-body" style="display:flex;flex-direction:column;gap:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1px solid #dbe4ff;border-radius:14px;background:#f8fbff;">
+        <div>
+          <div style="font-weight:700;">当前会话可用智能体</div>
+          <div style="font-size:13px;color:#6b7280;">关闭后该智能体不会出现在 @ 提示里，也不能继续被选中</div>
+        </div>
+        <div style="font-size:12px;color:#2563eb;background:#e0ecff;padding:6px 10px;border-radius:999px;">2 / 4 已启用</div>
+      </div>
+
+      <div class="cards" style="grid-template-columns:1fr;">
+        <div class="card" data-choice="top-panel" onclick="toggleSelect(this)">
+          <div class="card-body">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div><strong>🏗️ Codex架构师</strong><div style="font-size:12px;color:#6b7280;">已启用，可 @，可继续对话</div></div>
+              <div style="width:44px;height:24px;border-radius:999px;background:#2563eb;position:relative;">
+                <div style="position:absolute;right:2px;top:2px;width:20px;height:20px;border-radius:50%;background:#fff;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div><strong>👩‍💻 Alice</strong><div style="font-size:12px;color:#6b7280;">已启用，可 @，可继续对话</div></div>
+              <div style="width:44px;height:24px;border-radius:999px;background:#22c55e;position:relative;">
+                <div style="position:absolute;right:2px;top:2px;width:20px;height:20px;border-radius:50%;background:#fff;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="opacity:.48;filter:grayscale(1);">
+          <div class="card-body">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div><strong>🤖 Claude</strong><div style="font-size:12px;color:#6b7280;">已停用，不可点击，不出现在 @ 提示</div></div>
+              <div style="width:44px;height:24px;border-radius:999px;background:#cbd5e1;position:relative;">
+                <div style="position:absolute;left:2px;top:2px;width:20px;height:20px;border-radius:50%;background:#fff;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="opacity:.48;filter:grayscale(1);">
+          <div class="card-body">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div><strong>🧑‍💻 Bob</strong><div style="font-size:12px;color:#6b7280;">已停用，不可点击，不出现在 @ 提示</div></div>
+              <div style="width:44px;height:24px;border-radius:999px;background:#cbd5e1;position:relative;">
+                <div style="position:absolute;left:2px;top:2px;width:20px;height:20px;border-radius:50%;background:#fff;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:12px 14px;border:1px dashed #bfdbfe;border-radius:14px;background:#eff6ff;">
+        <strong>输入框行为</strong>
+        <div style="margin-top:6px;font-size:13px;color:#475569;">@ 提示里只出现 Codex架构师 / Alice。灰态 agent 在顶部列表保留展示，但不会响应点击。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">方案 B: 新会话空状态引导</div>
+    <div class="mockup-body" style="display:flex;flex-direction:column;gap:16px;">
+      <div style="padding:18px;border-radius:18px;background:linear-gradient(180deg,#fff7ed,#ffffff);border:1px solid #fed7aa;">
+        <div style="font-size:28px;">💡</div>
+        <h3 style="margin:8px 0 6px;">这个会话还没有启用任何智能体</h3>
+        <p style="margin:0;color:#6b7280;">新建会话默认全部关闭。先打开你需要的 agent，再开始发送消息。</p>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="mock-button">去启用智能体</button>
+          <button class="mock-button" style="background:#fff;color:#9a3412;border:1px solid #fdba74;">查看说明</button>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="padding:12px;border-radius:14px;border:1px solid #e5e7eb;background:#fff;">
+          <div style="font-weight:700;">发送消息时</div>
+          <div style="font-size:13px;color:#6b7280;margin-top:6px;">若没有启用 agent，后端返回明确提示，前端展示空态引导，不直接发往任何 agent。</div>
+        </div>
+        <div style="padding:12px;border-radius:14px;border:1px solid #e5e7eb;background:#fff;">
+          <div style="font-weight:700;">关闭当前 agent 后</div>
+          <div style="font-size:13px;color:#6b7280;margin-top:6px;">本轮状态先保留，下一条消息起不再沿用它作为 currentAgent。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="recommended" onclick="toggleSelect(this)">
+    <div class="letter">R</div>
+    <div class="content">
+      <h3>推荐方向</h3>
+      <p>聊天页顶部直接放 session 内 agent 开关，并配合新会话空状态引导。信息密度高一点，但切换最快，也最贴近用户发消息前的决策点。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="more-separate" onclick="toggleSelect(this)">
+    <div class="letter">S</div>
+    <div class="content">
+      <h3>更分离的方向</h3>
+      <p>把开关放进单独的“会话设置”抽屉，聊天顶部只显示已启用 agent。页面更干净，但多一次进入设置的操作。</p>
+    </div>
+  </div>
+</div>

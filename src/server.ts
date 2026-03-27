@@ -2489,6 +2489,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ groups: store.groups, updatedAt: store.updatedAt }));
     } catch (error: unknown) {
       const err = error as Error;
+      res.statusCode = 500;
       res.end(JSON.stringify({ error: err.message }));
     }
   } else if (requestUrl.pathname === '/api/chat' && method === 'POST') {
