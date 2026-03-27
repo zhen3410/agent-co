@@ -1380,7 +1380,11 @@
 
     // 检测输入中的分组提及
     function detectGroupMention(text) {
-      const mentionRegex = /@([^\s@，。！？、]+)/g;
+      // Prevent ReDoS by limiting input length
+      if (text.length > 10000) return null;
+
+      // Limit mention length to 50 chars
+      const mentionRegex = /@([^\s@，。！？、]{1,50})/g;
       const matches = text.match(mentionRegex);
       if (!matches) return null;
 
@@ -1397,9 +1401,14 @@
       return null;
     }
 
-    // 渲染分组提及预览
+    // Escape special characters for regex
+    function escapeRegExp(string) {
+      return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+  // 渲染分组提及预览
     function renderGroupMentionPreview() {
-      if (!groupMentionPreview || !groupMentionPreviewEl) {
+      if (!groupMentionPreview || !groupMentionPreviewEl || !groupMentionPreview.agentNames) {
         if (groupMentionPreviewEl) {
           groupMentionPreviewEl.style.display = 'none';
           groupMentionPreviewEl.innerHTML = '';
@@ -1409,12 +1418,13 @@
 
       const agentsHtml = groupMentionPreview.agentNames.map(name => {
         const agent = agents.find(a => a.name === name);
+        if (!agent) return '';  // Skip missing agents
         return `
           <span class="preview-agent">
-            ✓ ${agent?.avatar || '🤖'} ${escapeHtml(name)}
+            ✓ ${agent.avatar || '🤖'} ${escapeHtml(name)}
           </span>
         `;
-      }).join('');
+      }).filter(html => html).join('');
 
       groupMentionPreviewEl.innerHTML = `
         <div class="preview-header">
@@ -1442,7 +1452,7 @@
         .map(name => `@${name}`)
         .join(' ');
       const newText = userInputEl.value.replace(
-        new RegExp(`@(${groupMentionPreview.id}|${groupMentionPreview.name})`),
+        new RegExp(`@(${escapeRegExp(groupMentionPreview.id)}|${escapeRegExp(groupMentionPreview.name)})`),
         agentMentions + ' '
       );
       userInputEl.value = newText;
@@ -1457,7 +1467,7 @@
       // 移除 @分组名
       if (!groupMentionPreview) return;
       const newText = userInputEl.value.replace(
-        new RegExp(`\\s*@(${groupMentionPreview.id}|${groupMentionPreview.name})\\s*`),
+        new RegExp(`\\s*@(${escapeRegExp(groupMentionPreview.id)}|${escapeRegExp(groupMentionPreview.name)})\\s*`),
         ' '
       ).trim();
       userInputEl.value = newText;
