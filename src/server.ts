@@ -12,6 +12,7 @@ import Redis from 'ioredis';
 import { Message, AIAgentConfig, ChatRequest, RichBlock } from './types';
 import { AgentManager } from './agent-manager';
 import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
+import { loadGroupStore } from './group-store';
 import { callClaudeCLI, generateMockReply, ClaudeResult } from './claude-cli';
 import { extractRichBlocks } from './rich-extract';
 import { addBlock, getStatus as getBlockBufferStatus } from './block-buffer';
@@ -28,6 +29,7 @@ const SESSION_COOKIE_NAME = 'bot_room_session';
 const CHAT_VISITOR_COOKIE_NAME = 'bot_room_visitor';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 天
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
+const GROUP_DATA_FILE = process.env.GROUP_DATA_FILE || path.join(path.dirname(AGENT_DATA_FILE), 'groups.json');
 const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || path.join(process.cwd(), 'logs', 'ai-cli-verbose');
 const DEFAULT_REDIS_URL = 'redis://127.0.0.1:6379';
 const REDIS_CONFIG_KEY = 'bot-room:config';
@@ -2481,6 +2483,14 @@ const server = http.createServer(async (req, res) => {
   // 路由
   if (requestUrl.pathname === '/api/agents' && method === 'GET') {
     handleGetAgents(req, res);
+  } else if (requestUrl.pathname === '/api/groups' && method === 'GET') {
+    try {
+      const store = loadGroupStore(GROUP_DATA_FILE);
+      res.end(JSON.stringify({ groups: store.groups, updatedAt: store.updatedAt }));
+    } catch (error: unknown) {
+      const err = error as Error;
+      res.end(JSON.stringify({ error: err.message }));
+    }
   } else if (requestUrl.pathname === '/api/chat' && method === 'POST') {
     await handleSendMessage(req, res);
   } else if (requestUrl.pathname === '/api/chat-stream' && method === 'POST') {
