@@ -43,3 +43,12 @@ test('管理后台包含 API connection 管理和 agent API 模式配置 UI', ()
   assert.ok(html.includes("agent.executionMode === 'api'"), 'should render API mode summary in agent cards');
   assert.ok(html.includes('API · ${escapeHtml(connectionName)} · ${escapeHtml(agent.apiModel || \'\')}'), 'should show API summary in agent list');
 });
+
+test('编辑已绑定停用 connection 的 API agent 时仍会保留当前连接选项', () => {
+  const htmlPath = path.join(__dirname, '..', '..', 'public-auth', 'admin.html');
+  const html = fs.readFileSync(htmlPath, 'utf8');
+
+  assert.ok(html.includes('selectedConnection && !selectedConnection.enabled'), 'should detect disabled selected connection');
+  assert.ok(html.includes('（已停用）'), 'should label disabled selected connection clearly');
+  assert.ok(html.includes('const enabledOptions = modelConnections'), 'should keep normal enabled options separate');
+});

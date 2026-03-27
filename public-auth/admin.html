@@ -1149,10 +1149,15 @@
     function populateModelConnectionOptions(selectedId = '') {
       const select = document.getElementById('agentApiConnectionId');
       if (!select) return;
-      select.innerHTML = `<option value="">请选择模型连接</option>` + modelConnections
+      const selectedConnection = modelConnections.find(connection => connection.id === selectedId);
+      const enabledOptions = modelConnections
         .filter(connection => connection.enabled)
         .map(connection => `<option value="${escapeHtml(connection.id)}">${escapeHtml(connection.name)}</option>`)
         .join('');
+      const disabledSelectedOption = selectedConnection && !selectedConnection.enabled
+        ? `<option value="${escapeHtml(selectedConnection.id)}">${escapeHtml(selectedConnection.name)}（已停用）</option>`
+        : '';
+      select.innerHTML = `<option value="">请选择模型连接</option>` + disabledSelectedOption + enabledOptions;
       select.value = selectedId || '';
     }
 
