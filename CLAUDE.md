@@ -133,6 +133,38 @@ interface AIAgentConfig {
 - `applyMode: "immediate"` - 立即生效
 - `applyMode: "after_chat"` - 会话结束后生效
 
+## 智能体分组
+
+### 分组配置
+
+分组存储在 `data/groups.json`，支持将智能体按功能分组管理。
+
+### 分组结构
+
+```typescript
+interface AgentGroup {
+  id: string;        // 唯一标识（2-20 字符，字母数字下划线）
+  name: string;      // 显示名称（2-16 字符）
+  icon: string;      // emoji 图标（1-2 个）
+  agentNames: string[]; // 智能体名称数组
+}
+```
+
+### 分组功能
+
+- **侧边栏分组展示**：智能体按分组折叠显示
+- **快速切换**：点击分组按钮切换当前会话激活的智能体
+- **批量 @ 提及**：输入 `@分组名` 弹出预览，确认后展开为多个 @ 提及
+
+### 分组 API
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/groups` | GET | 获取所有分组 |
+| `/api/groups` | POST | 创建分组（需 x-admin-token） |
+| `/api/groups/:id` | PUT | 更新分组（需 x-admin-token） |
+| `/api/groups/:id` | DELETE | 删除分组（需 x-admin-token） |
+
 ## 富文本支持
 
 AI 回复支持 `cc_rich` 代码块：

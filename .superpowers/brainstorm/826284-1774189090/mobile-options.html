@@ -1,0 +1,122 @@
+<h2>移动端方案</h2>
+<p class="subtitle">桌面端已确定为 `Collapsible Rail`。这里重点比较手机上如何收纳会话、智能体和工作目录。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. Bottom Sheet Hub</div>
+        <div class="mockup-body" style="background:#e6edf2;padding:18px;display:flex;justify-content:center;">
+          <div style="width:170px;height:312px;border-radius:28px;background:#dfe7ec;padding:10px;box-shadow:0 8px 30px rgba(15,23,42,.12);">
+            <div style="height:100%;border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.7),rgba(255,255,255,.45));padding:10px;display:flex;flex-direction:column;gap:10px;">
+              <div style="height:38px;border-radius:14px;background:rgba(255,255,255,.82);border:1px solid rgba(148,163,184,.35);"></div>
+              <div style="flex:1;border-radius:18px;background:rgba(255,255,255,.55);padding:10px;display:flex;flex-direction:column;gap:10px;">
+                <div style="width:72%;height:42px;background:rgba(255,255,255,.9);border-radius:14px;"></div>
+                <div style="margin-left:auto;width:52%;height:48px;background:#0f172a;border-radius:14px;"></div>
+                <div style="width:78%;height:54px;background:rgba(255,255,255,.9);border-radius:14px;"></div>
+              </div>
+              <div style="height:44px;border-radius:16px;background:rgba(255,255,255,.82);border:1px solid rgba(148,163,184,.35);"></div>
+              <div style="height:108px;border-radius:20px;background:rgba(31,41,55,.96);padding:10px;display:flex;flex-direction:column;gap:8px;">
+                <div style="width:42px;height:4px;border-radius:999px;background:#94a3b8;margin:0 auto 2px;"></div>
+                <div style="height:18px;width:76px;background:#dbeafe;border-radius:999px;"></div>
+                <div style="height:26px;background:rgba(255,255,255,.08);border-radius:10px;"></div>
+                <div style="height:26px;background:rgba(255,255,255,.08);border-radius:10px;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Bottom Sheet Hub</h3>
+      <p>所有辅助功能统一收进底部抽屉，从顶部按钮或底部手柄拉出。最适合单手操作，也最贴近你说的“可隐藏”。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. Top Tabs Overlay</div>
+        <div class="mockup-body" style="background:#e6edf2;padding:18px;display:flex;justify-content:center;">
+          <div style="width:170px;height:312px;border-radius:28px;background:#dfe7ec;padding:10px;box-shadow:0 8px 30px rgba(15,23,42,.12);">
+            <div style="height:100%;border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.7),rgba(255,255,255,.45));padding:10px;display:flex;flex-direction:column;gap:10px;">
+              <div style="height:38px;border-radius:14px;background:rgba(255,255,255,.82);border:1px solid rgba(148,163,184,.35);"></div>
+              <div style="height:120px;border-radius:18px;background:rgba(255,255,255,.84);border:1px solid rgba(148,163,184,.35);padding:10px;display:flex;flex-direction:column;gap:8px;">
+                <div style="display:flex;gap:6px;">
+                  <div style="width:40px;height:18px;background:#dbeafe;border-radius:999px;"></div>
+                  <div style="width:40px;height:18px;background:#e2e8f0;border-radius:999px;"></div>
+                  <div style="width:40px;height:18px;background:#e2e8f0;border-radius:999px;"></div>
+                </div>
+                <div style="height:24px;background:#0f172a;border-radius:10px;"></div>
+                <div style="height:24px;background:#eef2f7;border:1px solid rgba(148,163,184,.35);border-radius:10px;"></div>
+                <div style="height:24px;background:#eef2f7;border:1px solid rgba(148,163,184,.35);border-radius:10px;"></div>
+              </div>
+              <div style="flex:1;border-radius:18px;background:rgba(255,255,255,.55);padding:10px;display:flex;flex-direction:column;gap:10px;">
+                <div style="width:72%;height:42px;background:rgba(255,255,255,.9);border-radius:14px;"></div>
+                <div style="margin-left:auto;width:52%;height:48px;background:#0f172a;border-radius:14px;"></div>
+              </div>
+              <div style="height:44px;border-radius:16px;background:rgba(255,255,255,.82);border:1px solid rgba(148,163,184,.35);"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Top Tabs Overlay</h3>
+      <p>顶部展开一个带分页标签的管理层，会话、智能体、工作目录分三个标签。结构清楚，但会更像“设置页”。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. Mini Rail + Sheet</div>
+        <div class="mockup-body" style="background:#e6edf2;padding:18px;display:flex;justify-content:center;">
+          <div style="width:170px;height:312px;border-radius:28px;background:#dfe7ec;padding:10px;box-shadow:0 8px 30px rgba(15,23,42,.12);">
+            <div style="height:100%;border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.7),rgba(255,255,255,.45));padding:10px;display:grid;grid-template-columns:28px 1fr;gap:8px;">
+              <div style="border-radius:16px;background:rgba(31,41,55,.96);display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px 0;">
+                <div style="width:18px;height:18px;border-radius:6px;background:#dbeafe;"></div>
+                <div style="width:18px;height:18px;border-radius:6px;background:rgba(255,255,255,.14);"></div>
+                <div style="width:18px;height:18px;border-radius:6px;background:rgba(255,255,255,.14);"></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px;">
+                <div style="height:38px;border-radius:14px;background:rgba(255,255,255,.82);border:1px solid rgba(148,163,184,.35);"></div>
+                <div style="flex:1;border-radius:18px;background:rgba(255,255,255,.55);padding:10px;display:flex;flex-direction:column;gap:10px;">
+                  <div style="width:72%;height:42px;background:rgba(255,255,255,.9);border-radius:14px;"></div>
+                  <div style="margin-left:auto;width:52%;height:48px;background:#0f172a;border-radius:14px;"></div>
+                  <div style="width:78%;height:54px;background:rgba(255,255,255,.9);border-radius:14px;"></div>
+                </div>
+                <div style="height:44px;border-radius:16px;background:rgba(255,255,255,.82);border:1px solid rgba(148,163,184,.35);"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Mini Rail + Sheet</h3>
+      <p>把桌面端的窄轨道缩到手机里保留一个极细入口，再配合底部抽屉。统一性强，但小屏会显得略紧。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>我的推荐</h4>
+      <ul>
+        <li>A 最适合移动端，聊天主视图最完整</li>
+        <li>和你选的桌面 B 也能自然配套</li>
+        <li>会话、智能体、工作目录可以做成同一个抽屉里的分组模块</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>注意点</h4>
+      <ul>
+        <li>A 需要设计好抽屉内信息排序，否则会偏长</li>
+        <li>B 学习成本低，但遮挡聊天区更明显</li>
+        <li>C 视觉统一，但对手机宽度最不友好</li>
+      </ul>
+    </div>
+  </div>
+</div>

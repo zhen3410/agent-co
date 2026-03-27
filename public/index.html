@@ -285,6 +285,7 @@
               <div className="input-area">
                 <form onSubmit={(event) => window.sendMessage && window.sendMessage(event)}>
                   <div className="mention-input-wrap">
+                    <div className="group-mention-preview" id="groupMentionPreview" style={{ display: 'none' }}></div>
                     <textarea
                       id="userInput"
                       placeholder="输入消息... 使用 @智能体名 召唤 AI"
@@ -421,6 +422,10 @@
     let agentChainMaxHops = '';
     let agentChainMaxCallsPerAgent = null;
     const chatWorkdirState = { root: '', level2: '', level3: '', custom: '' };
+    let groups = [];
+    let expandedGroups = new Set();
+    let activeGroup = null;
+    let groupMentionPreview = null;
 
     // DOM 元素
     let messagesEl;
@@ -466,6 +471,7 @@
     let saveAgentChainMaxCallsPerAgentBtnEls = [];
     let agentChainMaxCallsLimitRowEls = [];
     let sessionSettingsFeedbackEls = [];
+    let groupMentionPreviewEl;
 
     let activeContextTab = 'sessions';
     let sessionSearchQuery = '';
@@ -475,6 +481,7 @@
       pwaBannerTextEl = document.getElementById('pwaBannerText');
       pwaInstallBtnEl = document.getElementById('pwaInstallBtn');
       focusAgentSummaryEl = document.getElementById('focusAgentSummary');
+      groupMentionPreviewEl = document.getElementById('groupMentionPreview');
     }
 
     function cacheDomElements() {
@@ -585,6 +592,7 @@
         isAuthenticated = true;
         await loadAgents();
         await loadHistory();
+        await loadGroups();
         await loadWorkdirOptions();
       } catch (error) {
         authErrorEl.textContent = error.message;
@@ -614,6 +622,7 @@
         return;
       }
       await loadHistory();
+      await loadGroups();
     }
 
     function getVisibleSessions() {
@@ -783,6 +792,7 @@
             syncSessionSettingsState(data.session);
           } else {
             await loadHistory();
+            await loadGroups();
           }
           const message = data.error || '保存失败';
           setSessionSettingsFeedback(message, 'error');
@@ -795,6 +805,7 @@
       } catch (error) {
         console.error('保存会话链路设置失败:', error);
         await loadHistory();
+        await loadGroups();
         setSessionSettingsFeedback(error.message || '保存失败', 'error');
         alert(error.message || '保存失败');
       }
@@ -1072,6 +1083,42 @@
       });
     }
 
+    function getGroupedAgents() {
+      const result = [];
+      const groupedNames = new Set();
+
+      // Defined groups first
+      for (const group of groups) {
+        const agentsInGroup = agents.filter(a => group.agentNames.includes(a.name));
+        if (agentsInGroup.length > 0) {
+          result.push({
+            id: group.id,
+            name: group.name,
+            icon: group.icon,
+            agents: agentsInGroup,
+            agentNames: group.agentNames,
+            isUngrouped: false
+          });
+          group.agentNames.forEach(name => groupedNames.add(name));
+        }
+      }
+
+      // Ungrouped agents
+      const ungrouped = agents.filter(a => !groupedNames.has(a.name));
+      if (ungrouped.length > 0) {
+        result.push({
+          id: '__ungrouped__',
+          name: '其他',
+          icon: '📦',
+          agents: ungrouped,
+          agentNames: ungrouped.map(a => a.name),
+          isUngrouped: true
+        });
+      }
+
+      return result;
+    }
+
     function updateAgentZeroState() {
       if (!agentZeroStateEl) return;
       const hasEnabledAgents = Array.from(enabledAgents).length > 0;
@@ -1085,31 +1132,64 @@
     }
 
     function renderAgentsList() {
-      const sortedAgents = getSortedAgents();
-      const agentsHtml = sortedAgents.map(agent => {
-        const isEnabled = enabledAgents.has(agent.name);
-        const disabledClass = isEnabled ? '' : ' agent-tag--disabled';
-        const checked = isEnabled ? 'checked' : '';
-        const disabledAttr = isEnabled ? '' : 'aria-disabled="true"';
-        return `
-          <span class="agent-tag${disabledClass}" style="--agent-color: ${agent.color}" title="@${agent.name}" ${disabledAttr} onclick="selectAgent('${agent.name}')">
-            <span class="agent-tag__main">
-              ${agent.avatar} ${agent.name}
-            </span>
+      const groupedAgents = getGroupedAgents();
+      const agentsHtml = groupedAgents.map(group => {
+        const isExpanded = expandedGroups.has(group.id);
+        const isActive = activeGroup === group.id;
+
+        const groupHeader = `
+          <div class="agent-group-header ${isActive ? 'agent-group-header--active' : ''}" onclick="toggleGroupExpand('${group.id}')">
+            <span class="group-expand-icon">${isExpanded ? '▼' : '▶'}</span>
+            <span class="group-icon">${group.icon}</span>
+            <span class="group-name">${group.name}</span>
+            <span class="group-count">(${group.agents.length})</span>
             <button
               type="button"
-              class="agent-tag__toggle"
-              role="switch"
-              aria-checked="${checked ? 'true' : 'false'}"
-              onclick="event.stopPropagation(); toggleSessionAgent('${agent.name}', ${!isEnabled})"
+              class="group-switch-btn"
+              onclick="event.stopPropagation(); handleGroupSwitchById('${group.id}')"
             >
-              <span class="agent-tag__toggle-track">
-                <span class="agent-tag__toggle-thumb"></span>
-              </span>
+              切换
             </button>
-          </span>
+          </div>
+        `;
+
+        if (!isExpanded) {
+          return `<div class="agent-group">${groupHeader}</div>`;
+        }
+
+        const agentsItems = group.agents.map(agent => {
+          const isEnabled = enabledAgents.has(agent.name);
+          const disabledClass = isEnabled ? '' : ' agent-tag--disabled';
+          const checked = isEnabled ? 'checked' : '';
+          const disabledAttr = isEnabled ? '' : 'aria-disabled="true"';
+          return `
+            <span class="agent-tag${disabledClass}" style="--agent-color: ${agent.color}" title="@${agent.name}" ${disabledAttr} onclick="selectAgent('${agent.name}')">
+              <span class="agent-tag__main">
+                ${agent.avatar} ${agent.name}
+              </span>
+              <button
+                type="button"
+                class="agent-tag__toggle"
+                role="switch"
+                aria-checked="${checked ? 'true' : 'false'}"
+                onclick="event.stopPropagation(); toggleSessionAgent('${agent.name}', ${!isEnabled})"
+              >
+                <span class="agent-tag__toggle-track">
+                  <span class="agent-tag__toggle-thumb"></span>
+                </span>
+              </button>
+            </span>
+          `;
+        }).join('');
+
+        return `
+          <div class="agent-group">
+            ${groupHeader}
+            <div class="agent-group-members">${agentsItems}</div>
+          </div>
         `;
       }).join('');
+
       agentsListEl.innerHTML = agentsHtml;
       if (mobileAgentsMirrorEl) {
         mobileAgentsMirrorEl.innerHTML = `
@@ -1130,6 +1210,31 @@
         resizeUserInput();
         userInputEl.focus();
       }
+    }
+
+    function toggleGroupExpand(groupId) {
+      if (expandedGroups.has(groupId)) {
+        expandedGroups.delete(groupId);
+      } else {
+        expandedGroups.add(groupId);
+      }
+      renderAgentsList();
+    }
+
+    function handleGroupSwitchById(groupId) {
+      const groupedAgents = getGroupedAgents();
+      const group = groupedAgents.find(g => g.id === groupId);
+      if (group) {
+        handleGroupSwitch(group);
+      }
+    }
+
+    function handleGroupSwitch(group) {
+      const enabledSet = new Set(group.agentNames);
+      enabledAgents = enabledSet;
+      activeGroup = group.id;
+      renderAgentsList();
+      saveSessionSettings();
     }
 
     function getMentionCandidates() {
@@ -1271,6 +1376,105 @@
       if (!userInputEl) return;
       userInputEl.style.height = 'auto';
       userInputEl.style.height = `${Math.min(userInputEl.scrollHeight, 160)}px`;
+    }
+
+    // 检测输入中的分组提及
+    function detectGroupMention(text) {
+      // Prevent ReDoS by limiting input length
+      if (text.length > 10000) return null;
+
+      // Limit mention length to 50 chars
+      const mentionRegex = /@([^\s@，。！？、]{1,50})/g;
+      const matches = text.match(mentionRegex);
+      if (!matches) return null;
+
+      for (const match of matches) {
+        const mentionName = match.slice(1); // 去掉 @
+        // 检查是否是分组名（按 id 或 name 匹配）
+        const group = groups.find(g =>
+          g.id === mentionName || g.name === mentionName
+        );
+        if (group) {
+          return group;
+        }
+      }
+      return null;
+    }
+
+    // Escape special characters for regex
+    function escapeRegExp(string) {
+      return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+  // 渲染分组提及预览
+    function renderGroupMentionPreview() {
+      if (!groupMentionPreview || !groupMentionPreviewEl || !groupMentionPreview.agentNames) {
+        if (groupMentionPreviewEl) {
+          groupMentionPreviewEl.style.display = 'none';
+          groupMentionPreviewEl.innerHTML = '';
+        }
+        return;
+      }
+
+      const agentsHtml = groupMentionPreview.agentNames.map(name => {
+        const agent = agents.find(a => a.name === name);
+        if (!agent) return '';  // Skip missing agents
+        return `
+          <span class="preview-agent">
+            ✓ ${agent.avatar || '🤖'} ${escapeHtml(name)}
+          </span>
+        `;
+      }).filter(html => html).join('');
+
+      groupMentionPreviewEl.innerHTML = `
+        <div class="preview-header">
+          <span class="preview-icon">${escapeHtml(groupMentionPreview.icon)}</span>
+          <span class="preview-name">${escapeHtml(groupMentionPreview.name)}</span>
+          <span class="preview-count">(${groupMentionPreview.agentNames.length} 个智能体)</span>
+        </div>
+        <div class="preview-agents">
+          ${agentsHtml}
+        </div>
+        <div class="preview-actions">
+          <button class="confirm-btn" onclick="confirmGroupMention()">确认召唤</button>
+          <button class="cancel-btn" onclick="cancelGroupMention()">取消</button>
+        </div>
+      `;
+      groupMentionPreviewEl.style.display = 'block';
+    }
+
+    // 确认分组提及
+    function confirmGroupMention() {
+      if (!groupMentionPreview) return;
+
+      // 将 @分组名 替换为 @智能体1 @智能体2 ...
+      const agentMentions = groupMentionPreview.agentNames
+        .map(name => `@${name}`)
+        .join(' ');
+      const newText = userInputEl.value.replace(
+        new RegExp(`@(${escapeRegExp(groupMentionPreview.id)}|${escapeRegExp(groupMentionPreview.name)})`),
+        agentMentions + ' '
+      );
+      userInputEl.value = newText;
+      groupMentionPreview = null;
+      renderGroupMentionPreview();
+      resizeUserInput();
+      userInputEl.focus();
+    }
+
+    // 取消分组提及
+    function cancelGroupMention() {
+      // 移除 @分组名
+      if (!groupMentionPreview) return;
+      const newText = userInputEl.value.replace(
+        new RegExp(`\\s*@(${escapeRegExp(groupMentionPreview.id)}|${escapeRegExp(groupMentionPreview.name)})\\s*`),
+        ' '
+      ).trim();
+      userInputEl.value = newText;
+      groupMentionPreview = null;
+      renderGroupMentionPreview();
+      resizeUserInput();
+      userInputEl.focus();
     }
 
     function switchAgent() {
@@ -2134,6 +2338,19 @@
       }
     }
 
+    async function loadGroups() {
+      try {
+        const res = await fetch('/api/groups');
+        if (res.ok) {
+          const data = await res.json();
+          groups = data.groups || [];
+          renderAgentsList();
+        }
+      } catch (e) {
+        console.error('Failed to load groups:', e);
+      }
+    }
+
     async function clearHistory() {
       if (!confirm('确定要清空所有聊天记录吗?')) return;
 
@@ -2152,6 +2369,9 @@
     }
 
     window.selectAgent = selectAgent;
+    window.toggleGroupExpand = toggleGroupExpand;
+    window.handleGroupSwitchById = handleGroupSwitchById;
+    window.handleGroupSwitch = handleGroupSwitch;
     window.submitLogin = submitLogin;
     window.createSession = createSession;
     window.renameSession = renameSession;
@@ -2186,10 +2406,24 @@
       }
     };
 
+    window.selectMentionSuggestion = selectMentionSuggestion;
+    window.confirmGroupMention = confirmGroupMention;
+    window.cancelGroupMention = cancelGroupMention;
+
     function bindDomEvents() {
       userInputEl.addEventListener('input', () => {
         resizeUserInput();
         updateMentionSuggestions();
+
+        // 检测分组提及
+        const group = detectGroupMention(userInputEl.value);
+        if (group) {
+          groupMentionPreview = group;
+          renderGroupMentionPreview();
+        } else {
+          groupMentionPreview = null;
+          renderGroupMentionPreview();
+        }
       });
 
       if (sessionSearchInputEl) {
@@ -2301,6 +2535,7 @@
       if (!authEnabled || isAuthenticated) {
         await loadAgents();
         await loadHistory();
+        await loadGroups();
         await loadWorkdirOptions();
       }
       userInputEl.focus();

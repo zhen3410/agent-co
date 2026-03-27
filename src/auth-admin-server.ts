@@ -31,6 +31,12 @@ import {
   validateAgentConfig
 } from './agent-config-store';
 import { buildProfessionalAgentPrompt, isProfessionalAgentName } from './professional-agent-prompts';
+import {
+  loadGroupStore,
+  removeAgentFromAllGroups,
+  saveGroupStore,
+  validateGroupConfig
+} from './group-store';
 
 type UserRecord = {
   username: string;
@@ -63,6 +69,8 @@ const DEFAULT_PASSWORD = process.env.BOT_ROOM_DEFAULT_PASSWORD || 'admin123!';
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
 const MODEL_CONNECTION_DATA_FILE = process.env.MODEL_CONNECTION_DATA_FILE
   || path.join(path.dirname(AGENT_DATA_FILE), 'api-connections.json');
+const GROUP_DATA_FILE = process.env.GROUP_DATA_FILE
+  || path.join(path.dirname(AGENT_DATA_FILE), 'groups.json');
 
 // ============================================
 // 修复 1: 生产环境安全检查
@@ -252,6 +260,14 @@ function parseModelConnectionPath(pathname: string): { id: string; action: 'base
     return { id: decodeURIComponent(baseMatch[1]), action: 'base' };
   }
 
+  return null;
+}
+
+function parseGroupPath(pathname: string): { id: string } | null {
+  const match = pathname.match(/^\/api\/groups\/([a-zA-Z0-9_]+)$/);
+  if (match) {
+    return { id: match[1] };
+  }
   return null;
 }
 
@@ -445,9 +461,118 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ============================================
+  // 分组管理 API
+  // ============================================
+
+  if (method === 'GET' && pathname === '/api/groups') {
+    if (!requireAdmin(req, res)) return;
+    const store = loadGroupStore(GROUP_DATA_FILE);
+    sendJson(res, 200, { groups: store.groups, updatedAt: store.updatedAt });
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/api/groups') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const body = await parseBody<{ id?: string; name?: string; icon?: string; agentNames?: string[] }>(req);
+      if (!body.id || !body.name || !body.icon || !body.agentNames) {
+        sendJson(res, 400, { error: '缺少必要字段' });
+        return;
+      }
+
+      const agentStore = loadAgentStore(AGENT_DATA_FILE);
+      const existingAgentNames = agentStore.activeAgents.map(a => a.name);
+      const group = { id: body.id, name: body.name, icon: body.icon, agentNames: body.agentNames };
+      const validationError = validateGroupConfig(group, existingAgentNames);
+      if (validationError) {
+        sendJson(res, 400, { error: validationError });
+        return;
+      }
+
+      const groupStore = loadGroupStore(GROUP_DATA_FILE);
+      if (groupStore.groups.some(g => g.id === group.id)) {
+        sendJson(res, 409, { error: '分组 ID 已存在' });
+        return;
+      }
+
+      const nextStore = {
+        groups: [...groupStore.groups, group],
+        updatedAt: Date.now()
+      };
+      saveGroupStore(GROUP_DATA_FILE, nextStore);
+      sendJson(res, 201, { success: true, group });
+    } catch (error: unknown) {
+      const err = error as Error;
+      sendJson(res, 400, { error: err.message });
+    }
+    return;
+  }
+
+  const groupPath = parseGroupPath(pathname);
+  if (groupPath && method === 'PUT') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const body = await parseBody<{ name?: string; icon?: string; agentNames?: string[] }>(req);
+      const groupStore = loadGroupStore(GROUP_DATA_FILE);
+      const index = groupStore.groups.findIndex(g => g.id === groupPath.id);
+      if (index === -1) {
+        sendJson(res, 404, { error: '分组不存在' });
+        return;
+      }
+
+      const current = groupStore.groups[index];
+      const updated = {
+        id: current.id,
+        name: body.name ?? current.name,
+        icon: body.icon ?? current.icon,
+        agentNames: body.agentNames ?? current.agentNames
+      };
+
+      const agentStore = loadAgentStore(AGENT_DATA_FILE);
+      const existingAgentNames = agentStore.activeAgents.map(a => a.name);
+      const validationError = validateGroupConfig(updated, existingAgentNames);
+      if (validationError) {
+        sendJson(res, 400, { error: validationError });
+        return;
+      }
+
+      const nextStore = {
+        groups: groupStore.groups.map((g, i) => i === index ? updated : g),
+        updatedAt: Date.now()
+      };
+      saveGroupStore(GROUP_DATA_FILE, nextStore);
+      sendJson(res, 200, { success: true, group: updated });
+    } catch (error: unknown) {
+      const err = error as Error;
+      sendJson(res, 400, { error: err.message });
+    }
+    return;
+  }
+
+  if (groupPath && method === 'DELETE') {
+    if (!requireAdmin(req, res)) return;
+    const groupStore = loadGroupStore(GROUP_DATA_FILE);
+    const index = groupStore.groups.findIndex(g => g.id === groupPath.id);
+    if (index === -1) {
+      sendJson(res, 404, { error: '分组不存在' });
+      return;
+    }
+
+    const deleted = groupStore.groups[index];
+    const nextStore = {
+      groups: groupStore.groups.filter((_, i) => i !== index),
+      updatedAt: Date.now()
+    };
+    saveGroupStore(GROUP_DATA_FILE, nextStore);
+    sendJson(res, 200, { success: true, id: deleted.id });
+    return;
+  }
+
   if (!pathname.startsWith('/api/users')
     && !pathname.startsWith('/api/agents')
-    && !pathname.startsWith('/api/model-connections')) {
+    && !pathname.startsWith('/api/model-connections')
+    && !pathname.startsWith('/api/groups')) {
     if (method === 'GET' && pathname === '/api/system/dirs') {
       if (!requireAdmin(req, res)) return;
       try {
@@ -842,6 +967,15 @@ const server = http.createServer(async (req, res) => {
         }
         return filtered;
       });
+
+      // 级联清理分组引用
+      const groupStore = loadGroupStore(GROUP_DATA_FILE);
+      const cleanedGroupStore = removeAgentFromAllGroups(groupStore, targetName);
+      if (cleanedGroupStore.groups.length !== groupStore.groups.length ||
+          cleanedGroupStore.updatedAt !== groupStore.updatedAt) {
+        saveGroupStore(GROUP_DATA_FILE, cleanedGroupStore);
+      }
+
       saveAgentStore(AGENT_DATA_FILE, next);
       sendJson(res, 200, { success: true, applyMode, name: targetName });
     } catch (error: unknown) {
@@ -970,5 +1104,9 @@ server.listen(PORT, () => {
   console.log('  PUT    /api/agents/:name/prompt (x-admin-token)');
   console.log('  DELETE /api/agents/:name        (x-admin-token)');
   console.log('  POST   /api/agents/apply-pending (x-admin-token)');
+  console.log('  GET    /api/groups             (x-admin-token)');
+  console.log('  POST   /api/groups             (x-admin-token)');
+  console.log('  PUT    /api/groups/:id         (x-admin-token)');
+  console.log('  DELETE /api/groups/:id         (x-admin-token)');
   console.log('='.repeat(60));
 });

@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>设计稿 - 后台管理界面</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* 核心色彩 - 简洁高雅 */
+      --bg-primary: #fafafa;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #f5f5f5;
+      --text-primary: #1a1a1a;
+      --text-secondary: #525252;
+      --text-tertiary: #737373;
+      --text-muted: #a3a3a3;
+      --border-light: #e5e5e5;
+      --border-medium: #d4d4d4;
+      --accent: #2563eb;
+      --accent-light: #3b82f6;
+      --accent-subtle: rgba(37, 99, 235, 0.08);
+      --success: #16a34a;
+      --success-subtle: rgba(22, 163, 74, 0.1);
+      --warning: #d97706;
+      --warning-subtle: rgba(217, 119, 6, 0.1);
+      --danger: #dc2626;
+      --danger-subtle: rgba(220, 38, 38, 0.1);
+
+      /* 间距 */
+      --space-xs: 4px;
+      --space-sm: 8px;
+      --space-md: 16px;
+      --space-lg: 24px;
+      --space-xl: 32px;
+
+      /* 圆角 */
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+
+      /* 阴影 */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+      --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
+
+      /* 字体 */
+      --font-sans: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      font-size: 14px;
+      font-weight: 400;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ============================================
+       布局
+       ============================================ */
+
+    .admin {
+      min-height: 100vh;
+    }
+
+    .admin-header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-light);
+      padding: 0 var(--space-xl);
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .admin-header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .admin-header-meta {
+      display: flex;
+      align-items: center;
+      gap: var(--space-md);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 100px;
+    }
+
+    .badge-success {
+      background: var(--success-subtle);
+      color: var(--success);
+    }
+
+    .admin-content {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: var(--space-xl);
+    }
+
+    /* ============================================
+       卡片
+       ============================================ */
+
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-lg);
+      margin-bottom: var(--space-lg);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: var(--space-lg);
+      border-bottom: 1px solid var(--border-light);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .card-body {
+      padding: var(--space-lg);
+    }
+
+    /* ============================================
+       Token 验证区
+       ============================================ */
+
+    .token-section {
+      background: linear-gradient(135deg, var(--accent-subtle) 0%, rgba(37, 99, 235, 0.04) 100%);
+    }
+
+    .token-input-group {
+      display: flex;
+      gap: var(--space-md);
+    }
+
+    .token-input-group input {
+      flex: 1;
+    }
+
+    .info-box {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-md);
+      padding: var(--space-md);
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+      margin-top: var(--space-md);
+    }
+
+    .info-box-icon {
+      color: var(--accent);
+      font-size: 16px;
+    }
+
+    .info-box-content {
+      flex: 1;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .info-box code {
+      background: var(--bg-secondary);
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+    }
+
+    /* ============================================
+       表单
+       ============================================ */
+
+    .form-group {
+      margin-bottom: var(--space-md);
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      margin-bottom: var(--space-sm);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--space-md);
+    }
+
+    input[type="text"],
+    input[type="password"],
+    select,
+    textarea {
+      width: 100%;
+      padding: var(--space-md);
+      background: var(--bg-tertiary);
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      font-size: 14px;
+      font-family: inherit;
+      color: var(--text-primary);
+      outline: none;
+      transition: all 0.15s ease;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      background: var(--bg-secondary);
+      border-color: var(--accent);
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+      color: var(--text-muted);
+    }
+
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    select {
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 40px;
+    }
+
+    /* ============================================
+       按钮
+       ============================================ */
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-sm);
+      padding: var(--space-sm) var(--space-md);
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      border-radius: var(--radius-md);
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-light);
+      border-color: var(--accent-light);
+    }
+
+    .btn-secondary {
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      border-color: var(--border-light);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-tertiary);
+      border-color: var(--border-medium);
+    }
+
+    .btn-danger {
+      background: var(--danger-subtle);
+      color: var(--danger);
+      border-color: transparent;
+    }
+
+    .btn-danger:hover {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+
+    /* ============================================
+       表格
+       ============================================ */
+
+    .table-container {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: var(--space-md);
+      text-align: left;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    th {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: var(--bg-tertiary);
+    }
+
+    td {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: var(--bg-primary);
+    }
+
+    .table-actions {
+      display: flex;
+      gap: var(--space-sm);
+    }
+
+    /* ============================================
+       空状态
+       ============================================ */
+
+    .empty-state {
+      text-align: center;
+      padding: var(--space-xl) var(--space-lg);
+      color: var(--text-tertiary);
+    }
+
+    .empty-state-icon {
+      font-size: 32px;
+      margin-bottom: var(--space-md);
+      opacity: 0.5;
+    }
+
+    .empty-state-text {
+      font-size: 14px;
+    }
+
+    /* ============================================
+       加载状态
+       ============================================ */
+
+    .loading {
+      text-align: center;
+      padding: var(--space-xl);
+      color: var(--text-tertiary);
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border-light);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+      margin-bottom: var(--space-md);
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ============================================
+       Toast 通知
+       ============================================ */
+
+    .toast {
+      position: fixed;
+      bottom: var(--space-lg);
+      right: var(--space-lg);
+      padding: var(--space-md) var(--space-lg);
+      background: var(--text-primary);
+      color: white;
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: var(--shadow-lg);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s ease;
+      z-index: 1000;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .toast.success {
+      background: var(--success);
+    }
+
+    .toast.error {
+      background: var(--danger);
+    }
+
+    /* ============================================
+       模态框
+       ============================================ */
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.2s ease;
+    }
+
+    .modal-overlay.show {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .modal {
+      width: 400px;
+      max-width: 90%;
+      background: var(--bg-secondary);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      padding: var(--space-xl);
+      transform: scale(0.95);
+      transition: transform 0.2s ease;
+    }
+
+    .modal-overlay.show .modal {
+      transform: scale(1);
+    }
+
+    .modal h3 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: var(--space-sm);
+    }
+
+    .modal p {
+      font-size: 13px;
+      color: var(--text-tertiary);
+      margin-bottom: var(--space-lg);
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: var(--space-md);
+      margin-top: var(--space-lg);
+    }
+
+    .modal-actions .btn {
+      flex: 1;
+      padding: var(--space-md);
+    }
+
+    /* ============================================
+       状态标签
+       ============================================ */
+
+    .status-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 500;
+      border-radius: 100px;
+    }
+
+    .status-tag.pending {
+      background: var(--warning-subtle);
+      color: var(--warning);
+    }
+
+    .status-tag.active {
+      background: var(--success-subtle);
+      color: var(--success);
+    }
+
+    /* ============================================
+       Agent 卡片
+       ============================================ */
+
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: var(--space-md);
+    }
+
+    .agent-card {
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: var(--space-md);
+      transition: all 0.15s ease;
+    }
+
+    .agent-card:hover {
+      border-color: var(--border-medium);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .agent-card-header {
+      display: flex;
+      align-items: center;
+      gap: var(--space-md);
+      margin-bottom: var(--space-md);
+    }
+
+    .agent-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      background: var(--bg-tertiary);
+    }
+
+    .agent-info {
+      flex: 1;
+    }
+
+    .agent-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .agent-color {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: ui-monospace, monospace;
+    }
+
+    .agent-personality {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      line-height: 1.5;
+      margin-bottom: var(--space-md);
+    }
+
+    .agent-actions {
+      display: flex;
+      gap: var(--space-sm);
+    }
+
+    /* ============================================
+       Tab 导航
+       ============================================ */
+
+    .tabs {
+      display: flex;
+      gap: var(--space-sm);
+      margin-bottom: var(--space-lg);
+      border-bottom: 1px solid var(--border-light);
+      padding-bottom: var(--space-sm);
+    }
+
+    .tab {
+      padding: var(--space-sm) var(--space-md);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      background: none;
+      border: none;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .tab:hover {
+      color: var(--text-secondary);
+      background: var(--bg-tertiary);
+    }
+
+    .tab.active {
+      color: var(--accent);
+      background: var(--accent-subtle);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    /* ============================================
+       分组列表
+       ============================================ */
+
+    .groups-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-md);
+    }
+
+    .group-item {
+      display: flex;
+      align-items: center;
+      padding: var(--space-md);
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+      gap: var(--space-md);
+    }
+
+    .group-item-icon {
+      font-size: 24px;
+    }
+
+    .group-item-info {
+      flex: 1;
+    }
+
+    .group-item-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .group-item-members {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-top: 4px;
+    }
+
+    .group-item-actions {
+      display: flex;
+      gap: var(--space-sm);
+    }
+
+    /* ============================================
+       复选框网格
+       ============================================ */
+
+    .checkboxes-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--space-sm);
+      max-height: 200px;
+      overflow-y: auto;
+      padding: var(--space-sm);
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+    }
+
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      padding: var(--space-xs);
+    }
+
+    .checkbox-item input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+    }
+
+    .checkbox-item label {
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    /* ============================================
+       表单提示
+       ============================================ */
+
+    .form-hint {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ============================================
+       响应式
+       ============================================ */
+
+    @media (max-width: 640px) {
+      .admin-header {
+        padding: 0 var(--space-md);
+      }
+
+      .admin-content {
+        padding: var(--space-md);
+      }
+
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+
+      .token-input-group {
+        flex-direction: column;
+      }
+
+      .agent-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .tabs {
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="admin">
+    <!-- 头部 -->
+    <header class="admin-header">
+      <h1>Bot Room 管理后台</h1>
+      <div class="admin-header-meta">
+        <span class="badge badge-success">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 6 9 17l-5-5"/>
+          </svg>
+          已验证
+        </span>
+      </div>
+    </header>
+
+    <!-- 内容区 -->
+    <main class="admin-content">
+      <!-- Tab 导航 -->
+      <div class="tabs">
+        <button class="tab active" data-tab="agents">智能体管理</button>
+        <button class="tab" data-tab="groups">分组管理</button>
+        <button class="tab" data-tab="users">用户管理</button>
+        <button class="tab" data-tab="connections">连接管理</button>
+      </div>
+
+      <!-- Token 验证（始终显示） -->
+      <div class="card token-section">
+        <div class="card-body">
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label">管理员 Token</label>
+            <div class="token-input-group">
+              <input type="password" placeholder="输入管理员 Token 以解锁管理功能" value="••••••••••••••••••••">
+              <button class="btn btn-primary">验证</button>
+            </div>
+            <div class="info-box">
+              <span class="info-box-icon">ℹ️</span>
+              <div class="info-box-content">
+                提示: 默认 Token 为 <code>change-me-in-production</code>，请在生产环境中修改环境变量 <code>AUTH_ADMIN_TOKEN</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 智能体管理 Tab -->
+      <div class="tab-content active" id="agents-tab">
+        <!-- 添加智能体 -->
+        <div class="card-header">
+          <h2 class="card-title">添加用户</h2>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">用户名</label>
+              <input type="text" placeholder="3-32位字母数字">
+            </div>
+            <div class="form-group">
+              <label class="form-label">密码</label>
+              <input type="password" placeholder="至少8位">
+            </div>
+          </div>
+          <div style="margin-top: var(--space-md);">
+            <button class="btn btn-primary">添加用户</button>
+          </div>
+        </div>
+      </div>
+      </div>
+
+      <!-- 连接管理 Tab -->
+      <div class="tab-content" id="connections-tab">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">连接状态</h3>
+          </div>
+          <div class="card-body">
+            <div class="info-box">
+              <span class="info-box-icon">🔗</span>
+              <div class="info-box-content">
+                连接管理功能开发中...
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">用户列表</h2>
+          <span class="status-tag active">3 个用户</span>
+        </div>
+        <div class="card-body" style="padding: 0;">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>用户名</th>
+                  <th>创建时间</th>
+                  <th>更新时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>admin</strong></td>
+                  <td>2024-01-15 10:30</td>
+                  <td>2024-03-10 14:22</td>
+                  <td>
+                    <div class="table-actions">
+                      <button class="btn btn-secondary btn-sm">改密</button>
+                      <button class="btn btn-danger btn-sm">删除</button>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>developer</strong></td>
+                  <td>2024-02-20 09:15</td>
+                  <td>2024-02-20 09:15</td>
+                  <td>
+                    <div class="table-actions">
+                      <button class="btn btn-secondary btn-sm">改密</button>
+                      <button class="btn btn-danger btn-sm">删除</button>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>tester</strong></td>
+                  <td>2024-03-01 16:45</td>
+                  <td>2024-03-08 11:30</td>
+                  <td>
+                    <div class="table-actions">
+                      <button class="btn btn-secondary btn-sm">改密</button>
+                      <button class="btn btn-danger btn-sm">删除</button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 添加智能体 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">添加智能体</h2>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">名称</label>
+              <input type="text" placeholder="如 ProductOwner">
+            </div>
+            <div class="form-group">
+              <label class="form-label">颜色</label>
+              <input type="text" placeholder="#3b82f6" value="#3b82f6">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">头像</label>
+              <input type="text" placeholder="🤖">
+            </div>
+            <div class="form-group">
+              <label class="form-label">生效策略</label>
+              <select>
+                <option value="immediate">热生效（立即）</option>
+                <option value="after_chat">会话结束后生效</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">性格描述</label>
+            <textarea placeholder="该智能体的定位与风格"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">自定义提示词（可选）</label>
+            <textarea placeholder="留空则使用性格描述生成默认提示词"></textarea>
+          </div>
+          <div style="margin-top: var(--space-md);">
+            <button class="btn btn-primary">新增智能体</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 智能体列表 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">智能体列表</h2>
+          <span class="status-tag pending">1 个待生效</span>
+        </div>
+        <div class="card-body">
+          <div class="agent-grid">
+            <!-- Claude -->
+            <div class="agent-card">
+              <div class="agent-card-header">
+                <div class="agent-avatar">🤖</div>
+                <div class="agent-info">
+                  <div class="agent-name">Claude</div>
+                  <div class="agent-color">#ff6b6b</div>
+                </div>
+              </div>
+              <div class="agent-personality">技术和编程专家，擅长解决复杂的技术问题，提供清晰的代码示例和架构建议。</div>
+              <div class="agent-actions">
+                <button class="btn btn-secondary btn-sm">编辑</button>
+                <button class="btn btn-secondary btn-sm">改提示词</button>
+                <button class="btn btn-danger btn-sm">删除</button>
+              </div>
+            </div>
+
+            <!-- Alice -->
+            <div class="agent-card">
+              <div class="agent-card-header">
+                <div class="agent-avatar">👩‍💻</div>
+                <div class="agent-info">
+                  <div class="agent-name">Alice</div>
+                  <div class="agent-color">#4ecdc4</div>
+                </div>
+              </div>
+              <div class="agent-personality">艺术和设计专家，擅长 UI/UX 设计、视觉创意和用户体验优化。</div>
+              <div class="agent-actions">
+                <button class="btn btn-secondary btn-sm">编辑</button>
+                <button class="btn btn-secondary btn-sm">改提示词</button>
+                <button class="btn btn-danger btn-sm">删除</button>
+              </div>
+            </div>
+
+            <!-- Bob -->
+            <div class="agent-card">
+              <div class="agent-card-header">
+                <div class="agent-avatar">🧑‍💻</div>
+                <div class="agent-info">
+                  <div class="agent-name">Bob</div>
+                  <div class="agent-color">#45b7d1</div>
+                </div>
+              </div>
+              <div class="agent-personality">工程实践专家，专注于最佳实践、代码质量和团队协作流程。</div>
+              <div class="agent-actions">
+                <button class="btn btn-secondary btn-sm">编辑</button>
+                <button class="btn btn-secondary btn-sm">改提示词</button>
+                <button class="btn btn-danger btn-sm">删除</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 待生效提示 -->
+          <div class="info-box" style="margin-top: var(--space-lg);">
+            <span class="info-box-icon">⏳</span>
+            <div class="info-box-content">
+              存在 <strong>1 个待生效配置</strong>，等待当前聊天结束后自动应用。
+              <button class="btn-text" style="margin-left: 8px;">立即应用</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+
+      <!-- 分组管理 Tab -->
+      <div class="tab-content" id="groups-tab">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">分组列表</h3>
+            <button class="btn btn-primary btn-sm" onclick="showGroupModal()">+ 新建分组</button>
+          </div>
+          <div class="card-body">
+            <div id="groups-list" class="groups-list">
+              <!-- 分组列表将通过 JS 渲染 -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 用户管理 Tab -->
+      <div class="tab-content" id="users-tab">
+        <!-- 添加用户 -->
+  </div>
+
+  <!-- 修改密码模态框 -->
+  <div class="modal-overlay" id="password-modal">
+    <div class="modal">
+      <h3>修改密码</h3>
+      <p>为用户 <strong>admin</strong> 设置新密码</p>
+      <div class="form-group">
+        <label class="form-label">新密码</label>
+        <input type="password" placeholder="至少8位">
+      </div>
+      <div class="form-group">
+        <label class="form-label">确认密码</label>
+        <input type="password" placeholder="再次输入密码">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary">取消</button>
+        <button class="btn btn-primary">确认修改</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 分组管理模态框 -->
+  <div class="modal-overlay" id="group-modal">
+    <div class="modal">
+      <h3 id="group-modal-title">新建分组</h3>
+      <p>创建智能体分组，方便管理和快速切换。</p>
+      <form id="group-form">
+        <div class="form-group">
+          <label class="form-label">分组 ID</label>
+          <input type="text" id="group-id" placeholder="例如: dev_team" required>
+          <small class="form-hint">2-20 字符，仅字母数字下划线，创建后不可修改</small>
+        </div>
+        <div class="form-group">
+          <label class="form-label">分组名称</label>
+          <input type="text" id="group-name" placeholder="例如: 开发组" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">图标</label>
+          <input type="text" id="group-icon" placeholder="例如: 💻" maxlength="4" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">智能体成员</label>
+          <div id="group-agents-checkboxes" class="checkboxes-grid">
+            <!-- 智能体复选框将通过 JS 渲染 -->
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="hideGroupModal()">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast 通知 -->
+  <div class="toast success show">用户创建成功</div>
+
+  <style>
+    .btn-text {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      padding: 0;
+    }
+    .btn-text:hover {
+      opacity: 0.8;
+    }
+  </style>
+
+  <script>
+    // 配置
+    const AUTH_ADMIN_URL = 'http://127.0.0.1:3003';
+    let adminToken = localStorage.getItem('adminToken') || '';
+    let agents = [];
+    let groups = [];
+    let editingGroupId = null;
+
+    // HTML 转义
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Toast 通知
+    function showToast(message, type = 'success') {
+      const existingToast = document.querySelector('.toast');
+      if (existingToast) {
+        existingToast.remove();
+      }
+
+      const toast = document.createElement('div');
+      toast.className = `toast ${type} show`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // Tab 切换
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        // 移除所有 active 状态
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+        // 添加 active 状态
+        tab.classList.add('active');
+        const tabName = tab.dataset.tab;
+        document.getElementById(`${tabName}-tab`).classList.add('active');
+
+        // 加载对应数据
+        if (tabName === 'groups') {
+          loadGroups();
+        } else if (tabName === 'agents') {
+          loadAgents();
+        }
+      });
+    });
+
+    // 加载智能体列表
+    async function loadAgents() {
+      try {
+        const res = await fetch(`${AUTH_ADMIN_URL}/api/agents`, {
+          headers: { 'x-admin-token': adminToken }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          agents = data.agents || [];
+        }
+      } catch (e) {
+        console.error('Failed to load agents:', e);
+      }
+    }
+
+    // 加载分组列表
+    async function loadGroups() {
+      try {
+        const res = await fetch(`${AUTH_ADMIN_URL}/api/groups`, {
+          headers: { 'x-admin-token': adminToken }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          groups = data.groups || [];
+          renderGroupsList();
+        } else {
+          showToast('加载分组失败', 'error');
+        }
+      } catch (e) {
+        console.error('Failed to load groups:', e);
+        showToast('加载分组失败', 'error');
+      }
+    }
+
+    // 渲染分组列表
+    function renderGroupsList() {
+      const container = document.getElementById('groups-list');
+      if (groups.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">📁</div>
+            <div class="empty-state-text">暂无分组，点击上方按钮创建</div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = groups.map(group => `
+        <div class="group-item">
+          <div class="group-item-icon">${escapeHtml(group.icon)}</div>
+          <div class="group-item-info">
+            <div class="group-item-name">${escapeHtml(group.name)} (${group.id})</div>
+            <div class="group-item-members">${group.agentNames.join(', ')}</div>
+          </div>
+          <div class="group-item-actions">
+            <button class="btn btn-secondary btn-sm" data-action="edit-group" data-group-id="${escapeHtml(group.id)}">编辑</button>
+            <button class="btn btn-danger btn-sm" data-action="delete-group" data-group-id="${escapeHtml(group.id)}">删除</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Event delegation for group actions
+    document.getElementById('groups-list').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+
+      const action = btn.dataset.action;
+      const groupId = btn.dataset.groupId;
+
+      if (action === 'edit-group') {
+        editGroup(groupId);
+      } else if (action === 'delete-group') {
+        deleteGroup(groupId);
+      }
+    });
+
+    // 显示分组弹窗
+    function showGroupModal(group = null) {
+      editingGroupId = group ? group.id : null;
+      document.getElementById('group-modal-title').textContent = group ? '编辑分组' : '新建分组';
+      document.getElementById('group-id').value = group ? group.id : '';
+      document.getElementById('group-id').disabled = !!group;
+      document.getElementById('group-name').value = group ? group.name : '';
+      document.getElementById('group-icon').value = group ? group.icon : '';
+
+      // 渲染智能体复选框
+      const checkboxesContainer = document.getElementById('group-agents-checkboxes');
+      const selectedAgents = group ? group.agentNames : [];
+      checkboxesContainer.innerHTML = agents.map(agent => `
+        <div class="checkbox-item">
+          <input type="checkbox" id="agent-${escapeHtml(agent.name)}" value="${escapeHtml(agent.name)}"
+                 ${selectedAgents.includes(agent.name) ? 'checked' : ''}>
+          <label for="agent-${escapeHtml(agent.name)}">${agent.avatar} ${escapeHtml(agent.name)}</label>
+        </div>
+      `).join('');
+
+      document.getElementById('group-modal').classList.add('show');
+    }
+
+    // 隐藏分组弹窗
+    function hideGroupModal() {
+      document.getElementById('group-modal').classList.remove('show');
+      editingGroupId = null;
+    }
+
+    // 编辑分组
+    function editGroup(id) {
+      const group = groups.find(g => g.id === id);
+      if (group) {
+        showGroupModal(group);
+      }
+    }
+
+    // 删除分组
+    async function deleteGroup(id) {
+      if (!confirm('确定要删除此分组吗？')) return;
+
+      try {
+        const res = await fetch(`${AUTH_ADMIN_URL}/api/groups/${id}`, {
+          method: 'DELETE',
+          headers: { 'x-admin-token': adminToken }
+        });
+        if (res.ok) {
+          showToast('分组已删除', 'success');
+          loadGroups();
+        } else {
+          const data = await res.json();
+          showToast(data.error || '删除失败', 'error');
+        }
+      } catch (e) {
+        showToast('删除失败', 'error');
+      }
+    }
+
+    // 提交分组表单
+    document.getElementById('group-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const id = document.getElementById('group-id').value.trim();
+      const name = document.getElementById('group-name').value.trim();
+      const icon = document.getElementById('group-icon').value.trim();
+
+      const checkboxes = document.querySelectorAll('#group-agents-checkboxes input:checked');
+      const agentNames = Array.from(checkboxes).map(cb => cb.value);
+
+      if (!id || !name || !icon || agentNames.length === 0) {
+        showToast('请填写所有字段并选择至少一个智能体', 'error');
+        return;
+      }
+
+      const url = editingGroupId
+        ? `${AUTH_ADMIN_URL}/api/groups/${editingGroupId}`
+        : `${AUTH_ADMIN_URL}/api/groups`;
+      const method = editingGroupId ? 'PUT' : 'POST';
+
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-token': adminToken
+          },
+          body: JSON.stringify({ id, name, icon, agentNames })
+        });
+
+        if (res.ok) {
+          showToast(editingGroupId ? '分组已更新' : '分组已创建', 'success');
+          hideGroupModal();
+          loadGroups();
+        } else {
+          const data = await res.json();
+          showToast(data.error || '操作失败', 'error');
+        }
+      } catch (e) {
+        showToast('操作失败', 'error');
+      }
+    });
+
+    // 初始化加载智能体
+    loadAgents();
+  </script>
+</body>
+</html>

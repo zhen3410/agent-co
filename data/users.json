@@ -1,0 +1,18 @@
+{
+  "users": [
+    {
+      "username": "admin",
+      "salt": "aaa92e8c3713e995a093a1c57035ed47",
+      "passwordHash": "330f1590c387f80c07d140f5ba6d5daf47c8e6f2131fcf76bf5e2af865daa27a4e9b26fea824e0737febb0f9bc3e6eb59fafd9256bcac769825b4b8f84970cf2",
+      "createdAt": 1773584288870,
+      "updatedAt": 1773584288870
+    },
+    {
+      "username": "zhehz",
+      "salt": "e7cc52e8a3c43bd168929600f57507b3",
+      "passwordHash": "1ac7c08f3fdc677f9e309ac2036374c657d763c76a7c33947128eb1d543a2e522f6323aee5723a16163cccc706d65e75c99d195ac6a96518681eddc773575a7f",
+      "createdAt": 1773584380360,
+      "updatedAt": 1773584380360
+    }
+  ]
+}
