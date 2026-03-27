@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -13,6 +14,47 @@ async function enableAgents(fixture, agentNames) {
     });
     assert.equal(response.status, 200);
   }
+}
+
+async function createOpenAICompatibleStub(handler) {
+  const requests = [];
+  const server = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.from(chunk));
+    }
+    const rawBody = Buffer.concat(chunks).toString('utf8');
+    const jsonBody = rawBody ? JSON.parse(rawBody) : null;
+    requests.push({
+      method: req.method,
+      url: req.url,
+      headers: req.headers,
+      body: jsonBody
+    });
+    await handler(req, res, jsonBody, requests);
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+
+  const address = server.address();
+  return {
+    baseURL: `http://127.0.0.1:${address.port}/v1`,
+    requests,
+    async close() {
+      await new Promise((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve());
+      });
+    }
+  };
+}
+
+function writeApiConnectionStore(tempDir, apiConnections) {
+  const filePath = join(tempDir, 'api-connections.json');
+  writeFileSync(filePath, JSON.stringify({ apiConnections, updatedAt: Date.now() }, null, 2), 'utf8');
+  return filePath;
 }
 
 function createCyclingClaudeScript(tempDir) {
@@ -59,6 +101,439 @@ EOF
 `, 'utf8');
   chmodSync(fakeClaude, 0o755);
 }
+
+test('统一 agent 调用入口会通过 CLI provider 返回结果', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-cli-'));
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+printf '%s\n' '{"output_text":"CLI provider reply"}'
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${tempDir}:${originalPath || ''}`;
+
+  try {
+    const { invokeAgent } = require('../../dist/agent-invoker.js');
+    const result = await invokeAgent({
+      userMessage: '你好',
+      agent: {
+        name: 'Alice',
+        avatar: '🤖',
+        systemPrompt: '你是 Alice',
+        color: '#fff',
+        executionMode: 'cli',
+        cliName: 'claude'
+      },
+      history: [],
+      includeHistory: true
+    });
+
+    assert.equal(result.text, 'CLI provider reply');
+    assert.deepEqual(result.blocks, []);
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('统一 agent 调用入口在 api 模式下会调用 OpenAI-compatible provider 并解析结果', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-api-success-'));
+  const stub = await createOpenAICompatibleStub((req, res) => {
+    assert.equal(req.method, 'POST');
+    assert.equal(req.url, '/v1/chat/completions');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      id: 'chatcmpl-test',
+      choices: [
+        {
+          index: 0,
+          finish_reason: 'stop',
+          message: {
+            role: 'assistant',
+            content: 'API provider reply\n\n```cc_rich\n{"kind":"card","title":"摘要","body":"已完成","tone":"success"}\n```'
+          }
+        }
+      ],
+      usage: {
+        prompt_tokens: 12,
+        completion_tokens: 7,
+        total_tokens: 19
+      }
+    }));
+  });
+
+  const connectionFile = writeApiConnectionStore(tempDir, [{
+    id: 'conn-1',
+    name: 'Gateway',
+    baseURL: stub.baseURL,
+    apiKey: 'sk-test-123',
+    enabled: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }]);
+
+  const originalConnectionFile = process.env.MODEL_CONNECTION_DATA_FILE;
+
+  try {
+    process.env.MODEL_CONNECTION_DATA_FILE = connectionFile;
+    const { invokeAgent } = require('../../dist/agent-invoker.js');
+    const result = await invokeAgent({
+      userMessage: '你好',
+      agent: {
+        name: 'Alice',
+        avatar: '🤖',
+        systemPrompt: '你是 Alice',
+        color: '#fff',
+        executionMode: 'api',
+        apiConnectionId: 'conn-1',
+        apiModel: 'gpt-4.1',
+        apiTemperature: 0.7,
+        apiMaxTokens: 2000
+      },
+      history: [
+        {
+          id: 'm1',
+          role: 'assistant',
+          sender: 'Alice',
+          text: '上一轮回复',
+          timestamp: Date.now() - 1000
+        }
+      ],
+      includeHistory: true
+    });
+
+    assert.equal(result.text, 'API provider reply');
+    assert.match(result.rawText || '', /cc_rich/);
+    assert.equal(result.finishReason, 'stop');
+    assert.deepEqual(result.usage, {
+      inputTokens: 12,
+      outputTokens: 7,
+      totalTokens: 19
+    });
+    assert.deepEqual(result.blocks, [{
+      id: 'card:摘要',
+      kind: 'card',
+      title: '摘要',
+      body: '已完成',
+      tone: 'success'
+    }]);
+
+    assert.equal(stub.requests.length, 1);
+    assert.equal(stub.requests[0].headers.authorization, 'Bearer sk-test-123');
+    assert.deepEqual(stub.requests[0].body, {
+      model: 'gpt-4.1',
+      messages: [
+        { role: 'system', content: '你是 Alice' },
+        { role: 'assistant', content: '上一轮回复' },
+        { role: 'user', content: '你好' }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000,
+      stream: false
+    });
+  } finally {
+    process.env.MODEL_CONNECTION_DATA_FILE = originalConnectionFile;
+    await stub.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('统一 agent 调用入口在 api 模式下会对 401/403 返回明确错误', async () => {
+  for (const statusCode of [401, 403]) {
+    const tempDir = mkdtempSync(join(tmpdir(), `bot-room-agent-invoker-api-auth-${statusCode}-`));
+    const stub = await createOpenAICompatibleStub((req, res) => {
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: `auth failed ${statusCode}` } }));
+    });
+    const connectionFile = writeApiConnectionStore(tempDir, [{
+      id: 'conn-1',
+      name: 'Gateway',
+      baseURL: stub.baseURL,
+      apiKey: 'sk-test-123',
+      enabled: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }]);
+    const originalConnectionFile = process.env.MODEL_CONNECTION_DATA_FILE;
+
+    try {
+      process.env.MODEL_CONNECTION_DATA_FILE = connectionFile;
+      const { invokeAgent } = require('../../dist/agent-invoker.js');
+      await assert.rejects(
+        () => invokeAgent({
+          userMessage: '你好',
+          agent: {
+            name: 'Alice',
+            avatar: '🤖',
+            systemPrompt: '你是 Alice',
+            color: '#fff',
+            executionMode: 'api',
+            apiConnectionId: 'conn-1',
+            apiModel: 'gpt-4.1'
+          },
+          history: [],
+          includeHistory: true
+        }),
+        new RegExp(`API provider 鉴权失败.*${statusCode}.*auth failed ${statusCode}`)
+      );
+    } finally {
+      process.env.MODEL_CONNECTION_DATA_FILE = originalConnectionFile;
+      await stub.close();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('统一 agent 调用入口在 api 模式下会对 429/500 返回明确错误', async () => {
+  for (const statusCode of [429, 500]) {
+    const tempDir = mkdtempSync(join(tmpdir(), `bot-room-agent-invoker-api-upstream-${statusCode}-`));
+    const stub = await createOpenAICompatibleStub((req, res) => {
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: `upstream failed ${statusCode}` } }));
+    });
+    const connectionFile = writeApiConnectionStore(tempDir, [{
+      id: 'conn-1',
+      name: 'Gateway',
+      baseURL: stub.baseURL,
+      apiKey: 'sk-test-123',
+      enabled: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }]);
+    const originalConnectionFile = process.env.MODEL_CONNECTION_DATA_FILE;
+
+    try {
+      process.env.MODEL_CONNECTION_DATA_FILE = connectionFile;
+      const { invokeAgent } = require('../../dist/agent-invoker.js');
+      await assert.rejects(
+        () => invokeAgent({
+          userMessage: '你好',
+          agent: {
+            name: 'Alice',
+            avatar: '🤖',
+            systemPrompt: '你是 Alice',
+            color: '#fff',
+            executionMode: 'api',
+            apiConnectionId: 'conn-1',
+            apiModel: 'gpt-4.1'
+          },
+          history: [],
+          includeHistory: true
+        }),
+        new RegExp(`API provider 请求失败.*${statusCode}.*upstream failed ${statusCode}`)
+      );
+    } finally {
+      process.env.MODEL_CONNECTION_DATA_FILE = originalConnectionFile;
+      await stub.close();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('统一 agent 调用入口在 api 模式下会对不兼容响应返回可诊断错误', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-api-invalid-body-'));
+  const stub = await createOpenAICompatibleStub((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant' } }] }));
+  });
+  const connectionFile = writeApiConnectionStore(tempDir, [{
+    id: 'conn-1',
+    name: 'Gateway',
+    baseURL: stub.baseURL,
+    apiKey: 'sk-test-123',
+    enabled: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }]);
+  const originalConnectionFile = process.env.MODEL_CONNECTION_DATA_FILE;
+
+  try {
+    process.env.MODEL_CONNECTION_DATA_FILE = connectionFile;
+    const { invokeAgent } = require('../../dist/agent-invoker.js');
+    await assert.rejects(
+      () => invokeAgent({
+        userMessage: '你好',
+        agent: {
+          name: 'Alice',
+          avatar: '🤖',
+          systemPrompt: '你是 Alice',
+          color: '#fff',
+          executionMode: 'api',
+          apiConnectionId: 'conn-1',
+          apiModel: 'gpt-4.1'
+        },
+        history: [],
+        includeHistory: true
+      }),
+      /API provider 返回了不兼容的响应：缺少 choices\[0\]\.message\.content/
+    );
+  } finally {
+    process.env.MODEL_CONNECTION_DATA_FILE = originalConnectionFile;
+    await stub.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('统一 agent 调用入口在 api 模式下会对缺少连接配置返回明确错误', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-api-missing-connection-'));
+  const connectionFile = writeApiConnectionStore(tempDir, []);
+  const originalConnectionFile = process.env.MODEL_CONNECTION_DATA_FILE;
+
+  try {
+    process.env.MODEL_CONNECTION_DATA_FILE = connectionFile;
+    const { invokeAgent } = require('../../dist/agent-invoker.js');
+    await assert.rejects(
+      () => invokeAgent({
+        userMessage: '你好',
+        agent: {
+          name: 'Alice',
+          avatar: '🤖',
+          systemPrompt: '你是 Alice',
+          color: '#fff',
+          executionMode: 'api',
+          apiConnectionId: 'conn-1',
+          apiModel: 'gpt-4.1'
+        },
+        history: [],
+        includeHistory: true
+      }),
+      /找不到 API 连接配置：conn-1/
+    );
+  } finally {
+    process.env.MODEL_CONNECTION_DATA_FILE = originalConnectionFile;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('统一 agent 调用入口会优先按 cliName 路由到 Codex CLI', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-codex-'));
+  const fakeClaude = join(tempDir, 'claude');
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+printf '%s\n' '{"output_text":"CLAUDE path should not be used"}'
+`, 'utf8');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '%s\n' '{"output_text":"CODEX provider reply"}'
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+  chmodSync(fakeCodex, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${tempDir}:${originalPath || ''}`;
+
+  try {
+    const { invokeAgent } = require('../../dist/agent-invoker.js');
+    const result = await invokeAgent({
+      userMessage: '你好',
+      agent: {
+        name: 'Alice',
+        avatar: '🤖',
+        systemPrompt: '你是 Alice',
+        color: '#fff',
+        executionMode: 'cli',
+        cliName: 'codex',
+        cli: 'claude'
+      },
+      history: [],
+      includeHistory: true
+    });
+
+    assert.equal(result.text, 'CODEX provider reply');
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('聊天主链在 API 模式下会通过统一 invoker 调用 OpenAI-compatible provider', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-api-agent-'));
+  const connectionStub = await createOpenAICompatibleStub((req, res) => {
+    assert.equal(req.method, 'POST');
+    assert.equal(req.url, '/v1/chat/completions');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      choices: [
+        {
+          index: 0,
+          finish_reason: 'stop',
+          message: {
+            role: 'assistant',
+            content: 'API 聊天主链回复'
+          }
+        }
+      ]
+    }));
+  });
+  const connectionFile = writeApiConnectionStore(tempDir, [{
+    id: 'conn-1',
+    name: 'Gateway',
+    baseURL: connectionStub.baseURL,
+    apiKey: 'sk-test-123',
+    enabled: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }]);
+  const agentDataFile = join(tempDir, 'agents.json');
+  writeFileSync(agentDataFile, JSON.stringify({
+    activeAgents: [
+      {
+        name: 'Alice',
+        avatar: '🤖',
+        personality: 'API 智能体',
+        systemPrompt: '你是 API Alice',
+        color: '#3b82f6',
+        executionMode: 'api',
+        apiConnectionId: 'conn-1',
+        apiModel: 'gpt-4.1-mini',
+        apiTemperature: 0.3,
+        apiMaxTokens: 512
+      }
+    ],
+    pendingAgents: null,
+    pendingReason: null,
+    updatedAt: Date.now(),
+    pendingUpdatedAt: null
+  }, null, 2), 'utf8');
+
+  const fixture = await createChatServerFixture({
+    env: {
+      AGENT_DATA_FILE: agentDataFile,
+      MODEL_CONNECTION_DATA_FILE: connectionFile,
+      BOT_ROOM_VERBOSE_LOG_DIR: join(tempDir, 'verbose-logs')
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice']);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请走 API 模式回复' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.equal(chatResponse.body.success, true);
+    assert.deepEqual(
+      chatResponse.body.aiMessages.map(item => [item.sender, item.text]),
+      [['Alice', 'API 聊天主链回复']]
+    );
+    assert.equal(connectionStub.requests.length, 1);
+    assert.equal(connectionStub.requests[0].body.model, 'gpt-4.1-mini');
+
+    const logsResponse = await fixture.request('/api/dependencies/logs?dependency=chat-exec&keyword=Alice');
+    assert.equal(logsResponse.status, 200);
+    const messages = logsResponse.body.logs.map(item => item.message);
+    assert.ok(messages.some(msg => msg.includes('stage=api_start')));
+    assert.ok(messages.some(msg => msg.includes('stage=api_done')));
+    assert.ok(!messages.some(msg => msg.includes('stage=cli_done')));
+  } finally {
+    await fixture.cleanup();
+    await connectionStub.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
 
 test('未登录时聊天相关接口会返回 401，登录后可正常聊天', async () => {
   const fixture = await createChatServerFixture();

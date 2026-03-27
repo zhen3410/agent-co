@@ -9,7 +9,7 @@ import { spawn } from 'child_process';
 import { mkdirSync, appendFileSync } from 'fs';
 import { join } from 'path';
 import * as readline from 'readline';
-import { AIAgent, Message } from './types';
+import { AIAgent, Message, RichBlock } from './types';
 import { digestHistory } from './rich-digest';
 import { extractRichBlocks } from './rich-extract';
 
@@ -37,7 +37,7 @@ function createVerboseLogger(agentName: string, cli: CliKind): (channel: 'stdout
 
 export interface ClaudeResult {
   text: string;
-  blocks: Array<{ id: string; kind: string; title?: string; body?: string; tone?: string; items?: Array<{ text: string; done: boolean }> }>;
+  blocks: RichBlock[];
 }
 
 
@@ -45,6 +45,9 @@ export interface ClaudeCallOptions {
   includeHistory?: boolean;
   extraEnv?: Record<string, string>;
 }
+
+export type CliCallOptions = ClaudeCallOptions;
+export type CliCallResult = ClaudeResult;
 
 function collectTextFromValue(value: unknown, inAssistantContext = false): string[] {
   if (!value) return [];
@@ -143,6 +146,10 @@ function buildPrompt(userMessage: string, agent: AIAgent, history: Message[], in
 }
 
 function resolveCli(agent: AIAgent): CliKind {
+  if (agent.cliName === 'codex' || agent.cliName === 'claude') {
+    return agent.cliName;
+  }
+
   return agent.cli === 'codex' ? 'codex' : 'claude';
 }
 
@@ -350,6 +357,15 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
       reject(new Error(`无法启动 ${cli.toUpperCase()} CLI: ${err.message}`));
     });
   });
+}
+
+export async function callAgentCLI(
+  userMessage: string,
+  agent: AIAgent,
+  history: Message[],
+  options: CliCallOptions = {}
+): Promise<CliCallResult> {
+  return callClaudeCLI(userMessage, agent, history, options);
 }
 
 export function generateMockReply(userMessage: string, agentName: string): string {

@@ -7,9 +7,20 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as http from 'http';
+import * as https from 'https';
 import * as path from 'path';
 import { URL } from 'url';
 import { AIAgentConfig } from './types';
+import {
+  isAllowedCredentialedBaseURL,
+  isApiConnectionReferenced,
+  loadApiConnectionStore,
+  normalizeApiConnectionConfig,
+  saveApiConnectionStore,
+  toApiConnectionSummaries,
+  validateApiConnectionConfig,
+  validateApiConnectionNameUnique
+} from './api-connection-store';
 import {
   ApplyMode,
   applyPendingAgents,
@@ -50,6 +61,8 @@ const DATA_FILE = process.env.AUTH_DATA_FILE || path.join(process.cwd(), 'data',
 const DEFAULT_USER = process.env.BOT_ROOM_DEFAULT_USER || 'admin';
 const DEFAULT_PASSWORD = process.env.BOT_ROOM_DEFAULT_PASSWORD || 'admin123!';
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
+const MODEL_CONNECTION_DATA_FILE = process.env.MODEL_CONNECTION_DATA_FILE
+  || path.join(path.dirname(AGENT_DATA_FILE), 'api-connections.json');
 
 // ============================================
 // 修复 1: 生产环境安全检查
@@ -228,6 +241,121 @@ function parseAgentPath(pathname: string): { name: string; action: 'base' | 'pro
   return null;
 }
 
+function parseModelConnectionPath(pathname: string): { id: string; action: 'base' | 'test' } | null {
+  const testMatch = pathname.match(/^\/api\/model-connections\/([^/]+)\/test$/);
+  if (testMatch) {
+    return { id: decodeURIComponent(testMatch[1]), action: 'test' };
+  }
+
+  const baseMatch = pathname.match(/^\/api\/model-connections\/([^/]+)$/);
+  if (baseMatch) {
+    return { id: decodeURIComponent(baseMatch[1]), action: 'base' };
+  }
+
+  return null;
+}
+
+function serializeModelConnection(connection: {
+  id: string;
+  name: string;
+  baseURL: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}, apiKeyMasked: string): Record<string, unknown> {
+  return {
+    id: connection.id,
+    name: connection.name,
+    baseURL: connection.baseURL,
+    apiKeyMasked,
+    enabled: connection.enabled,
+    createdAt: connection.createdAt,
+    updatedAt: connection.updatedAt
+  };
+}
+
+function buildUpstreamErrorSummary(statusCode?: number): string {
+  if (!statusCode) {
+    return '连接测试失败';
+  }
+
+  const reason = http.STATUS_CODES[statusCode];
+  return reason
+    ? `上游服务返回 ${statusCode} ${reason}`
+    : `上游服务返回状态码 ${statusCode}`;
+}
+
+function testModelConnection(baseURL: string, apiKey: string): Promise<{ success: boolean; statusCode?: number; error?: string }> {
+  return new Promise(resolve => {
+    let endpoint: URL;
+    try {
+      endpoint = new URL('/models', `${baseURL.replace(/\/+$/, '')}/`);
+    } catch {
+      resolve({ success: false, error: 'baseURL 必须是合法 URL' });
+      return;
+    }
+
+    if (!isAllowedCredentialedBaseURL(endpoint.toString())) {
+      resolve({
+        success: false,
+        error: 'baseURL 仅支持 https，若使用 http 则必须为 localhost、127.0.0.1 或 ::1'
+      });
+      return;
+    }
+
+    const transport = endpoint.protocol === 'https:' ? https : http;
+    const request = transport.request(endpoint, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      }
+    }, response => {
+      let body = '';
+      response.on('data', chunk => {
+        body += chunk.toString();
+      });
+      response.on('end', () => {
+        const statusCode = response.statusCode || 0;
+        if (statusCode >= 200 && statusCode < 300) {
+          resolve({ success: true, statusCode });
+          return;
+        }
+        resolve({
+          success: false,
+          statusCode,
+          error: buildUpstreamErrorSummary(statusCode)
+        });
+      });
+    });
+
+    request.on('error', error => {
+      const summary = error.message.includes('超时') ? '连接测试超时' : '连接测试失败';
+      resolve({ success: false, error: summary });
+    });
+    request.setTimeout(5000, () => {
+      request.destroy(new Error('连接测试超时'));
+    });
+    request.end();
+  });
+}
+
+function validateAgentConnectionReference(agent: AIAgentConfig): string | null {
+  if (agent.executionMode !== 'api' || !agent.apiConnectionId) {
+    return null;
+  }
+
+  const connectionStore = loadApiConnectionStore(MODEL_CONNECTION_DATA_FILE);
+  const connection = connectionStore.apiConnections.find(item => item.id === agent.apiConnectionId);
+  if (!connection) {
+    return 'apiConnectionId 对应的连接不存在';
+  }
+  if (!connection.enabled) {
+    return 'apiConnectionId 对应的连接已停用';
+  }
+  return null;
+}
+
 function serveStatic(res: http.ServerResponse, filePath: string, contentType: string): void {
   const fullPath = path.join(__dirname, '..', 'public-auth', filePath);
 
@@ -317,7 +445,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (!pathname.startsWith('/api/users') && !pathname.startsWith('/api/agents')) {
+  if (!pathname.startsWith('/api/users')
+    && !pathname.startsWith('/api/agents')
+    && !pathname.startsWith('/api/model-connections')) {
     if (method === 'GET' && pathname === '/api/system/dirs') {
       if (!requireAdmin(req, res)) return;
       try {
@@ -363,6 +493,11 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { error: validationError });
         return;
       }
+      const connectionError = validateAgentConnectionReference(normalized);
+      if (connectionError) {
+        sendJson(res, 400, { error: connectionError });
+        return;
+      }
 
       const store = loadAgentStore(AGENT_DATA_FILE);
       const next = updateAgentStore(store, applyMode, agents => {
@@ -388,6 +523,156 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (method === 'GET' && pathname === '/api/model-connections') {
+    const store = loadApiConnectionStore(MODEL_CONNECTION_DATA_FILE);
+    sendJson(res, 200, {
+      connections: toApiConnectionSummaries(store.apiConnections)
+    });
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/api/model-connections') {
+    try {
+      const body = await parseBody<{
+        name?: string;
+        baseURL?: string;
+        baseUrl?: string;
+        apiKey?: string;
+        enabled?: boolean;
+      }>(req);
+      const store = loadApiConnectionStore(MODEL_CONNECTION_DATA_FILE);
+      const normalized = normalizeApiConnectionConfig({
+        ...body,
+        id: undefined
+      });
+      const validationError = validateApiConnectionConfig(normalized)
+        || validateApiConnectionNameUnique(store, normalized.name);
+      if (validationError) {
+        sendJson(res, 400, { error: validationError });
+        return;
+      }
+
+      const next = {
+        ...store,
+        apiConnections: [...store.apiConnections, normalized],
+        updatedAt: Date.now()
+      };
+      saveApiConnectionStore(MODEL_CONNECTION_DATA_FILE, next);
+      sendJson(res, 201, {
+        success: true,
+        connection: serializeModelConnection(normalized, toApiConnectionSummaries([normalized])[0].apiKeyMasked)
+      });
+    } catch (error: unknown) {
+      const err = error as Error;
+      sendJson(res, 400, { error: err.message });
+    }
+    return;
+  }
+
+  const modelConnectionPath = parseModelConnectionPath(pathname);
+  if (modelConnectionPath && method === 'PUT' && modelConnectionPath.action === 'base') {
+    try {
+      const body = await parseBody<{
+        id?: string;
+        name?: string;
+        baseURL?: string;
+        baseUrl?: string;
+        apiKey?: string;
+        enabled?: boolean;
+      }>(req);
+      const store = loadApiConnectionStore(MODEL_CONNECTION_DATA_FILE);
+      const current = store.apiConnections.find(connection => connection.id === modelConnectionPath.id);
+      if (!current) {
+        sendJson(res, 404, { error: '连接不存在' });
+        return;
+      }
+
+      const normalized = normalizeApiConnectionConfig({
+        ...current,
+        ...body,
+        id: current.id,
+        createdAt: current.createdAt,
+        updatedAt: Date.now()
+      });
+      const validationError = validateApiConnectionConfig(normalized)
+        || validateApiConnectionNameUnique(store, normalized.name, current.id);
+      if (validationError) {
+        sendJson(res, 400, { error: validationError });
+        return;
+      }
+
+      const next = {
+        ...store,
+        apiConnections: store.apiConnections.map(connection => (
+          connection.id === current.id ? normalized : connection
+        )),
+        updatedAt: Date.now()
+      };
+      saveApiConnectionStore(MODEL_CONNECTION_DATA_FILE, next);
+      sendJson(res, 200, {
+        success: true,
+        connection: serializeModelConnection(normalized, toApiConnectionSummaries([normalized])[0].apiKeyMasked)
+      });
+    } catch (error: unknown) {
+      const err = error as Error;
+      sendJson(res, 400, { error: err.message });
+    }
+    return;
+  }
+
+  if (modelConnectionPath && method === 'DELETE' && modelConnectionPath.action === 'base') {
+    const store = loadApiConnectionStore(MODEL_CONNECTION_DATA_FILE);
+    const current = store.apiConnections.find(connection => connection.id === modelConnectionPath.id);
+    if (!current) {
+      sendJson(res, 404, { error: '连接不存在' });
+      return;
+    }
+
+    const agentStore = loadAgentStore(AGENT_DATA_FILE);
+    const referencedAgents = [
+      ...agentStore.activeAgents,
+      ...(agentStore.pendingAgents || [])
+    ];
+    if (isApiConnectionReferenced(current.id, referencedAgents)) {
+      sendJson(res, 409, { error: '该连接仍被智能体引用，无法删除' });
+      return;
+    }
+
+    const next = {
+      ...store,
+      apiConnections: store.apiConnections.filter(connection => connection.id !== current.id),
+      updatedAt: Date.now()
+    };
+    saveApiConnectionStore(MODEL_CONNECTION_DATA_FILE, next);
+    sendJson(res, 200, { success: true, id: current.id });
+    return;
+  }
+
+  if (modelConnectionPath && method === 'POST' && modelConnectionPath.action === 'test') {
+    const store = loadApiConnectionStore(MODEL_CONNECTION_DATA_FILE);
+    const current = store.apiConnections.find(connection => connection.id === modelConnectionPath.id);
+    if (!current) {
+      sendJson(res, 404, { error: '连接不存在' });
+      return;
+    }
+
+    const result = await testModelConnection(current.baseURL, current.apiKey);
+    if (result.success) {
+      sendJson(res, 200, {
+        success: true,
+        statusCode: result.statusCode
+      });
+      return;
+    }
+
+    sendJson(res, result.statusCode && result.statusCode < 500 ? 400 : 502, {
+      success: false,
+      statusCode: result.statusCode,
+      error: result.error || '连接测试失败'
+    });
+    return;
+  }
+
   const agentPath = parseAgentPath(pathname);
   if (agentPath && method === 'PUT' && agentPath.action === 'base') {
     try {
@@ -402,6 +687,11 @@ const server = http.createServer(async (req, res) => {
       const validationError = validateAgentConfig(normalized);
       if (validationError) {
         sendJson(res, 400, { error: validationError });
+        return;
+      }
+      const connectionError = validateAgentConnectionReference(normalized);
+      if (connectionError) {
+        sendJson(res, 400, { error: connectionError });
         return;
       }
 

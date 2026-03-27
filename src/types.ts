@@ -33,6 +33,33 @@ export interface ChecklistBlock {
 export type RichBlock = CardBlock | ChecklistBlock;
 
 // ============================================
+// Agent 执行与连接类型
+// ============================================
+
+export type AgentExecutionMode = 'cli' | 'api';
+export type AgentCliName = 'claude' | 'codex';
+
+export interface ApiConnectionConfig {
+  id: string;
+  name: string;
+  baseURL: string;
+  apiKey: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ApiConnectionSummary {
+  id: string;
+  name: string;
+  baseURL: string;
+  apiKeyMasked: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ============================================
 // 消息类型
 // ============================================
 
@@ -52,23 +79,53 @@ export interface Message {
 // AI Agent 类型
 // ============================================
 
-export interface AIAgent {
+interface AIAgentBase {
   name: string;
   avatar: string;
   systemPrompt: string;
   color: string;  // 用于前端显示
-  cli?: 'claude' | 'codex';
   workdir?: string;
 }
 
-export interface AIAgentConfig {
+export interface AIAgent extends AIAgentBase {
+  executionMode?: AgentExecutionMode;
+  cliName?: AgentCliName;
+  apiConnectionId?: string;
+  apiModel?: string;
+  apiTemperature?: number;
+  apiMaxTokens?: number;
+  cli?: AgentCliName;  // legacy
+}
+
+interface AIAgentConfigBase {
   name: string;
   avatar: string;
   personality: string;
   color: string;
   systemPrompt?: string;
-  cli?: 'claude' | 'codex';
   workdir?: string;
+}
+
+export interface AIAgentConfig extends AIAgentConfigBase {
+  executionMode?: AgentExecutionMode;
+  cliName?: AgentCliName;
+  apiConnectionId?: string;
+  apiModel?: string;
+  apiTemperature?: number;
+  apiMaxTokens?: number;
+  cli?: AgentCliName;  // legacy
+}
+
+export interface AgentInvokeResult {
+  text: string;
+  blocks: RichBlock[];
+  rawText?: string;
+  finishReason?: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
 }
 
 // ============================================

@@ -78,6 +78,12 @@ export class AgentManager {
       avatar: config.avatar,
       systemPrompt,
       color: config.color,
+      executionMode: config.executionMode,
+      cliName: config.cliName || config.cli || 'claude',
+      apiConnectionId: config.apiConnectionId,
+      apiModel: config.apiModel,
+      apiTemperature: config.apiTemperature,
+      apiMaxTokens: config.apiMaxTokens,
       cli: config.cli || 'claude',
       workdir: config.workdir
     };

@@ -762,6 +762,47 @@
         </div>
       </div>
 
+      <!-- 模型连接管理 -->
+      <div class="card" id="modelConnectionsCard" style="display: none;">
+        <div class="card-header">
+          <h2 class="card-title">模型连接</h2>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">连接名称</label>
+              <input type="text" id="connectionName" placeholder="如 OpenAI Gateway">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Base URL</label>
+              <input type="text" id="connectionBaseUrl" placeholder="https://api.openai.com/v1">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="password" id="connectionApiKey" placeholder="sk-...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">状态</label>
+              <select id="connectionEnabled">
+                <option value="true">启用</option>
+                <option value="false">停用</option>
+              </select>
+            </div>
+          </div>
+          <div class="agent-actions" style="margin-top: var(--space-md);">
+            <button class="btn btn-primary" onclick="submitConnectionForm()" id="connectionSubmitBtn">新增连接</button>
+            <button class="btn btn-secondary" onclick="resetConnectionForm()">重置</button>
+          </div>
+          <div id="connectionsContainer" style="margin-top: var(--space-lg);">
+            <div class="loading">
+              <p>请先验证管理员 Token</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 添加智能体 -->
       <div class="card" id="agentCard" style="display: none;">
         <div class="card-header">
@@ -784,11 +825,44 @@
               <input type="text" id="agentAvatar" placeholder="🤖">
             </div>
             <div class="form-group">
+              <label class="form-label">执行方式</label>
+              <select id="agentExecutionMode" onchange="toggleAgentExecutionFields(this.value)">
+                <option value="cli">CLI</option>
+                <option value="api">API</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row" id="agentCliFields">
+            <div class="form-group">
               <label class="form-label">CLI 类型</label>
               <select id="agentCli">
                 <option value="claude">Claude</option>
                 <option value="codex">Codex</option>
               </select>
+            </div>
+          </div>
+          <div id="agentApiFields" style="display: none;">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">模型连接</label>
+                <select id="agentApiConnectionId">
+                  <option value="">请选择模型连接</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">模型</label>
+                <input type="text" id="agentApiModel" placeholder="gpt-4.1-mini">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Temperature</label>
+                <input type="text" id="agentApiTemperature" placeholder="0.7">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Max Tokens</label>
+                <input type="text" id="agentApiMaxTokens" placeholder="2000">
+              </div>
             </div>
           </div>
           <div class="form-row">
@@ -894,6 +968,8 @@
     let adminToken = '';
     let currentEditUser = '';
     let editingAgentName = '';
+    let editingConnectionId = '';
+    let modelConnections = [];
     const professionalTemplateAgents = new Set(['Codex架构师', 'BACKEND', 'FRONTEND', 'QA', 'OPS', 'SECURITY', 'PERF']);
     const workdirState = { root: '', level2: '', level3: '', custom: '' };
 
@@ -1058,6 +1134,42 @@
       return new Date(timestamp).toLocaleString('zh-CN');
     }
 
+    function parseOptionalNumber(value) {
+      const normalized = String(value || '').trim();
+      if (!normalized) return undefined;
+      const parsed = Number(normalized);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+
+    function parseOptionalInteger(value) {
+      const parsed = parseOptionalNumber(value);
+      return Number.isInteger(parsed) ? parsed : undefined;
+    }
+
+    function populateModelConnectionOptions(selectedId = '') {
+      const select = document.getElementById('agentApiConnectionId');
+      if (!select) return;
+      const selectedConnection = modelConnections.find(connection => connection.id === selectedId);
+      const enabledOptions = modelConnections
+        .filter(connection => connection.enabled)
+        .map(connection => `<option value="${escapeHtml(connection.id)}">${escapeHtml(connection.name)}</option>`)
+        .join('');
+      const disabledSelectedOption = selectedConnection && !selectedConnection.enabled
+        ? `<option value="${escapeHtml(selectedConnection.id)}">${escapeHtml(selectedConnection.name)}（已停用）</option>`
+        : '';
+      select.innerHTML = `<option value="">请选择模型连接</option>` + disabledSelectedOption + enabledOptions;
+      select.value = selectedId || '';
+    }
+
+    function toggleAgentExecutionFields(mode) {
+      const cliFields = document.getElementById('agentCliFields');
+      const apiFields = document.getElementById('agentApiFields');
+      if (!cliFields || !apiFields) return;
+      const nextMode = mode === 'api' ? 'api' : 'cli';
+      cliFields.style.display = nextMode === 'cli' ? '' : 'none';
+      apiFields.style.display = nextMode === 'api' ? '' : 'none';
+    }
+
     async function verifyToken() {
       const tokenInput = document.getElementById('adminToken');
       adminToken = tokenInput.value.trim();
@@ -1075,10 +1187,12 @@
         if (response.ok) {
           showToast('Token 验证成功');
           document.getElementById('addUserCard').style.display = 'block';
+          document.getElementById('modelConnectionsCard').style.display = 'block';
           document.getElementById('tokenHint').style.display = 'flex';
           document.getElementById('authBadge').className = 'badge badge-success';
           document.getElementById('authBadge').textContent = '已验证';
           await loadWorkdirHierarchy();
+          await loadModelConnections();
           loadUsers();
           loadAgents();
         } else {
@@ -1086,6 +1200,160 @@
           showToast(data.error || 'Token 验证失败', 'error');
           adminToken = '';
         }
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    async function loadModelConnections() {
+      const container = document.getElementById('connectionsContainer');
+      try {
+        const response = await fetch('/api/model-connections', {
+          headers: { 'x-admin-token': adminToken }
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || '加载模型连接失败');
+        }
+        modelConnections = data.connections || [];
+        populateModelConnectionOptions();
+        renderModelConnections(modelConnections);
+      } catch (error) {
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">❌</div><p class="empty-state-text">加载模型连接失败</p></div>';
+      }
+    }
+
+    function renderModelConnections(connections) {
+      const container = document.getElementById('connectionsContainer');
+      if (!connections.length) {
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🔌</div><p class="empty-state-text">暂无模型连接</p></div>';
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>Base URL</th>
+                <th>API Key</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${connections.map(connection => `
+                <tr>
+                  <td><strong>${escapeHtml(connection.name)}</strong></td>
+                  <td>${escapeHtml(connection.baseURL)}</td>
+                  <td>${escapeHtml(connection.apiKeyMasked || '')}</td>
+                  <td>${connection.enabled ? '启用' : '停用'}</td>
+                  <td>
+                    <div class="table-actions">
+                      <button class="btn btn-secondary btn-sm" onclick="editConnection('${connection.id}')">编辑</button>
+                      <button class="btn btn-secondary btn-sm" onclick="testConnection('${connection.id}')">测试连接</button>
+                      <button class="btn btn-danger btn-sm" onclick="deleteConnection('${connection.id}')">删除</button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function resetConnectionForm() {
+      editingConnectionId = '';
+      document.getElementById('connectionName').value = '';
+      document.getElementById('connectionBaseUrl').value = '';
+      document.getElementById('connectionApiKey').value = '';
+      document.getElementById('connectionEnabled').value = 'true';
+      document.getElementById('connectionSubmitBtn').textContent = '新增连接';
+    }
+
+    function editConnection(id) {
+      const connection = modelConnections.find(item => item.id === id);
+      if (!connection) return;
+      editingConnectionId = id;
+      document.getElementById('connectionName').value = connection.name || '';
+      document.getElementById('connectionBaseUrl').value = connection.baseURL || '';
+      document.getElementById('connectionApiKey').value = '';
+      document.getElementById('connectionEnabled').value = connection.enabled ? 'true' : 'false';
+      document.getElementById('connectionSubmitBtn').textContent = `保存 ${connection.name}`;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function submitConnectionForm() {
+      const payload = {
+        name: document.getElementById('connectionName').value.trim(),
+        baseURL: document.getElementById('connectionBaseUrl').value.trim(),
+        apiKey: document.getElementById('connectionApiKey').value.trim() || undefined,
+        enabled: document.getElementById('connectionEnabled').value === 'true'
+      };
+      if (!payload.name || !payload.baseURL) {
+        showToast('请完整填写模型连接信息', 'error');
+        return;
+      }
+
+      const method = editingConnectionId ? 'PUT' : 'POST';
+      const path = editingConnectionId
+        ? `/api/model-connections/${encodeURIComponent(editingConnectionId)}`
+        : '/api/model-connections';
+
+      try {
+        const response = await fetch(path, {
+          method,
+          headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || '保存模型连接失败');
+        }
+        showToast(editingConnectionId ? '模型连接已更新' : '模型连接已创建');
+        resetConnectionForm();
+        await loadModelConnections();
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    async function testConnection(id) {
+      try {
+        const response = await fetch(`/api/model-connections/${encodeURIComponent(id)}/test`, {
+          method: 'POST',
+          headers: { 'x-admin-token': adminToken }
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || '连接测试失败');
+        }
+        showToast(`模型连接测试成功（${data.statusCode || 200}）`);
+      } catch (error) {
+        showToast('请求失败: ' + error.message, 'error');
+      }
+    }
+
+    async function deleteConnection(id) {
+      if (!confirm('确定要删除这个模型连接吗？')) {
+        return;
+      }
+      try {
+        const response = await fetch(`/api/model-connections/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { 'x-admin-token': adminToken }
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || '删除模型连接失败');
+        }
+        showToast('模型连接已删除');
+        if (editingConnectionId === id) {
+          resetConnectionForm();
+        }
+        await loadModelConnections();
       } catch (error) {
         showToast('请求失败: ' + error.message, 'error');
       }
@@ -1330,13 +1598,18 @@
 
       container.innerHTML = `
         <div class="agent-grid">
-          ${agents.map((agent, idx) => `
+          ${agents.map((agent, idx) => {
+            const connectionName = (modelConnections.find(connection => connection.id === agent.apiConnectionId) || {}).name || '未知连接';
+            const modeSummary = agent.executionMode === 'api'
+              ? `API · ${escapeHtml(connectionName)} · ${escapeHtml(agent.apiModel || '')}`
+              : `CLI · ${escapeHtml((agent.cli || 'claude').toUpperCase())}`;
+            return `
             <div class="agent-card">
               <div class="agent-card-header">
                 <div class="agent-avatar">${escapeHtml(agent.avatar)}</div>
                 <div class="agent-info">
                   <div class="agent-name">${escapeHtml(agent.name)}</div>
-                  <div class="agent-color">${escapeHtml(agent.color)} · ${(agent.cli || 'claude').toUpperCase()}</div>
+                  <div class="agent-color">${escapeHtml(agent.color)} · ${modeSummary}</div>
                 </div>
               </div>
               <div class="agent-personality">${escapeHtml(agent.personality || '暂无描述')}</div>
@@ -1359,7 +1632,8 @@
                 <button class="btn btn-danger btn-sm" onclick="deleteAgent('${agent.name}')">删除</button>
               </div>
             </div>
-          `).join('')}
+          `;
+          }).join('')}
         </div>
       `;
 
@@ -1378,7 +1652,13 @@
         color: document.getElementById('agentColor').value.trim(),
         personality: document.getElementById('agentPersonality').value.trim(),
         systemPrompt: document.getElementById('agentPrompt').value.trim(),
+        executionMode: document.getElementById('agentExecutionMode').value,
         cli: document.getElementById('agentCli').value,
+        cliName: document.getElementById('agentCli').value,
+        apiConnectionId: document.getElementById('agentApiConnectionId').value,
+        apiModel: document.getElementById('agentApiModel').value.trim(),
+        apiTemperature: parseOptionalNumber(document.getElementById('agentApiTemperature').value),
+        apiMaxTokens: parseOptionalInteger(document.getElementById('agentApiMaxTokens').value),
         workdir: document.getElementById('agentWorkdirPreview').value.trim()
       };
     }
@@ -1388,7 +1668,13 @@
       document.getElementById('agentName').value = '';
       document.getElementById('agentAvatar').value = '';
       document.getElementById('agentColor').value = '#3b82f6';
+      document.getElementById('agentExecutionMode').value = 'cli';
       document.getElementById('agentCli').value = 'claude';
+      populateModelConnectionOptions();
+      document.getElementById('agentApiConnectionId').value = '';
+      document.getElementById('agentApiModel').value = '';
+      document.getElementById('agentApiTemperature').value = '';
+      document.getElementById('agentApiMaxTokens').value = '';
       document.getElementById('agentPersonality').value = '';
       document.getElementById('agentPrompt').value = '';
       workdirState.root = '';
@@ -1399,6 +1685,7 @@
       setSelectOptions('agentWorkdirLevel2', [], '请选择一级目录');
       setSelectOptions('agentWorkdirLevel3', [], '请选择二级目录');
       updateWorkdirPreview();
+      toggleAgentExecutionFields('cli');
       document.getElementById('agentSubmitBtn').textContent = '新增智能体';
     }
 
@@ -1407,7 +1694,13 @@
       document.getElementById('agentName').value = agent.name;
       document.getElementById('agentAvatar').value = agent.avatar;
       document.getElementById('agentColor').value = agent.color;
-      document.getElementById('agentCli').value = agent.cli || 'claude';
+      document.getElementById('agentExecutionMode').value = agent.executionMode || 'cli';
+      document.getElementById('agentCli').value = agent.cliName || agent.cli || 'claude';
+      populateModelConnectionOptions(agent.apiConnectionId || '');
+      document.getElementById('agentApiModel').value = agent.apiModel || '';
+      document.getElementById('agentApiTemperature').value = agent.apiTemperature ?? '';
+      document.getElementById('agentApiMaxTokens').value = agent.apiMaxTokens ?? '';
+      toggleAgentExecutionFields(agent.executionMode || 'cli');
       document.getElementById('agentPersonality').value = agent.personality || '';
       document.getElementById('agentPrompt').value = agent.systemPrompt || '';
       loadWorkdirHierarchy(agent.workdir || '').catch(error => {
@@ -1422,6 +1715,10 @@
       const agent = getAgentForm();
       if (!agent.name || !agent.avatar || !agent.color) {
         showToast('请完整填写智能体基础信息', 'error');
+        return;
+      }
+      if (agent.executionMode === 'api' && (!agent.apiConnectionId || !agent.apiModel)) {
+        showToast('API 模式下请填写模型连接和模型名称', 'error');
         return;
       }
 
@@ -1554,6 +1851,9 @@
     document.addEventListener('DOMContentLoaded', () => {
       localStorage.removeItem('authAdminToken');
       initializeWorkdirSelectors();
+      populateModelConnectionOptions();
+      resetConnectionForm();
+      toggleAgentExecutionFields('cli');
       document.getElementById('agentWorkdirRoot').addEventListener('change', () => {
         onWorkdirRootChange().catch(error => showToast('加载目录失败: ' + error.message, 'error'));
       });
