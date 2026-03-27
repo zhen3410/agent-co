@@ -2541,9 +2541,20 @@
       userInputEl.focus();
 
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/service-worker.js').catch((err) => {
-          console.warn('Service Worker 注册失败', err);
-        });
+        navigator.serviceWorker.register('/service-worker.js')
+          .then((registration) => {
+            registration.update();
+
+            let reloadedForControllerChange = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+              if (reloadedForControllerChange) return;
+              reloadedForControllerChange = true;
+              window.location.reload();
+            });
+          })
+          .catch((err) => {
+            console.warn('Service Worker 注册失败', err);
+          });
       }
 
       setupPwaBanner();

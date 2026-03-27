@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bot-room-pwa-v1';
+const CACHE_NAME = 'bot-room-pwa-v2';
 const ASSETS = [
   '/',
   '/index.html',
@@ -6,6 +6,7 @@ const ASSETS = [
   '/manifest.json',
   '/icon.svg'
 ];
+const APP_SHELL_PATHS = new Set(['/', '/index.html', '/styles.css', '/manifest.json', '/icon.svg']);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
@@ -26,8 +27,22 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const requestUrl = new URL(event.request.url);
+
   event.respondWith(
     caches.match(event.request).then((cached) => {
+      if (APP_SHELL_PATHS.has(requestUrl.pathname)) {
+        return fetch(event.request)
+          .then((response) => {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+            return response;
+          })
+          .catch(() => {
+            return cached || fetch(event.request);
+          });
+      }
+
       if (cached) return cached;
       return fetch(event.request).then((response) => {
         const copy = response.clone();
