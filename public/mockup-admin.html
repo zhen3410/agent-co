@@ -1220,12 +1220,27 @@
             <div class="group-item-members">${group.agentNames.join(', ')}</div>
           </div>
           <div class="group-item-actions">
-            <button class="btn btn-secondary btn-sm" onclick="editGroup('${escapeHtml(group.id)}')">编辑</button>
-            <button class="btn btn-danger btn-sm" onclick="deleteGroup('${escapeHtml(group.id)}')">删除</button>
+            <button class="btn btn-secondary btn-sm" data-action="edit-group" data-group-id="${escapeHtml(group.id)}">编辑</button>
+            <button class="btn btn-danger btn-sm" data-action="delete-group" data-group-id="${escapeHtml(group.id)}">删除</button>
           </div>
         </div>
       `).join('');
     }
+
+    // Event delegation for group actions
+    document.getElementById('groups-list').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+
+      const action = btn.dataset.action;
+      const groupId = btn.dataset.groupId;
+
+      if (action === 'edit-group') {
+        editGroup(groupId);
+      } else if (action === 'delete-group') {
+        deleteGroup(groupId);
+      }
+    });
 
     // 显示分组弹窗
     function showGroupModal(group = null) {
@@ -1241,9 +1256,9 @@
       const selectedAgents = group ? group.agentNames : [];
       checkboxesContainer.innerHTML = agents.map(agent => `
         <div class="checkbox-item">
-          <input type="checkbox" id="agent-${agent.name}" value="${agent.name}"
+          <input type="checkbox" id="agent-${escapeHtml(agent.name)}" value="${escapeHtml(agent.name)}"
                  ${selectedAgents.includes(agent.name) ? 'checked' : ''}>
-          <label for="agent-${agent.name}">${agent.avatar} ${agent.name}</label>
+          <label for="agent-${escapeHtml(agent.name)}">${agent.avatar} ${escapeHtml(agent.name)}</label>
         </div>
       `).join('');
 
