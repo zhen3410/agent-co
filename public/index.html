@@ -1229,12 +1229,41 @@
       }
     }
 
-    function handleGroupSwitch(group) {
-      const enabledSet = new Set(group.agentNames);
-      enabledAgents = enabledSet;
+    async function handleGroupSwitch(group) {
+      const targetNames = new Set(group.agentNames);
+      const previousEnabled = new Set(enabledAgents);
       activeGroup = group.id;
+
+      // 先在 UI 上立即更新
+      enabledAgents = targetNames;
       renderAgentsList();
-      saveSessionSettings();
+
+      // 将变更同步到服务端
+      for (const agent of agents) {
+        const shouldEnable = targetNames.has(agent.name);
+        const wasEnabled = previousEnabled.has(agent.name);
+        if (shouldEnable !== wasEnabled) {
+          await toggleSessionAgentSilent(agent.name, shouldEnable);
+        }
+      }
+    }
+
+    async function toggleSessionAgentSilent(name, enabled) {
+      try {
+        const response = await fetch('/api/session-agents', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentName: name, enabled })
+        });
+        const data = await response.json();
+        if (response.ok) {
+          enabledAgents = new Set(data.enabledAgents || []);
+          currentAgentWillExpire = !!data.currentAgentWillExpire;
+        }
+      } catch (e) {
+        console.error('Failed to sync agent state:', e);
+      }
     }
 
     function getMentionCandidates() {
@@ -2344,6 +2373,8 @@
         if (res.ok) {
           const data = await res.json();
           groups = data.groups || [];
+          const groupedAgents = getGroupedAgents();
+          expandedGroups = new Set(groupedAgents.map(group => group.id));
           renderAgentsList();
         }
       } catch (e) {
@@ -2541,9 +2572,20 @@
       userInputEl.focus();
 
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/service-worker.js').catch((err) => {
-          console.warn('Service Worker 注册失败', err);
-        });
+        navigator.serviceWorker.register('/service-worker.js')
+          .then((registration) => {
+            registration.update();
+
+            let reloadedForControllerChange = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+              if (reloadedForControllerChange) return;
+              reloadedForControllerChange = true;
+              window.location.reload();
+            });
+          })
+          .catch((err) => {
+            console.warn('Service Worker 注册失败', err);
+          });
       }
 
       setupPwaBanner();
