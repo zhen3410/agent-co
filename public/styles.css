@@ -885,6 +885,13 @@ body.context-panel-open .main-layout {
   font-weight: 600;
 }
 
+.mention--invoke {
+  background: rgba(59, 130, 246, 0.12);
+  padding: 1px 4px;
+  border-radius: 4px;
+  cursor: default;
+}
+
 .input-area {
   padding: 16px 22px 22px;
 }

@@ -66,7 +66,7 @@ const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
 const apiUrl = process.env.BOT_ROOM_API_URL || '';
 const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
 
-async function post(content) {
+async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
   const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
     method: 'POST',
@@ -77,7 +77,7 @@ async function post(content) {
       'x-bot-room-session-id': sessionId,
       'x-bot-room-agent': encodedAgentName
     },
-    body: JSON.stringify({ content })
+    body: JSON.stringify({ content, invokeAgents })
   });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -86,9 +86,9 @@ async function post(content) {
 
 (async () => {
   if (agentName === 'Alice') {
-    await post('@Bob 继续');
+    await post('继续', ['Bob']);
   } else if (agentName === 'Bob') {
-    await post('@Alice 继续');
+    await post('继续', ['Alice']);
   } else {
     await post(\`\${agentName} 已完成\`);
   }
@@ -601,7 +601,7 @@ test('登录后支持多智能体协作回复', async () => {
   }
 });
 
-test('智能体 callback 消息中的 @ 提及会自动触发下一个智能体回复', async () => {
+test('智能体 callback 消息中的 invokeAgents 参数会触发链式调用', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-claude-chain-'));
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
@@ -611,7 +611,7 @@ const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
 const apiUrl = process.env.BOT_ROOM_API_URL || '';
 const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
 
-async function post(content) {
+async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
   const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
     method: 'POST',
@@ -622,7 +622,7 @@ async function post(content) {
       'x-bot-room-session-id': sessionId,
       'x-bot-room-agent': encodedAgentName
     },
-    body: JSON.stringify({ content })
+    body: JSON.stringify({ content, invokeAgents })
   });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -631,7 +631,7 @@ async function post(content) {
 
 (async () => {
   if (agentName === 'Alice') {
-    await post('@Bob 请补充工程实现建议');
+    await post('请 @Bob 补充工程实现建议', ['Bob']);
   } else if (agentName === 'Bob') {
     await post('Bob 已收到 Alice 的邀请，并补充了工程实现建议');
   } else {
@@ -666,7 +666,7 @@ EOF
     assert.deepEqual(
       chatResponse.body.aiMessages.map(item => [item.sender, item.text]),
       [
-        ['Alice', '@Bob 请补充工程实现建议'],
+        ['Alice', '请 @@Bob 补充工程实现建议'],
         ['Bob', 'Bob 已收到 Alice 的邀请，并补充了工程实现建议']
       ]
     );
@@ -686,7 +686,7 @@ const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
 const apiUrl = process.env.BOT_ROOM_API_URL || '';
 const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
 
-async function post(content) {
+async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
   const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
     method: 'POST',
@@ -697,7 +697,7 @@ async function post(content) {
       'x-bot-room-session-id': sessionId,
       'x-bot-room-agent': encodedAgentName
     },
-    body: JSON.stringify({ content })
+    body: JSON.stringify({ content, invokeAgents })
   });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -706,7 +706,7 @@ async function post(content) {
 
 (async () => {
   if (agentName === 'Alice') {
-    await post('@Bob 请继续跟进');
+    await post('请 @Bob 继续跟进', ['Bob']);
   } else if (agentName === 'Bob') {
     await post('Bob 不应该在断流后继续执行');
   } else {
@@ -1015,7 +1015,7 @@ const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
 const apiUrl = process.env.BOT_ROOM_API_URL || '';
 const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
 
-async function post(content) {
+async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
   const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
     method: 'POST',
@@ -1026,7 +1026,7 @@ async function post(content) {
       'x-bot-room-session-id': sessionId,
       'x-bot-room-agent': encodedAgentName
     },
-    body: JSON.stringify({ content })
+    body: JSON.stringify({ content, invokeAgents })
   });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -1035,7 +1035,7 @@ async function post(content) {
 
 (async () => {
   if (agentName === 'Alice') {
-    await post('@Bob 请流式继续');
+    await post('请流式继续', ['Bob']);
   } else if (agentName === 'Bob') {
     await post('Bob 流式补充完成');
   }

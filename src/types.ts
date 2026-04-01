@@ -73,6 +73,7 @@ export interface Message {
   blocks?: RichBlock[];
   timestamp: number;
   mentions?: string[];  // 被 @ 的智能体名字列表
+  invokeAgents?: string[];  // 显式声明需要链式调用的智能体（来自 callback invokeAgents 或 @@ 语法）
 }
 
 // ============================================

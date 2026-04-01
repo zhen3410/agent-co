@@ -810,7 +810,7 @@ function getCallbackMessageKey(sessionId: string, agentName: string): string {
   return `${sessionId}::${agentName}`;
 }
 
-function addCallbackMessage(sessionId: string, agentName: string, content: string): Message {
+function addCallbackMessage(sessionId: string, agentName: string, content: string, invokeAgents?: string[]): Message {
   const key = getCallbackMessageKey(sessionId, agentName);
   const queue = callbackMessages.get(key) || [];
   const msg: Message = {
@@ -818,7 +818,8 @@ function addCallbackMessage(sessionId: string, agentName: string, content: strin
     role: 'assistant',
     sender: agentName,
     text: content,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    invokeAgents: invokeAgents && invokeAgents.length > 0 ? invokeAgents : undefined
   };
   queue.push(msg);
   callbackMessages.set(key, queue);
@@ -983,11 +984,33 @@ async function executeAgentTurn(params: {
     });
 
     for (const rawMessage of visibleMessages) {
-      const { mentions } = collectEligibleMentions(rawMessage.text || '', session);
-      const chainedMentions = mentions.filter(name => name !== rawMessage.sender);
-      const message = chainedMentions.length > 0
-        ? { ...rawMessage, mentions: chainedMentions }
-        : rawMessage;
+      // 收集引用型 @ mentions（仅用于显示，不触发链式）
+      const { mentions: referenceMentions } = collectEligibleMentions(rawMessage.text || '', session);
+
+      // 链式触发来源：callback invokeAgents > @@ 文本解析，不再从单 @ 触发
+      let chainTargets: string[];
+      if (rawMessage.invokeAgents && rawMessage.invokeAgents.length > 0) {
+        chainTargets = rawMessage.invokeAgents;
+      } else {
+        chainTargets = agentManager.extractChainInvocations(rawMessage.text || '');
+      }
+      const chainedMentions = chainTargets.filter(name => name !== rawMessage.sender && agentManager.hasAgent(name));
+
+      // 当 invokeAgents 来自 callback 但文本中还没有 @@ 标记时，自动将 @AgentName 升级为 @@AgentName
+      let displayText = rawMessage.text || '';
+      if (rawMessage.invokeAgents && rawMessage.invokeAgents.length > 0 && !agentManager.extractChainInvocations(displayText).length) {
+        for (const agentName of rawMessage.invokeAgents) {
+          const escapedName = agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          displayText = displayText.replace(new RegExp(`@${escapedName}`, 'g'), `@@${agentName}`);
+        }
+      }
+
+      const message = {
+        ...rawMessage,
+        text: displayText,
+        mentions: referenceMentions.length > 0 ? referenceMentions : undefined,
+        invokeAgents: chainedMentions.length > 0 ? chainedMentions : undefined
+      };
 
       session.history.push(message);
       aiMessages.push(message);
@@ -1489,7 +1512,7 @@ async function handleCallbackPostMessage(req: http.IncomingMessage, res: http.Se
   }
 
   try {
-    const body = await parseBody<{ content?: string }>(req);
+    const body = await parseBody<{ content?: string; invokeAgents?: string[] }>(req);
     const content = (body.content || '').trim();
     if (!content) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -1512,7 +1535,10 @@ async function handleCallbackPostMessage(req: http.IncomingMessage, res: http.Se
       return;
     }
 
-    addCallbackMessage(sessionId, agentName, content);
+    const invokeAgents = Array.isArray(body.invokeAgents)
+      ? body.invokeAgents.filter((n): n is string => typeof n === 'string' && !!n.trim())
+      : undefined;
+    addCallbackMessage(sessionId, agentName, content, invokeAgents);
     console.log(`
 [聊天室消息][${agentName}] ${content}`);
 

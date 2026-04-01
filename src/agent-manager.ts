@@ -180,6 +180,33 @@ export class AgentManager {
     return [...new Set(mentions)];
   }
 
+  /**
+   * 从文本中提取 @@AgentName 格式的链式调用意图
+   * 仅匹配双 @ 前缀，单 @ 只作为引用不触发链式
+   */
+  extractChainInvocations(text: string): string[] {
+    const chainRegex = /[@＠]{2}([^\s@＠，。！？、,:：；;]+)/g;
+    const invocations: string[] = [];
+    const normalizedAgentNames = new Map<string, string>();
+    for (const agentName of this.agentConfigs.keys()) {
+      normalizedAgentNames.set(this.normalizeMentionToken(agentName), agentName);
+    }
+    let match;
+
+    while ((match = chainRegex.exec(text)) !== null) {
+      const mentionName = this.normalizeMentionToken(match[1] || '');
+      if (!mentionName) {
+        continue;
+      }
+      const matchedName = normalizedAgentNames.get(mentionName);
+      if (matchedName) {
+        invocations.push(matchedName);
+      }
+    }
+
+    return [...new Set(invocations)];
+  }
+
   removeAgent(name: string): boolean {
     if (this.agents.has(name)) {
       this.agents.delete(name);

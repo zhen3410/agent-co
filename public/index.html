@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Bot Room">
@@ -1813,7 +1813,11 @@
     }
 
     function highlightMentions(text) {
-      return text.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
+      // @@AgentName → 链式调用样式（优先匹配）
+      let result = text.replace(/@@([^\s@，。！？、,:：；;]+)/g, '<span class="mention mention--invoke">@@$1</span>');
+      // @AgentName → 普通引用样式
+      result = result.replace(/@([^\s@，。！？、,:：；;]+)/g, '<span class="mention">@$1</span>');
+      return result;
     }
 
     function renderMessage(msg) {
@@ -2099,7 +2103,7 @@
         const codePlaceholders = [];
         let formatted = line.replace(/`([^`]+)`/g, (_, code) => {
           const idx = codePlaceholders.push(`<code>${code}</code>`) - 1;
-          return `@@CODE_${idx}@@`;
+          return `\x00CODE_${idx}\x00`;
         });
 
         formatted = formatted
@@ -2107,7 +2111,12 @@
           .replace(/\*([^*]+)\*/g, '<em>$1</em>')
           .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 
-        return formatted.replace(/@@CODE_(\d+)@@/g, (_, idx) => codePlaceholders[Number(idx)]);
+        // @@AgentName → 链式调用高亮（在 code placeholder 之后、还原之前）
+        formatted = formatted.replace(/@@([^\s@，。！？、,:：；;]+)/g, '<span class="mention mention--invoke">@@$1</span>');
+        // @AgentName → 普通引用高亮
+        formatted = formatted.replace(/@([^\s@，。！？、,:：；;]+)/g, '<span class="mention">@$1</span>');
+
+        return formatted.replace(/\x00CODE_(\d+)\x00/g, (_, idx) => codePlaceholders[Number(idx)]);
       }
 
       for (const line of lines) {

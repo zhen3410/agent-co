@@ -52,3 +52,40 @@ test('编辑已绑定停用 connection 的 API agent 时仍会保留当前连接
   assert.ok(html.includes('（已停用）'), 'should label disabled selected connection clearly');
   assert.ok(html.includes('const enabledOptions = modelConnections'), 'should keep normal enabled options separate');
 });
+
+test('聊天首页在加载分组后会默认展开分组并渲染分组头部', () => {
+  const htmlPath = path.join(__dirname, '..', '..', 'public', 'index.html');
+  const html = fs.readFileSync(htmlPath, 'utf8');
+
+  assert.ok(html.includes('function getGroupedAgents()'), 'should build grouped agent list on chat page');
+  assert.ok(html.includes('expandedGroups = new Set(groupedAgents.map(group => group.id));'), 'should expand loaded groups by default');
+  assert.ok(html.includes('class="agent-group-header'), 'should render group headers in chat sidebar');
+});
+
+test('管理后台会加载分组并按分组展示智能体', () => {
+  const htmlPath = path.join(__dirname, '..', '..', 'public-auth', 'admin.html');
+  const html = fs.readFileSync(htmlPath, 'utf8');
+
+  assert.ok(html.includes("let groups = [];"), 'should keep group state in admin page');
+  assert.ok(html.includes("await loadGroups();"), 'should load groups after token verification');
+  assert.ok(html.includes("fetch('/api/groups'"), 'should request group data from admin api');
+  assert.ok(html.includes('function getGroupedAgentsForAdmin('), 'should build grouped agent view in admin page');
+  assert.ok(html.includes('agent-group-section'), 'should render grouped admin sections');
+});
+
+test('管理后台提供分组管理界面和创建分组弹窗', () => {
+  const htmlPath = path.join(__dirname, '..', '..', 'public-auth', 'admin.html');
+  const html = fs.readFileSync(htmlPath, 'utf8');
+
+  assert.ok(html.includes('分组管理'), 'should render group management section title');
+  assert.ok(html.includes('showGroupModal()'), 'should provide create-group trigger');
+  assert.ok(html.includes('id="groups-list"'), 'should render groups list container');
+  assert.ok(html.includes('id="group-modal"'), 'should render group modal');
+  assert.ok(html.includes('id="group-form"'), 'should render group form');
+  assert.ok(html.includes('id="group-id"'), 'should render group id input');
+  assert.ok(html.includes('id="group-name"'), 'should render group name input');
+  assert.ok(html.includes('id="group-icon"'), 'should render group icon input');
+  assert.ok(html.includes('id="group-agents-checkboxes"'), 'should render group member checkbox container');
+  assert.ok(html.includes("document.getElementById('group-form').addEventListener('submit'"), 'should bind group form submit handler');
+  assert.ok(html.includes("fetch(`/api/groups/${encodeURIComponent(id)}`"), 'should delete groups through api');
+});
