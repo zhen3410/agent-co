@@ -1974,6 +1974,16 @@ body.context-panel-open .main-layout {
     display: block;
   }
 
+  .composer-preview__header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .composer-preview__meta {
+    white-space: normal;
+  }
+
   .input-area {
     padding: 12px 12px calc(14px + env(safe-area-inset-bottom));
   }

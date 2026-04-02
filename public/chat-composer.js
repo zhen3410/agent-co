@@ -85,6 +85,18 @@
     inputEl.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  function replaceCurrentLinePrefix(prefixPattern, nextPrefix) {
+    if (!inputEl) return;
+    const start = inputEl.selectionStart ?? inputEl.value.length;
+    const lineStart = inputEl.value.lastIndexOf('\n', start - 1) + 1;
+    const lineEndIndex = inputEl.value.indexOf('\n', start);
+    const lineEnd = lineEndIndex === -1 ? inputEl.value.length : lineEndIndex;
+    const lineText = inputEl.value.slice(lineStart, lineEnd);
+    const updated = lineText.replace(prefixPattern, '');
+    inputEl.setRangeText(`${nextPrefix}${updated}`, lineStart, lineEnd, 'end');
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
   function insertByAction(action) {
     switch (action) {
       case 'bold':
@@ -105,7 +117,10 @@
       case 'list':
         prefixCurrentLine('- ');
         break;
-      case 'quote':
+      case 'ordered-list':
+        replaceCurrentLinePrefix(/^([-*]\s+|>\s+|\d+\.\s+)/, '1. ');
+        break;
+      case 'blockquote':
         prefixCurrentLine('> ');
         break;
       default:
