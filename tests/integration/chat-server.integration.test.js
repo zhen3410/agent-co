@@ -792,7 +792,18 @@ EOF
 });
 
 test('支持带中文标点的 @Codex架构师 提及', async () => {
-  const fixture = await createChatServerFixture();
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-mention-'));
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '{"output_text":"中文标点 mention ok"}\n'
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
 
   try {
     const loginResponse = await fixture.login();
@@ -812,11 +823,29 @@ test('支持带中文标点的 @Codex架构师 提及', async () => {
     assert.ok(senders.has('Codex架构师'));
   } finally {
     await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
 test('支持全角＠all 群聊提及并触发所有智能体回复', async () => {
-  const fixture = await createChatServerFixture();
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-fullwidth-all-'));
+  const fakeClaude = join(tempDir, 'claude');
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+agent_name="\${BOT_ROOM_AGENT_NAME:-Claude}"
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"'"$agent_name"' ok"}]}}\n'
+`, 'utf8');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '{"output_text":"Codex架构师 ok"}\n'
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+  chmodSync(fakeCodex, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
 
   try {
     const loginResponse = await fixture.login();
@@ -839,6 +868,7 @@ test('支持全角＠all 群聊提及并触发所有智能体回复', async () =
     assert.ok(senders.has('Bob'));
   } finally {
     await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });
 

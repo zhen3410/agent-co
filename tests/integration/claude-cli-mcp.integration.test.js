@@ -117,6 +117,42 @@ printf '{"output_text":"ok"}\\n'
   }
 });
 
+
+test('Codex CLI 即使未配置 workdir 也会禁用审批请求，避免 MCP 工具调用被取消', { concurrency: false }, async () => {
+  const { callClaudeCLI } = require('../../dist/claude-cli.js');
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-no-workdir-'));
+  const argsFile = join(tempDir, 'codex-args.txt');
+  const fakeCodex = join(tempDir, 'codex');
+
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '%s\n' "$@" > "${argsFile}"
+printf '{"output_text":"ok"}\n'
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${tempDir}:${originalPath || ''}`;
+
+  try {
+    const agent = {
+      name: 'Codex架构师',
+      avatar: '🏗️',
+      systemPrompt: '你是测试架构师',
+      color: '#8b5cf6',
+      cli: 'codex'
+    };
+
+    const response = await callClaudeCLI('请处理任务', agent, []);
+    assert.equal(response.text, 'ok');
+
+    const args = readFileSync(argsFile, 'utf8').trim().split('\n');
+    assert.ok(args.includes('approval_policy="never"'));
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('Codex CLI 配置 workdir 时会在目标目录执行并禁用审批请求', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-workdir-'));

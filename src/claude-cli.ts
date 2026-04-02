@@ -218,9 +218,7 @@ function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, 
 
   delete (env as Record<string, unknown>).CODEX_SESSION_ID;
   const args = ['exec', prompt, '--json'];
-  if (workdir && workdir.trim()) {
-    args.push('-c', `approval_policy="never"`);
-  }
+  args.push('-c', `approval_policy="never"`);
   if (mcp) {
     args.push(
       '-c',
