@@ -186,28 +186,143 @@ test('管理后台为专业智能体提示词提供模板预览入口', () => {
   assert.ok(!html.includes('window.alert('), 'should use an in-page modal instead of alert for preview');
 });
 
-test('React 页面会将 AI 回复按 Markdown 渲染并保留用户纯文本换行', () => {
+test('React 页面会为用户与 AI 回复统一使用 Markdown 渲染模块，并引入独立 composer/markdown 脚本', () => {
   const html = readPublicFile('public', 'index.html');
-  const plainTextBody = getFunctionBody(html, 'renderPlainText');
-  const markdownBody = getFunctionBody(html, 'renderMarkdown');
-
-  assertContainsAll(plainTextBody, [
-    'function renderPlainText(text) {',
-    'escapeHtml(text)',
-    "replace(/\\n/g, '<br>')"
-  ], 'missing plain-text renderer contract');
-  assertContainsAll(markdownBody, [
-    'function renderMarkdown(text) {',
-    "escapeHtml((text || '').replace(/\\r\\n/g, '\\n'))",
-    'function formatInline(line) {',
-    ".replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')",
-    ".replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g, '<a href=\"$2\" target=\"_blank\" rel=\"noopener noreferrer\">$1</a>')"
-  ], 'missing markdown renderer contract');
   assertContainsAll(html, [
+    '<script src="/chat-markdown.js"></script>',
+    '<script src="/chat-composer.js"></script>',
     'message__text message__text--markdown',
-    "${highlightMentions(renderPlainText(msg.text || ''))}",
-    "${renderMarkdown(msg.text || '')}"
-  ], 'missing message rendering contract');
+    "window.ChatMarkdown.renderMarkdownHtml(msg.text || '', {",
+    "role: msg.role || 'assistant'",
+    'enableMentions: true'
+  ], 'missing shared markdown renderer contract');
+  assert.ok(!html.includes('${highlightMentions(renderPlainText(msg.text || \'\'))}'), 'should stop rendering user messages as plain text');
+  assert.ok(!html.includes('function renderMarkdown(text) {'), 'should move markdown rendering out of index.html');
+});
+
+test('聊天输入区升级为桌面双栏预览与移动端编辑/预览切换结构', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assertContainsAll(html, [
+    'className="composer-toolbar"',
+    'className="composer-body"',
+    'className="composer-editor"',
+    'className="composer-preview"',
+    'id="composerPreview"',
+    'className="composer-mobile-tabs"',
+    'data-tab="edit"',
+    'data-tab="preview"',
+    'window.ChatComposer.initComposer'
+  ], 'missing composer preview structure');
+});
+
+test('Markdown 与 composer 独立模块包含第二轮增强能力：代码复制、滚动同步与更完整语法', () => {
+  const markdown = readPublicFile('public', 'chat-markdown.js');
+  const composer = readPublicFile('public', 'chat-composer.js');
+  const css = readPublicFile('public', 'styles.css');
+
+  assertContainsAll(markdown, [
+    'copy-code-btn',
+    'code-block',
+    'task-list-item',
+    '<table>',
+    'navigator.clipboard.writeText'
+  ], 'missing markdown enhancement contract');
+
+  assertContainsAll(composer, [
+    'function syncComposerScroll()',
+    "previewEl.scrollTop = ratio * previewScrollable",
+    "inputEl.addEventListener('scroll', syncComposerScroll);"
+  ], 'missing composer scroll sync contract');
+
+  assertContainsAll(css, [
+    '.code-block {',
+    '.copy-code-btn {',
+    '.copy-code-btn.is-copied {'
+  ], 'missing code copy styling contract');
+});
+
+test('第三轮增强提供预览状态层、代码语言标签与表格可读性样式', () => {
+  const html = readPublicFile('public', 'index.html');
+  const markdown = readPublicFile('public', 'chat-markdown.js');
+  const composer = readPublicFile('public', 'chat-composer.js');
+  const css = readPublicFile('public', 'styles.css');
+
+  assertContainsAll(html, [
+    'composer-preview__header',
+    'composerPreviewStatus',
+    '支持 Markdown 语法，Enter 发送，Shift+Enter 换行'
+  ], 'missing preview status shell');
+
+  assertContainsAll(markdown, [
+    'code-block__lang',
+    "code.getAttribute('data-language')",
+    "button.setAttribute('data-copy-code'"
+  ], 'missing code language label contract');
+
+  assertContainsAll(composer, [
+    'function updatePreviewStatus()',
+    "statusEl.textContent = `${lineCount} 行 · ${charCount} 字符`",
+    'updatePreviewStatus();'
+  ], 'missing preview status logic');
+
+  assertContainsAll(css, [
+    '.composer-preview__header {',
+    '.composer-preview__meta {',
+    '.code-block__lang {',
+    '.message__text--markdown table tbody tr:nth-child(even) {'
+  ], 'missing preview/code/table polish styles');
+});
+
+test('第四轮增强提供更顺手的工具栏插入、复制降级与移动端预览适配', () => {
+  const composer = readPublicFile('public', 'chat-composer.js');
+  const markdown = readPublicFile('public', 'chat-markdown.js');
+  const css = readPublicFile('public', 'styles.css');
+
+  assertContainsAll(composer, [
+    "case 'ordered-list':",
+    "case 'blockquote':",
+    "wrapSelection('```",
+    'function replaceCurrentLinePrefix('
+  ], 'missing richer toolbar editing contract');
+
+  assertContainsAll(markdown, [
+    "document.execCommand('copy')",
+    'textarea.setAttribute(\'readonly\'',
+    '复制失败'
+  ], 'missing clipboard fallback contract');
+
+  assertContainsAll(css, [
+    '@media (max-width: 960px) {',
+    '.composer-preview__header {',
+    '.composer-preview__meta {'
+  ], 'missing mobile preview polish contract');
+});
+
+test('第五轮增强提供轻量代码高亮结构和桌面端双向滚动同步', () => {
+  const markdown = readPublicFile('public', 'chat-markdown.js');
+  const composer = readPublicFile('public', 'chat-composer.js');
+  const css = readPublicFile('public', 'styles.css');
+
+  assertContainsAll(markdown, [
+    'function highlightCodeSyntax(',
+    'token token--keyword',
+    'token token--string',
+    'token token--comment'
+  ], 'missing lightweight syntax highlight contract');
+
+  assertContainsAll(composer, [
+    'let syncingScroll = false;',
+    'function syncPreviewFromInputScroll()',
+    'function syncInputFromPreviewScroll()',
+    "previewBodyEl.addEventListener('scroll', syncInputFromPreviewScroll);"
+  ], 'missing bidirectional scroll sync contract');
+
+  assertContainsAll(css, [
+    '.token--keyword {',
+    '.token--string {',
+    '.token--comment {'
+  ], 'missing syntax highlight styles');
 });
 
 test('聊天页顶部控制栏保持吸顶，避免被长消息列表顶出视口', () => {

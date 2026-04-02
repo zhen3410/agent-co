@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { mkdtempSync, writeFileSync, chmodSync, readFileSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
+const claudeCliModulePath = require.resolve('../../dist/claude-cli.js');
 
 test('Claude CLI 在具备 callback 环境时会挂载 bot-room MCP 配置并允许工具调用', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
@@ -251,6 +252,61 @@ printf '{"type":"response_item","payload":{"type":"message","role":"assistant","
     assert.equal(response.text, 'assistant ok');
   } finally {
     process.env.PATH = originalPath;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('Claude CLI 在测试场景可通过环境变量缩短心跳超时，避免集成测试长时间挂起', { concurrency: false }, async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-claude-timeout-'));
+  const fakeClaude = join(tempDir, 'claude');
+
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+sleep 5
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const originalPath = process.env.PATH;
+  const originalHeartbeat = process.env.BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS;
+  const originalTimeout = process.env.BOT_ROOM_CLI_TIMEOUT_MS;
+  const originalKillGrace = process.env.BOT_ROOM_CLI_KILL_GRACE_MS;
+  process.env.PATH = `${tempDir}:${originalPath || ''}`;
+  process.env.BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS = '200';
+  process.env.BOT_ROOM_CLI_TIMEOUT_MS = '800';
+  process.env.BOT_ROOM_CLI_KILL_GRACE_MS = '50';
+  delete require.cache[claudeCliModulePath];
+  const { callClaudeCLI } = require('../../dist/claude-cli.js');
+
+  try {
+    const agent = {
+      name: 'Claude',
+      avatar: '🤖',
+      systemPrompt: '你是测试助手',
+      color: '#3b82f6',
+      cli: 'claude'
+    };
+
+    const startedAt = Date.now();
+    await assert.rejects(() => callClaudeCLI('请处理任务', agent, []), /CLI error|超时|无法启动/);
+    const elapsed = Date.now() - startedAt;
+    assert.ok(elapsed < 7000, `should fail much faster in tests, elapsed=${elapsed}`);
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalHeartbeat === undefined) {
+      delete process.env.BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS;
+    } else {
+      process.env.BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS = originalHeartbeat;
+    }
+    if (originalTimeout === undefined) {
+      delete process.env.BOT_ROOM_CLI_TIMEOUT_MS;
+    } else {
+      process.env.BOT_ROOM_CLI_TIMEOUT_MS = originalTimeout;
+    }
+    if (originalKillGrace === undefined) {
+      delete process.env.BOT_ROOM_CLI_KILL_GRACE_MS;
+    } else {
+      process.env.BOT_ROOM_CLI_KILL_GRACE_MS = originalKillGrace;
+    }
+    delete require.cache[claudeCliModulePath];
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
