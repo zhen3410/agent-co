@@ -186,28 +186,34 @@ test('管理后台为专业智能体提示词提供模板预览入口', () => {
   assert.ok(!html.includes('window.alert('), 'should use an in-page modal instead of alert for preview');
 });
 
-test('React 页面会将 AI 回复按 Markdown 渲染并保留用户纯文本换行', () => {
+test('React 页面会为用户与 AI 回复统一使用 Markdown 渲染模块，并引入独立 composer/markdown 脚本', () => {
   const html = readPublicFile('public', 'index.html');
-  const plainTextBody = getFunctionBody(html, 'renderPlainText');
-  const markdownBody = getFunctionBody(html, 'renderMarkdown');
-
-  assertContainsAll(plainTextBody, [
-    'function renderPlainText(text) {',
-    'escapeHtml(text)',
-    "replace(/\\n/g, '<br>')"
-  ], 'missing plain-text renderer contract');
-  assertContainsAll(markdownBody, [
-    'function renderMarkdown(text) {',
-    "escapeHtml((text || '').replace(/\\r\\n/g, '\\n'))",
-    'function formatInline(line) {',
-    ".replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')",
-    ".replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g, '<a href=\"$2\" target=\"_blank\" rel=\"noopener noreferrer\">$1</a>')"
-  ], 'missing markdown renderer contract');
   assertContainsAll(html, [
+    '<script src="/chat-markdown.js"></script>',
+    '<script src="/chat-composer.js"></script>',
     'message__text message__text--markdown',
-    "${highlightMentions(renderPlainText(msg.text || ''))}",
-    "${renderMarkdown(msg.text || '')}"
-  ], 'missing message rendering contract');
+    "window.ChatMarkdown.renderMarkdownHtml(msg.text || '', {",
+    "role: msg.role || 'assistant'",
+    'enableMentions: true'
+  ], 'missing shared markdown renderer contract');
+  assert.ok(!html.includes('${highlightMentions(renderPlainText(msg.text || \'\'))}'), 'should stop rendering user messages as plain text');
+  assert.ok(!html.includes('function renderMarkdown(text) {'), 'should move markdown rendering out of index.html');
+});
+
+test('聊天输入区升级为桌面双栏预览与移动端编辑/预览切换结构', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assertContainsAll(html, [
+    'className="composer-toolbar"',
+    'className="composer-body"',
+    'className="composer-editor"',
+    'className="composer-preview"',
+    'id="composerPreview"',
+    'className="composer-mobile-tabs"',
+    'data-tab="edit"',
+    'data-tab="preview"',
+    'window.ChatComposer.initComposer'
+  ], 'missing composer preview structure');
 });
 
 test('聊天页顶部控制栏保持吸顶，避免被长消息列表顶出视口', () => {
