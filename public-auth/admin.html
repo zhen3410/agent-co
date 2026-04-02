@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Bot Room 管理后台</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -662,6 +662,118 @@
       flex-wrap: wrap;
     }
 
+    .agent-groups {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-lg);
+    }
+
+    .agent-group-section {
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: var(--space-md);
+      background: var(--bg-primary);
+    }
+
+    .agent-group-section-header {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      margin-bottom: var(--space-md);
+      padding-bottom: var(--space-sm);
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .agent-group-section-icon {
+      font-size: 18px;
+    }
+
+    .agent-group-section-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .agent-group-section-meta {
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    .groups-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-md);
+    }
+
+    .group-item {
+      display: flex;
+      align-items: center;
+      padding: var(--space-md);
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+      gap: var(--space-md);
+    }
+
+    .group-item-icon {
+      font-size: 24px;
+    }
+
+    .group-item-info {
+      flex: 1;
+    }
+
+    .group-item-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .group-item-members {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-top: 4px;
+    }
+
+    .group-item-actions {
+      display: flex;
+      gap: var(--space-sm);
+    }
+
+    .checkboxes-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--space-sm);
+      max-height: 200px;
+      overflow-y: auto;
+      padding: var(--space-sm);
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+    }
+
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      padding: var(--space-xs);
+    }
+
+    .checkbox-item input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+    }
+
+    .checkbox-item label {
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .form-hint {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
     /* ============================================
        响应式
        ============================================ */
@@ -918,6 +1030,20 @@
           </div>
         </div>
       </div>
+
+      <div class="card" id="groupsCard" style="display: none;">
+        <div class="card-header">
+          <h2 class="card-title">分组管理</h2>
+          <button class="btn btn-primary btn-sm" onclick="showGroupModal()">+ 新建分组</button>
+        </div>
+        <div class="card-body">
+          <div id="groups-list" class="groups-list">
+            <div class="loading">
+              <p>请先验证管理员 Token</p>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -961,6 +1087,36 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="group-modal">
+    <div class="modal">
+      <h3 id="group-modal-title">新建分组</h3>
+      <p>创建智能体分组，方便管理和快速切换。</p>
+      <form id="group-form">
+        <div class="form-group">
+          <label class="form-label">分组 ID</label>
+          <input type="text" id="group-id" placeholder="例如: dev_team" required>
+          <small class="form-hint">2-20 字符，仅字母数字下划线，创建后不可修改</small>
+        </div>
+        <div class="form-group">
+          <label class="form-label">分组名称</label>
+          <input type="text" id="group-name" placeholder="例如: 开发组" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">图标</label>
+          <input type="text" id="group-icon" placeholder="例如: 💻" maxlength="4" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">智能体成员</label>
+          <div id="group-agents-checkboxes" class="checkboxes-grid"></div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="hideGroupModal()">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Toast 通知 -->
   <div class="toast" id="toast"></div>
 
@@ -969,7 +1125,10 @@
     let currentEditUser = '';
     let editingAgentName = '';
     let editingConnectionId = '';
+    let editingGroupId = '';
+    let agents = [];
     let modelConnections = [];
+    let groups = [];
     const professionalTemplateAgents = new Set(['Codex架构师', 'BACKEND', 'FRONTEND', 'QA', 'OPS', 'SECURITY', 'PERF']);
     const workdirState = { root: '', level2: '', level3: '', custom: '' };
 
@@ -1188,11 +1347,13 @@
           showToast('Token 验证成功');
           document.getElementById('addUserCard').style.display = 'block';
           document.getElementById('modelConnectionsCard').style.display = 'block';
+          document.getElementById('groupsCard').style.display = 'block';
           document.getElementById('tokenHint').style.display = 'flex';
           document.getElementById('authBadge').className = 'badge badge-success';
           document.getElementById('authBadge').textContent = '已验证';
           await loadWorkdirHierarchy();
           await loadModelConnections();
+          await loadGroups();
           loadUsers();
           loadAgents();
         } else {
@@ -1555,8 +1716,9 @@
         const response = await fetch('/api/agents', { headers: { 'x-admin-token': adminToken } });
         if (!response.ok) throw new Error('加载失败');
         const data = await response.json();
+        agents = data.agents || [];
         document.getElementById('agentCard').style.display = 'block';
-        renderAgents(data.agents || []);
+        renderAgents(agents);
 
         const pendingTag = document.getElementById('pendingTag');
         if (data.pendingAgents && data.pendingAgents.length > 0) {
@@ -1584,8 +1746,146 @@
           if (existingInfo) existingInfo.remove();
         }
       } catch (error) {
+        agents = [];
         container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">❌</div><p class="empty-state-text">加载智能体失败</p></div>';
       }
+    }
+
+    async function loadGroups() {
+      const container = document.getElementById('groups-list');
+      try {
+        const response = await fetch('/api/groups', {
+          headers: { 'x-admin-token': adminToken }
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || '加载分组失败');
+        }
+        groups = data.groups || [];
+        renderGroupsList();
+      } catch (error) {
+        groups = [];
+        if (container) {
+          container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">❌</div><p class="empty-state-text">加载分组失败</p></div>';
+        }
+        showToast('加载分组失败: ' + error.message, 'error');
+      }
+    }
+
+    function renderGroupsList() {
+      const container = document.getElementById('groups-list');
+      if (!container) return;
+
+      if (groups.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">📁</div>
+            <div class="empty-state-text">暂无分组，点击上方按钮创建</div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = groups.map(group => `
+        <div class="group-item">
+          <div class="group-item-icon">${escapeHtml(group.icon)}</div>
+          <div class="group-item-info">
+            <div class="group-item-name">${escapeHtml(group.name)} (${escapeHtml(group.id)})</div>
+            <div class="group-item-members">${group.agentNames.map(name => escapeHtml(name)).join('、')}</div>
+          </div>
+          <div class="group-item-actions">
+            <button class="btn btn-secondary btn-sm" data-action="edit-group" data-group-id="${escapeHtml(group.id)}">编辑</button>
+            <button class="btn btn-danger btn-sm" data-action="delete-group" data-group-id="${escapeHtml(group.id)}">删除</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function showGroupModal(group = null) {
+      editingGroupId = group ? group.id : '';
+      document.getElementById('group-modal-title').textContent = group ? '编辑分组' : '新建分组';
+      document.getElementById('group-id').value = group ? group.id : '';
+      document.getElementById('group-id').disabled = Boolean(group);
+      document.getElementById('group-name').value = group ? group.name : '';
+      document.getElementById('group-icon').value = group ? group.icon : '';
+
+      const checkboxesContainer = document.getElementById('group-agents-checkboxes');
+      const selectedAgents = new Set(group ? group.agentNames : []);
+      checkboxesContainer.innerHTML = agents.map(agent => `
+        <div class="checkbox-item">
+          <input type="checkbox" id="agent-${escapeHtml(agent.name)}" value="${escapeHtml(agent.name)}"
+            ${selectedAgents.has(agent.name) ? 'checked' : ''}>
+          <label for="agent-${escapeHtml(agent.name)}">${escapeHtml(agent.avatar)} ${escapeHtml(agent.name)}</label>
+        </div>
+      `).join('');
+
+      document.getElementById('group-modal').classList.add('show');
+    }
+
+    function hideGroupModal() {
+      document.getElementById('group-modal').classList.remove('show');
+      editingGroupId = '';
+      document.getElementById('group-form').reset();
+      document.getElementById('group-id').disabled = false;
+      document.getElementById('group-agents-checkboxes').innerHTML = '';
+    }
+
+    function editGroup(id) {
+      const group = groups.find(item => item.id === id);
+      if (group) {
+        showGroupModal(group);
+      }
+    }
+
+    async function deleteGroup(id) {
+      if (!confirm('确定要删除此分组吗？')) return;
+
+      try {
+        const response = await fetch(`/api/groups/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { 'x-admin-token': adminToken }
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || '删除失败');
+        }
+        showToast('分组已删除');
+        await loadGroups();
+        await loadAgents();
+      } catch (error) {
+        showToast('删除失败: ' + error.message, 'error');
+      }
+    }
+
+    function getGroupedAgentsForAdmin(agents) {
+      const grouped = [];
+      const groupedNames = new Set();
+
+      for (const group of groups) {
+        const members = agents.filter(agent => group.agentNames.includes(agent.name));
+        if (members.length === 0) continue;
+        grouped.push({
+          id: group.id,
+          name: group.name,
+          icon: group.icon,
+          agents: members,
+          isUngrouped: false
+        });
+        members.forEach(agent => groupedNames.add(agent.name));
+      }
+
+      const ungroupedAgents = agents.filter(agent => !groupedNames.has(agent.name));
+      if (ungroupedAgents.length > 0) {
+        grouped.push({
+          id: '__ungrouped__',
+          name: '未分组',
+          icon: '📦',
+          agents: ungroupedAgents,
+          isUngrouped: true
+        });
+      }
+
+      return grouped;
     }
 
     function renderAgents(agents) {
@@ -1596,9 +1896,22 @@
         return;
       }
 
+      const groupedAgents = getGroupedAgentsForAdmin(agents);
+
       container.innerHTML = `
-        <div class="agent-grid">
-          ${agents.map((agent, idx) => {
+        <div class="agent-groups">
+          ${groupedAgents.map(group => `
+            <section class="agent-group-section">
+              <div class="agent-group-section-header">
+                <span class="agent-group-section-icon">${escapeHtml(group.icon)}</span>
+                <div>
+                  <div class="agent-group-section-name">${escapeHtml(group.name)}</div>
+                  <div class="agent-group-section-meta">${group.agents.length} 个智能体${group.isUngrouped ? ' · 自动归档' : ''}</div>
+                </div>
+              </div>
+              <div class="agent-grid">
+                ${group.agents.map((agent) => {
+                  const idx = agents.findIndex(item => item.name === agent.name);
             const connectionName = (modelConnections.find(connection => connection.id === agent.apiConnectionId) || {}).name || '未知连接';
             const modeSummary = agent.executionMode === 'api'
               ? `API · ${escapeHtml(connectionName)} · ${escapeHtml(agent.apiModel || '')}`
@@ -1633,7 +1946,10 @@
               </div>
             </div>
           `;
-          }).join('')}
+                }).join('')}
+              </div>
+            </section>
+          `).join('')}
         </div>
       `;
 
@@ -1854,6 +2170,57 @@
       populateModelConnectionOptions();
       resetConnectionForm();
       toggleAgentExecutionFields('cli');
+      document.getElementById('groups-list').addEventListener('click', (event) => {
+        const btn = event.target.closest('button[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        const id = btn.dataset.groupId;
+        if (action === 'edit-group') {
+          editGroup(id);
+        } else if (action === 'delete-group') {
+          deleteGroup(id);
+        }
+      });
+      document.getElementById('group-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        const id = document.getElementById('group-id').value.trim();
+        const name = document.getElementById('group-name').value.trim();
+        const icon = document.getElementById('group-icon').value.trim();
+        const checkboxes = document.querySelectorAll('#group-agents-checkboxes input:checked');
+        const agentNames = Array.from(checkboxes).map(cb => cb.value);
+
+        if (!id || !name || !icon || agentNames.length === 0) {
+          showToast('请填写所有字段并选择至少一个智能体', 'error');
+          return;
+        }
+
+        const path = editingGroupId
+          ? `/api/groups/${encodeURIComponent(editingGroupId)}`
+          : '/api/groups';
+        const method = editingGroupId ? 'PUT' : 'POST';
+
+        try {
+          const response = await fetch(path, {
+            method,
+            headers: {
+              'Content-Type': 'application/json',
+              'x-admin-token': adminToken
+            },
+            body: JSON.stringify({ id, name, icon, agentNames })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.error || '操作失败');
+          }
+          showToast(editingGroupId ? '分组已更新' : '分组已创建');
+          hideGroupModal();
+          await loadGroups();
+          await loadAgents();
+        } catch (error) {
+          showToast('操作失败: ' + error.message, 'error');
+        }
+      });
       document.getElementById('agentWorkdirRoot').addEventListener('change', () => {
         onWorkdirRootChange().catch(error => showToast('加载目录失败: ' + error.message, 'error'));
       });

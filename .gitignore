@@ -5,5 +5,5 @@ dist/
 .DS_Store
 
 .worktrees/
-
-.worktrees/
+.codex
+data/api-connections.json
