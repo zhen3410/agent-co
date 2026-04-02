@@ -13,8 +13,16 @@ import { AIAgent, Message, RichBlock } from './types';
 import { digestHistory } from './rich-digest';
 import { extractRichBlocks } from './rich-extract';
 
-const CLI_TIMEOUT_MS = 30 * 60 * 1000;
-const CLI_HEARTBEAT_TIMEOUT_MS = 3 * 60 * 1000;
+function readDurationFromEnv(name: string, fallbackMs: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallbackMs;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackMs;
+}
+
+const CLI_TIMEOUT_MS = readDurationFromEnv('BOT_ROOM_CLI_TIMEOUT_MS', 30 * 60 * 1000);
+const CLI_HEARTBEAT_TIMEOUT_MS = readDurationFromEnv('BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS', 3 * 60 * 1000);
+const CLI_KILL_GRACE_MS = readDurationFromEnv('BOT_ROOM_CLI_KILL_GRACE_MS', 5000);
 const MAX_LINE_LENGTH = 10 * 1024 * 1024;
 const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || 'logs/ai-cli-verbose';
 
@@ -276,11 +284,11 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
       logVerbose('meta', reason);
       child.kill('SIGTERM');
       setTimeout(() => {
-        if (!child.killed) {
+        if (child.exitCode === null && child.signalCode === null) {
           logVerbose('meta', 'SIGTERM 后进程未退出，发送 SIGKILL');
           child.kill('SIGKILL');
         }
-      }, 5000);
+      }, CLI_KILL_GRACE_MS);
     };
 
     const timeoutId = setTimeout(() => {
