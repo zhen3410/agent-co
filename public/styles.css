@@ -76,7 +76,8 @@ body::before {
 }
 
 body.sheet-open,
-body.context-panel-open {
+body.context-panel-open,
+body.composer-drawer-open {
   overflow: hidden;
 }
 
@@ -1028,6 +1029,16 @@ body.context-panel-open .main-layout {
   padding: 16px 22px 22px;
 }
 
+.mobile-composer-drawer__chrome,
+.mobile-composer-trigger,
+.mobile-composer-drawer-backdrop {
+  display: none;
+}
+
+.mobile-composer-drawer {
+  transform: none;
+}
+
 .input-area form {
   display: flex;
   flex-direction: column;
@@ -1137,6 +1148,33 @@ body.context-panel-open .main-layout {
   padding: 0 6px;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.mobile-composer-drawer__handle {
+  width: 44px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.54);
+  margin: 2px auto 12px;
+}
+
+.mobile-composer-drawer__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mobile-composer-drawer__title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.mobile-composer-drawer__subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .mention-input-wrap {
@@ -1778,8 +1816,8 @@ body.context-panel-open .main-layout {
   position: fixed;
   inset: 0;
   display: none;
-  align-items: flex-end;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: flex-end;
   z-index: 110;
   background: rgba(15, 23, 42, 0.28);
   backdrop-filter: blur(8px);
@@ -1787,22 +1825,20 @@ body.context-panel-open .main-layout {
 }
 
 .mobile-control-sheet {
-  width: min(100%, 720px);
-  max-height: 84vh;
+  width: min(88vw, 420px);
+  max-width: 420px;
+  height: 100%;
+  max-height: none;
   overflow: hidden;
-  border-radius: 28px 28px 0 0;
+  border-radius: 28px 0 0 28px;
   background: rgba(248, 250, 252, 0.96);
   border: 1px solid rgba(255, 255, 255, 0.45);
   box-shadow: var(--shadow-lg);
-  padding: 10px 16px calc(18px + env(safe-area-inset-bottom));
+  padding: 16px 16px 16px max(16px, env(safe-area-inset-left));
 }
 
 .mobile-control-sheet__handle {
-  width: 44px;
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.6);
-  margin: 4px auto 12px;
+  display: none;
 }
 
 .session-sheet__header {
@@ -1814,7 +1850,7 @@ body.context-panel-open .main-layout {
 }
 
 .mobile-control-sheet__body {
-  max-height: calc(84vh - 110px);
+  max-height: calc(100% - 110px);
   overflow-y: auto;
 }
 
@@ -1853,6 +1889,40 @@ body.context-panel-open .main-layout {
 .mobile-workdir-hint {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.mobile-composer-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 109;
+  background: rgba(15, 23, 42, 0.22);
+  backdrop-filter: blur(4px);
+  padding: 12px;
+}
+
+.mobile-composer-trigger {
+  position: fixed;
+  right: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  z-index: 108;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #fff;
+  box-shadow: 0 16px 36px rgba(37, 99, 235, 0.32);
+  font-weight: 700;
+}
+
+body.composer-drawer-open .mobile-composer-trigger {
+  opacity: 0;
+  pointer-events: none;
 }
 
 @media (max-width: 960px) {
@@ -1969,6 +2039,14 @@ body.context-panel-open .main-layout {
     max-width: min(100%, 88vw);
   }
 
+  .mobile-composer-drawer-backdrop {
+    display: none;
+  }
+
+  .mobile-composer-trigger {
+    display: inline-flex;
+  }
+
   .composer-mobile-tabs {
     display: flex;
   }
@@ -1999,7 +2077,50 @@ body.context-panel-open .main-layout {
   }
 
   .input-area {
-    padding: 12px 12px calc(14px + env(safe-area-inset-bottom));
+    display: none;
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 112;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    border-radius: 30px;
+    background: rgba(241, 245, 249, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.58);
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+    backdrop-filter: blur(14px);
+  }
+
+  .mobile-composer-drawer {
+    transform: translateY(calc(100% + 20px));
+    transition: transform 220ms ease;
+  }
+
+  .input-area.is-mobile-drawer-open {
+    display: block;
+    transform: translateY(0);
+  }
+
+  .input-area form {
+    max-height: min(70vh, 620px);
+  }
+
+  .mobile-composer-drawer__chrome {
+    display: block;
+    margin-bottom: 10px;
+  }
+
+  .input-area__hint {
+    display: none;
+  }
+
+  .mobile-control-sheet-backdrop {
+    padding: 12px 0 12px 12px;
+  }
+
+  .mobile-control-sheet {
+    width: min(88vw, 400px);
+    border-radius: 28px 0 0 28px;
   }
 
   .pwa-banner {
