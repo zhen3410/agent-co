@@ -1,0 +1,30 @@
+{
+  "groups": [
+    {
+      "id": "dev_team",
+      "name": "开发组",
+      "icon": "💻",
+      "agentNames": [
+        "Codex架构师",
+        "BACKEND",
+        "FRONTEND",
+        "QA",
+        "OPS",
+        "SECURITY",
+        "PERF"
+      ]
+    },
+    {
+      "id": "product_team",
+      "name": "产品经理",
+      "icon": "🍎",
+      "agentNames": [
+        "CPO战略官",
+        "创意猎手",
+        "用户研究员",
+        "增长黑客"
+      ]
+    }
+  ],
+  "updatedAt": 1774848502996
+}
