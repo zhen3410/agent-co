@@ -1,6 +1,8 @@
 (function () {
   let inputEl = null;
   let previewEl = null;
+  let previewBodyEl = null;
+  let statusEl = null;
   let mode = 'edit';
   let debounceTimer = null;
 
@@ -24,18 +26,27 @@
   }
 
   function renderEmpty() {
-    if (!previewEl) return;
-    previewEl.innerHTML = '<div class="composer-preview__empty">Markdown 预览会显示在这里</div>';
+    if (!previewBodyEl) return;
+    previewBodyEl.innerHTML = '<div class="composer-preview__empty">Markdown 预览会显示在这里</div>';
+  }
+
+  function updatePreviewStatus() {
+    if (!inputEl || !statusEl) return;
+    const raw = inputEl.value;
+    const lineCount = raw ? raw.split('\n').length : 0;
+    const charCount = raw.length;
+    statusEl.textContent = `${lineCount} 行 · ${charCount} 字符`;
   }
 
   function refreshPreview() {
-    if (!previewEl || !inputEl) return;
+    if (!previewBodyEl || !inputEl) return;
     const value = inputEl.value.trim();
+    updatePreviewStatus();
     if (!value) {
       renderEmpty();
       return;
     }
-    previewEl.innerHTML = window.ChatMarkdown.renderMarkdownHtml(inputEl.value, {
+    previewBodyEl.innerHTML = window.ChatMarkdown.renderMarkdownHtml(inputEl.value, {
       role: 'user',
       forPreview: true,
       enableMentions: true
@@ -121,12 +132,15 @@
   function initComposer(options) {
     inputEl = options.input;
     previewEl = options.preview;
+    previewBodyEl = document.getElementById('composerPreviewBody') || previewEl;
+    statusEl = document.getElementById('composerPreviewStatus');
     if (!inputEl || !previewEl) return;
     bindToolbar();
     bindTabs();
     inputEl.addEventListener('input', scheduleRefresh);
     inputEl.addEventListener('scroll', syncComposerScroll);
     renderEmpty();
+    updatePreviewStatus();
     updatePanels();
   }
 

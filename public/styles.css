@@ -826,6 +826,10 @@ body.context-panel-open .main-layout {
   background: rgba(148, 163, 184, 0.08);
 }
 
+.message__text--markdown table tbody tr:nth-child(even) {
+  background: rgba(248, 250, 252, 0.72);
+}
+
 .message__text--markdown hr {
   border: 0;
   border-top: 1px solid rgba(148, 163, 184, 0.24);
@@ -862,8 +866,18 @@ body.context-panel-open .main-layout {
 
 .code-block__actions {
   display: flex;
+  align-items: center;
+  gap: 8px;
   justify-content: flex-end;
   padding: 8px 10px 0;
+}
+
+.code-block__lang {
+  margin-right: auto;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.78);
 }
 
 .copy-code-btn {
@@ -1057,13 +1071,46 @@ body.context-panel-open .main-layout {
 }
 
 .composer-preview {
-  padding: 14px 16px;
-  overflow: auto;
+  padding: 0;
+  overflow: hidden;
 }
 
 .composer-preview__empty {
   color: var(--text-muted);
   font-size: 0.95rem;
+}
+
+.composer-preview__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(248, 250, 252, 0.88);
+}
+
+.composer-preview__title {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.composer-preview__subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.composer-preview__meta {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.composer-preview__body {
+  height: calc(100% - 58px);
+  padding: 14px 16px;
+  overflow: auto;
 }
 
 .composer-actions {

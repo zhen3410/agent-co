@@ -314,7 +314,16 @@
                       </div>
                     </div>
                     <div className="composer-preview" id="composerPreview" data-composer-panel="preview">
-                      <div className="composer-preview__empty">Markdown 预览会显示在这里</div>
+                      <div className="composer-preview__header">
+                        <div>
+                          <div className="composer-preview__title">预览</div>
+                          <div className="composer-preview__subtitle">支持 Markdown 语法，Enter 发送，Shift+Enter 换行</div>
+                        </div>
+                        <div className="composer-preview__meta" id="composerPreviewStatus">0 行 · 0 字符</div>
+                      </div>
+                      <div className="composer-preview__body" id="composerPreviewBody">
+                        <div className="composer-preview__empty">Markdown 预览会显示在这里</div>
+                      </div>
                     </div>
                   </div>
                   <div className="composer-actions">

@@ -203,6 +203,14 @@
       const actions = document.createElement('div');
       actions.className = 'code-block__actions';
 
+      const language = code ? (code.getAttribute('data-language') || '').trim() : '';
+      if (language) {
+        const badge = document.createElement('span');
+        badge.className = 'code-block__lang';
+        badge.textContent = language;
+        actions.appendChild(badge);
+      }
+
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'copy-code-btn';
