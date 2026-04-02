@@ -2579,6 +2579,10 @@ const server = http.createServer(async (req, res) => {
     serveStatic(req, res, 'index.html', 'text/html');
   } else if (requestUrl.pathname === '/styles.css') {
     serveStatic(req, res, 'styles.css', 'text/css');
+  } else if (requestUrl.pathname === '/chat-markdown.js') {
+    serveStatic(req, res, 'chat-markdown.js', 'application/javascript');
+  } else if (requestUrl.pathname === '/chat-composer.js') {
+    serveStatic(req, res, 'chat-composer.js', 'application/javascript');
   } else if (requestUrl.pathname === '/manifest.json') {
     serveStatic(req, res, 'manifest.json', 'application/manifest+json');
   } else if (requestUrl.pathname === '/service-worker.js') {

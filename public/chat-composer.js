@@ -76,7 +76,15 @@
     document.querySelectorAll('.mobile-composer-trigger, .mobile-composer-triggerbar').forEach((trigger) => {
       trigger.classList.add('is-hidden');
     });
-    window.setTimeout(() => inputEl && inputEl.focus(), 30);
+    if (document.activeElement && typeof document.activeElement.blur === 'function') {
+      document.activeElement.blur();
+    }
+    window.requestAnimationFrame(() => {
+      if (!inputEl) return;
+      inputEl.focus({ preventScroll: true });
+      const cursor = inputEl.value.length;
+      inputEl.setSelectionRange(cursor, cursor);
+    });
   }
 
   function closeMobileComposerDrawer(event) {
