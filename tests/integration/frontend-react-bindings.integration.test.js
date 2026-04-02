@@ -414,6 +414,30 @@ test('移动端双抽屉第二轮 polish：统一关闭入口、Esc 关闭与显
   ], 'missing animated drawer state styles');
 });
 
+test('移动端双抽屉第三轮 polish：提供底部触发条，并在打开编辑抽屉时回到编辑态', () => {
+  const html = readPublicFile('public', 'index.html');
+  const composer = readPublicFile('public', 'chat-composer.js');
+  const css = readPublicFile('public', 'styles.css');
+
+  assertContainsAll(html, [
+    'className="mobile-composer-triggerbar"',
+    'className="mobile-composer-triggerbar__hint"',
+    'Markdown / @智能体'
+  ], 'missing mobile trigger bar shell');
+
+  assertContainsAll(composer, [
+    "mode = 'edit';",
+    'updatePanels();',
+    "document.querySelectorAll('.mobile-composer-trigger, .mobile-composer-triggerbar')"
+  ], 'missing reset-to-edit and shared trigger handling contract');
+
+  assertContainsAll(css, [
+    '.mobile-composer-triggerbar {',
+    '.mobile-composer-triggerbar__hint {',
+    '.mobile-composer-triggerbar.is-hidden {'
+  ], 'missing trigger bar styles');
+});
+
 test('聊天页顶部控制栏保持吸顶，避免被长消息列表顶出视口', () => {
   const css = readPublicFile('public', 'styles.css');
   const headerRule = css.slice(css.indexOf('.header {'), css.indexOf('}', css.indexOf('.header {')) + 1);

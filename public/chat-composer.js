@@ -62,6 +62,8 @@
       inputEl.focus();
       return;
     }
+    mode = 'edit';
+    updatePanels();
     if (typeof window.closeMobileControlHub === 'function') {
       window.closeMobileControlHub();
     }
@@ -71,7 +73,7 @@
     }
     if (drawerEl) drawerEl.classList.add('is-mobile-drawer-open');
     document.body.classList.add('composer-drawer-open');
-    document.querySelectorAll('.mobile-composer-trigger').forEach((trigger) => {
+    document.querySelectorAll('.mobile-composer-trigger, .mobile-composer-triggerbar').forEach((trigger) => {
       trigger.classList.add('is-hidden');
     });
     window.setTimeout(() => inputEl && inputEl.focus(), 30);
@@ -85,7 +87,7 @@
     }
     if (drawerEl) drawerEl.classList.remove('is-mobile-drawer-open');
     document.body.classList.remove('composer-drawer-open');
-    document.querySelectorAll('.mobile-composer-trigger').forEach((trigger) => {
+    document.querySelectorAll('.mobile-composer-trigger, .mobile-composer-triggerbar').forEach((trigger) => {
       trigger.classList.remove('is-hidden');
     });
   }
