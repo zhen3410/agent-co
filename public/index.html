@@ -284,7 +284,19 @@
                 </div>
               </div>
 
-              <div className="input-area">
+              <div className="mobile-composer-drawer-backdrop" id="mobileComposerDrawerBackdrop" style={{ display: 'none' }} onClick={(event) => window.closeMobileComposerDrawer && window.closeMobileComposerDrawer(event)}></div>
+
+              <div className="input-area mobile-composer-drawer" id="mobileComposerDrawer">
+                <div className="mobile-composer-drawer__chrome">
+                  <div className="mobile-composer-drawer__handle"></div>
+                  <div className="mobile-composer-drawer__header">
+                    <div>
+                      <div className="mobile-composer-drawer__title">编辑消息</div>
+                      <div className="mobile-composer-drawer__subtitle">聊天区保持常驻，输入区以抽屉方式展开。</div>
+                    </div>
+                    <button className="btn-clear" type="button" onClick={() => window.closeMobileComposerDrawer && window.closeMobileComposerDrawer()}>关闭</button>
+                  </div>
+                </div>
                 <form onSubmit={(event) => window.sendMessage && window.sendMessage(event)}>
                   <div className="composer-toolbar">
                     <button type="button" className="composer-toolbar__btn" data-md-action="bold">粗体</button>
@@ -333,6 +345,14 @@
                 </form>
                 <div className="input-area__hint">聊天区保持专注显示，会话、智能体与目录设置可从侧边栏或控制中心展开。</div>
               </div>
+
+              <button className="mobile-composer-trigger" type="button" onClick={() => window.openMobileComposerDrawer && window.openMobileComposerDrawer()}>
+                写消息
+              </button>
+              <button className="mobile-composer-triggerbar" type="button" onClick={() => window.openMobileComposerDrawer && window.openMobileComposerDrawer()}>
+                <span>写消息</span>
+                <span className="mobile-composer-triggerbar__hint">Markdown / @智能体</span>
+              </button>
             </div>
 
             <aside className="context-panel" id="contextPanel" data-tab="sessions">
@@ -948,15 +968,27 @@
       openContextPanel(tab);
     }
 
+    function closeMobileOverlays() {
+      closeMobileControlHub();
+      if (window.ChatComposer && typeof window.ChatComposer.closeMobileComposerDrawer === 'function') {
+        window.ChatComposer.closeMobileComposerDrawer();
+      }
+    }
+
     function openMobileControlHub(tab = activeContextTab) {
       activeContextTab = tab || activeContextTab;
+      if (typeof window.closeMobileComposerDrawer === 'function') {
+        window.closeMobileComposerDrawer();
+      }
       mobileControlSheetBackdropEl.style.display = 'flex';
+      mobileControlSheetBackdropEl.classList.add('is-open');
       document.body.classList.add('sheet-open');
       renderContextTab();
     }
 
     function closeMobileControlHub(event) {
       if (event && event.target !== mobileControlSheetBackdropEl) return;
+      mobileControlSheetBackdropEl.classList.remove('is-open');
       mobileControlSheetBackdropEl.style.display = 'none';
       document.body.classList.remove('sheet-open');
     }
@@ -1428,7 +1460,9 @@
       resizeUserInput();
       userInputEl.setSelectionRange(nextCursor, nextCursor);
       hideMentionSuggestions();
-      userInputEl.focus();
+      if (!window.matchMedia('(max-width: 960px)').matches) {
+        userInputEl.focus();
+      }
     }
 
     function selectMentionSuggestion(index) {
@@ -2185,6 +2219,9 @@
       if (window.ChatComposer && typeof window.ChatComposer.refreshPreview === 'function') {
         window.ChatComposer.refreshPreview();
       }
+      if (window.ChatComposer && typeof window.ChatComposer.closeMobileComposerDrawer === 'function') {
+        window.ChatComposer.closeMobileComposerDrawer();
+      }
       clearResumeChainNotice();
 
       const userMsg = { role: 'user', sender: '用户', text: text };
@@ -2392,6 +2429,7 @@
     window.closeSessionManager = closeMobileControlHub;
     window.openMobileControlHub = openMobileControlHub;
     window.closeMobileControlHub = closeMobileControlHub;
+    window.closeMobileOverlays = closeMobileOverlays;
     window.toggleContextPanel = toggleContextPanel;
     window.closeContextPanel = closeContextPanel;
     window.setContextTab = setContextTab;
@@ -2504,6 +2542,12 @@
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
           sendMessage(e);
+        }
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          closeMobileOverlays();
         }
       });
 

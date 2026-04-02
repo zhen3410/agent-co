@@ -3,13 +3,19 @@
   let previewEl = null;
   let previewBodyEl = null;
   let statusEl = null;
+  let drawerEl = null;
+  let drawerBackdropEl = null;
   let mode = 'edit';
   let debounceTimer = null;
   let syncingScroll = false;
 
+  function isMobileViewport() {
+    return window.matchMedia('(max-width: 960px)').matches;
+  }
+
   function syncPreviewFromInputScroll() {
     if (!inputEl || !previewBodyEl || syncingScroll) return;
-    if (window.matchMedia('(max-width: 960px)').matches) return;
+    if (isMobileViewport()) return;
     const inputScrollable = inputEl.scrollHeight - inputEl.clientHeight;
     const previewScrollable = previewBodyEl.scrollHeight - previewBodyEl.clientHeight;
     if (inputScrollable <= 0 || previewScrollable <= 0) return;
@@ -21,7 +27,7 @@
 
   function syncInputFromPreviewScroll() {
     if (!inputEl || !previewBodyEl || syncingScroll) return;
-    if (window.matchMedia('(max-width: 960px)').matches) return;
+    if (isMobileViewport()) return;
     const inputScrollable = inputEl.scrollHeight - inputEl.clientHeight;
     const previewScrollable = previewBodyEl.scrollHeight - previewBodyEl.clientHeight;
     if (inputScrollable <= 0 || previewScrollable <= 0) return;
@@ -33,7 +39,7 @@
 
   function syncComposerScroll() {
     if (!inputEl || !previewEl) return;
-    if (window.matchMedia('(max-width: 960px)').matches) return;
+    if (isMobileViewport()) return;
     const inputScrollable = inputEl.scrollHeight - inputEl.clientHeight;
     const previewScrollable = previewEl.scrollHeight - previewEl.clientHeight;
     if (inputScrollable <= 0 || previewScrollable <= 0) return;
@@ -48,6 +54,48 @@
     document.querySelectorAll('[data-composer-panel]').forEach((panel) => {
       panel.classList.toggle('is-active', panel.dataset.composerPanel === mode);
     });
+  }
+
+  function openMobileComposerDrawer() {
+    if (!inputEl) return;
+    if (!isMobileViewport()) {
+      inputEl.focus();
+      return;
+    }
+    mode = 'edit';
+    updatePanels();
+    if (typeof window.closeMobileControlHub === 'function') {
+      window.closeMobileControlHub();
+    }
+    if (drawerBackdropEl) {
+      drawerBackdropEl.style.display = 'flex';
+      drawerBackdropEl.classList.add('is-open');
+    }
+    if (drawerEl) drawerEl.classList.add('is-mobile-drawer-open');
+    document.body.classList.add('composer-drawer-open');
+    document.querySelectorAll('.mobile-composer-trigger, .mobile-composer-triggerbar').forEach((trigger) => {
+      trigger.classList.add('is-hidden');
+    });
+    window.setTimeout(() => inputEl && inputEl.focus(), 30);
+  }
+
+  function closeMobileComposerDrawer(event) {
+    if (event && drawerBackdropEl && event.target !== drawerBackdropEl) return;
+    if (drawerBackdropEl) {
+      drawerBackdropEl.classList.remove('is-open');
+      drawerBackdropEl.style.display = 'none';
+    }
+    if (drawerEl) drawerEl.classList.remove('is-mobile-drawer-open');
+    document.body.classList.remove('composer-drawer-open');
+    document.querySelectorAll('.mobile-composer-trigger, .mobile-composer-triggerbar').forEach((trigger) => {
+      trigger.classList.remove('is-hidden');
+    });
+  }
+
+  function syncViewportState() {
+    if (!isMobileViewport()) {
+      closeMobileComposerDrawer();
+    }
   }
 
   function renderEmpty() {
@@ -174,6 +222,8 @@
     previewEl = options.preview;
     previewBodyEl = document.getElementById('composerPreviewBody') || previewEl;
     statusEl = document.getElementById('composerPreviewStatus');
+    drawerEl = document.getElementById('mobileComposerDrawer');
+    drawerBackdropEl = document.getElementById('mobileComposerDrawerBackdrop');
     if (!inputEl || !previewEl) return;
     bindToolbar();
     bindTabs();
@@ -181,6 +231,7 @@
     inputEl.addEventListener('scroll', syncComposerScroll);
     inputEl.addEventListener('scroll', syncPreviewFromInputScroll);
     previewBodyEl.addEventListener('scroll', syncInputFromPreviewScroll);
+    window.addEventListener('resize', syncViewportState);
     renderEmpty();
     updatePreviewStatus();
     updatePanels();
@@ -188,6 +239,10 @@
 
   window.ChatComposer = {
     initComposer,
-    refreshPreview
+    refreshPreview,
+    openMobileComposerDrawer,
+    closeMobileComposerDrawer
   };
+  window.openMobileComposerDrawer = openMobileComposerDrawer;
+  window.closeMobileComposerDrawer = closeMobileComposerDrawer;
 })();
