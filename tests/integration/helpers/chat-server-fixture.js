@@ -63,6 +63,9 @@ async function createChatServerFixture(options = {}) {
         AGENT_DATA_FILE: agentDataFile,
         AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
         AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
+        BOT_ROOM_CLI_TIMEOUT_MS: '15000',
+        BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
+        BOT_ROOM_CLI_KILL_GRACE_MS: '200',
         ...(options.env || {})
       },
       stdio: ['ignore', 'pipe', 'pipe']
