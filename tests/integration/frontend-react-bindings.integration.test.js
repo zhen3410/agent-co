@@ -299,6 +299,32 @@ test('第四轮增强提供更顺手的工具栏插入、复制降级与移动�
   ], 'missing mobile preview polish contract');
 });
 
+test('第五轮增强提供轻量代码高亮结构和桌面端双向滚动同步', () => {
+  const markdown = readPublicFile('public', 'chat-markdown.js');
+  const composer = readPublicFile('public', 'chat-composer.js');
+  const css = readPublicFile('public', 'styles.css');
+
+  assertContainsAll(markdown, [
+    'function highlightCodeSyntax(',
+    'token token--keyword',
+    'token token--string',
+    'token token--comment'
+  ], 'missing lightweight syntax highlight contract');
+
+  assertContainsAll(composer, [
+    'let syncingScroll = false;',
+    'function syncPreviewFromInputScroll()',
+    'function syncInputFromPreviewScroll()',
+    "previewBodyEl.addEventListener('scroll', syncInputFromPreviewScroll);"
+  ], 'missing bidirectional scroll sync contract');
+
+  assertContainsAll(css, [
+    '.token--keyword {',
+    '.token--string {',
+    '.token--comment {'
+  ], 'missing syntax highlight styles');
+});
+
 test('聊天页顶部控制栏保持吸顶，避免被长消息列表顶出视口', () => {
   const css = readPublicFile('public', 'styles.css');
   const headerRule = css.slice(css.indexOf('.header {'), css.indexOf('}', css.indexOf('.header {')) + 1);

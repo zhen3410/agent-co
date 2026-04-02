@@ -5,6 +5,31 @@
   let statusEl = null;
   let mode = 'edit';
   let debounceTimer = null;
+  let syncingScroll = false;
+
+  function syncPreviewFromInputScroll() {
+    if (!inputEl || !previewBodyEl || syncingScroll) return;
+    if (window.matchMedia('(max-width: 960px)').matches) return;
+    const inputScrollable = inputEl.scrollHeight - inputEl.clientHeight;
+    const previewScrollable = previewBodyEl.scrollHeight - previewBodyEl.clientHeight;
+    if (inputScrollable <= 0 || previewScrollable <= 0) return;
+    syncingScroll = true;
+    const ratio = inputEl.scrollTop / inputScrollable;
+    previewBodyEl.scrollTop = ratio * previewScrollable;
+    syncingScroll = false;
+  }
+
+  function syncInputFromPreviewScroll() {
+    if (!inputEl || !previewBodyEl || syncingScroll) return;
+    if (window.matchMedia('(max-width: 960px)').matches) return;
+    const inputScrollable = inputEl.scrollHeight - inputEl.clientHeight;
+    const previewScrollable = previewBodyEl.scrollHeight - previewBodyEl.clientHeight;
+    if (inputScrollable <= 0 || previewScrollable <= 0) return;
+    syncingScroll = true;
+    const ratio = previewBodyEl.scrollTop / previewScrollable;
+    inputEl.scrollTop = ratio * inputScrollable;
+    syncingScroll = false;
+  }
 
   function syncComposerScroll() {
     if (!inputEl || !previewEl) return;
@@ -57,7 +82,7 @@
     window.clearTimeout(debounceTimer);
     debounceTimer = window.setTimeout(() => {
       refreshPreview();
-      syncComposerScroll();
+      syncPreviewFromInputScroll();
     }, 100);
   }
 
@@ -154,6 +179,8 @@
     bindTabs();
     inputEl.addEventListener('input', scheduleRefresh);
     inputEl.addEventListener('scroll', syncComposerScroll);
+    inputEl.addEventListener('scroll', syncPreviewFromInputScroll);
+    previewBodyEl.addEventListener('scroll', syncInputFromPreviewScroll);
     renderEmpty();
     updatePreviewStatus();
     updatePanels();

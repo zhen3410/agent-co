@@ -896,6 +896,20 @@ body.context-panel-open .main-layout {
   color: #dcfce7;
 }
 
+.token--keyword {
+  color: #93c5fd;
+  font-weight: 600;
+}
+
+.token--string {
+  color: #86efac;
+}
+
+.token--comment {
+  color: #94a3b8;
+  font-style: italic;
+}
+
 .message--loading .message__text,
 .message--thinking .message__text {
   opacity: 0.82;

@@ -197,6 +197,9 @@
 
     codeBlocks.forEach((pre) => {
       const code = pre.querySelector('code');
+      if (code) {
+        code.innerHTML = highlightCodeSyntax(code.textContent || '');
+      }
       const wrapper = document.createElement('div');
       wrapper.className = 'code-block';
 
@@ -224,6 +227,14 @@
     });
 
     return template.innerHTML;
+  }
+
+  function highlightCodeSyntax(codeText) {
+    const escaped = escapeHtml(codeText || '');
+    return escaped
+      .replace(/(\/\/.*$)/gm, '<span class="token token--comment">$1</span>')
+      .replace(/(&quot;.*?&quot;|&#39;.*?&#39;)/g, '<span class="token token--string">$1</span>')
+      .replace(/\b(const|let|var|function|return|if|else|for|while|switch|case|break|continue|class|new|async|await|try|catch|throw)\b/g, '<span class="token token--keyword">$1</span>');
   }
 
   function buildMentionFragment(text) {
