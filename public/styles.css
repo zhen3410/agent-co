@@ -1824,6 +1824,10 @@ body.context-panel-open .main-layout {
   padding: 12px;
 }
 
+.mobile-control-sheet-backdrop.is-open {
+  display: flex;
+}
+
 .mobile-control-sheet {
   width: min(88vw, 420px);
   max-width: 420px;
@@ -1835,6 +1839,12 @@ body.context-panel-open .main-layout {
   border: 1px solid rgba(255, 255, 255, 0.45);
   box-shadow: var(--shadow-lg);
   padding: 16px 16px 16px max(16px, env(safe-area-inset-left));
+  transform: translateX(calc(100% + 20px));
+  transition: transform 220ms ease;
+}
+
+.mobile-control-sheet-backdrop.is-open .mobile-control-sheet {
+  transform: translateX(0);
 }
 
 .mobile-control-sheet__handle {
@@ -1903,6 +1913,10 @@ body.context-panel-open .main-layout {
   padding: 12px;
 }
 
+.mobile-composer-drawer-backdrop.is-open {
+  display: flex;
+}
+
 .mobile-composer-trigger {
   position: fixed;
   right: 18px;
@@ -1921,6 +1935,11 @@ body.context-panel-open .main-layout {
 }
 
 body.composer-drawer-open .mobile-composer-trigger {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mobile-composer-trigger.is-hidden {
   opacity: 0;
   pointer-events: none;
 }

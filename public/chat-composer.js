@@ -65,17 +65,29 @@
     if (typeof window.closeMobileControlHub === 'function') {
       window.closeMobileControlHub();
     }
-    if (drawerBackdropEl) drawerBackdropEl.style.display = 'flex';
+    if (drawerBackdropEl) {
+      drawerBackdropEl.style.display = 'flex';
+      drawerBackdropEl.classList.add('is-open');
+    }
     if (drawerEl) drawerEl.classList.add('is-mobile-drawer-open');
     document.body.classList.add('composer-drawer-open');
+    document.querySelectorAll('.mobile-composer-trigger').forEach((trigger) => {
+      trigger.classList.add('is-hidden');
+    });
     window.setTimeout(() => inputEl && inputEl.focus(), 30);
   }
 
   function closeMobileComposerDrawer(event) {
     if (event && drawerBackdropEl && event.target !== drawerBackdropEl) return;
-    if (drawerBackdropEl) drawerBackdropEl.style.display = 'none';
+    if (drawerBackdropEl) {
+      drawerBackdropEl.classList.remove('is-open');
+      drawerBackdropEl.style.display = 'none';
+    }
     if (drawerEl) drawerEl.classList.remove('is-mobile-drawer-open');
     document.body.classList.remove('composer-drawer-open');
+    document.querySelectorAll('.mobile-composer-trigger').forEach((trigger) => {
+      trigger.classList.remove('is-hidden');
+    });
   }
 
   function syncViewportState() {

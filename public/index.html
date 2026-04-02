@@ -964,18 +964,27 @@
       openContextPanel(tab);
     }
 
+    function closeMobileOverlays() {
+      closeMobileControlHub();
+      if (window.ChatComposer && typeof window.ChatComposer.closeMobileComposerDrawer === 'function') {
+        window.ChatComposer.closeMobileComposerDrawer();
+      }
+    }
+
     function openMobileControlHub(tab = activeContextTab) {
       activeContextTab = tab || activeContextTab;
       if (typeof window.closeMobileComposerDrawer === 'function') {
         window.closeMobileComposerDrawer();
       }
       mobileControlSheetBackdropEl.style.display = 'flex';
+      mobileControlSheetBackdropEl.classList.add('is-open');
       document.body.classList.add('sheet-open');
       renderContextTab();
     }
 
     function closeMobileControlHub(event) {
       if (event && event.target !== mobileControlSheetBackdropEl) return;
+      mobileControlSheetBackdropEl.classList.remove('is-open');
       mobileControlSheetBackdropEl.style.display = 'none';
       document.body.classList.remove('sheet-open');
     }
@@ -2416,6 +2425,7 @@
     window.closeSessionManager = closeMobileControlHub;
     window.openMobileControlHub = openMobileControlHub;
     window.closeMobileControlHub = closeMobileControlHub;
+    window.closeMobileOverlays = closeMobileOverlays;
     window.toggleContextPanel = toggleContextPanel;
     window.closeContextPanel = closeContextPanel;
     window.setContextTab = setContextTab;
@@ -2528,6 +2538,12 @@
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
           sendMessage(e);
+        }
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          closeMobileOverlays();
         }
       });
 
