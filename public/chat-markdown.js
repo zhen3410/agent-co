@@ -190,6 +190,34 @@
     return template.innerHTML;
   }
 
+  function enhanceCodeBlocks(html) {
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const codeBlocks = template.content.querySelectorAll('pre');
+
+    codeBlocks.forEach((pre) => {
+      const code = pre.querySelector('code');
+      const wrapper = document.createElement('div');
+      wrapper.className = 'code-block';
+
+      const actions = document.createElement('div');
+      actions.className = 'code-block__actions';
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'copy-code-btn';
+      button.textContent = '复制代码';
+      button.setAttribute('data-copy-code', code ? code.textContent || '' : pre.textContent || '');
+
+      actions.appendChild(button);
+      pre.parentNode.insertBefore(wrapper, pre);
+      wrapper.appendChild(actions);
+      wrapper.appendChild(pre);
+    });
+
+    return template.innerHTML;
+  }
+
   function buildMentionFragment(text) {
     const fragment = document.createDocumentFragment();
     const regex = /(@@?[^\s@，。！？、,:：；;]+)/g;
@@ -245,11 +273,32 @@
     try {
       const parsed = parseMarkdown(text);
       const sanitized = sanitizeHtml(parsed);
-      return options.enableMentions === false ? sanitized : enhanceMentions(sanitized);
+      const withCodeBlocks = enhanceCodeBlocks(sanitized);
+      return options.enableMentions === false ? withCodeBlocks : enhanceMentions(withCodeBlocks);
     } catch (error) {
       return `<p>${escapeHtml(String(text || '')).replace(/\n/g, '<br>')}</p>`;
     }
   }
+
+  document.addEventListener('click', async (event) => {
+    const button = event.target && event.target.closest ? event.target.closest('.copy-code-btn') : null;
+    if (!button) return;
+    const text = button.getAttribute('data-copy-code') || '';
+    try {
+      await navigator.clipboard.writeText(text);
+      button.classList.add('is-copied');
+      button.textContent = '已复制';
+      window.setTimeout(() => {
+        button.classList.remove('is-copied');
+        button.textContent = '复制代码';
+      }, 1200);
+    } catch (error) {
+      button.textContent = '复制失败';
+      window.setTimeout(() => {
+        button.textContent = '复制代码';
+      }, 1200);
+    }
+  });
 
   window.ChatMarkdown = {
     escapeHtml,

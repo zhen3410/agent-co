@@ -4,6 +4,16 @@
   let mode = 'edit';
   let debounceTimer = null;
 
+  function syncComposerScroll() {
+    if (!inputEl || !previewEl) return;
+    if (window.matchMedia('(max-width: 960px)').matches) return;
+    const inputScrollable = inputEl.scrollHeight - inputEl.clientHeight;
+    const previewScrollable = previewEl.scrollHeight - previewEl.clientHeight;
+    if (inputScrollable <= 0 || previewScrollable <= 0) return;
+    const ratio = inputEl.scrollTop / inputScrollable;
+    previewEl.scrollTop = ratio * previewScrollable;
+  }
+
   function updatePanels() {
     document.querySelectorAll('.composer-mobile-tabs__tab').forEach((tab) => {
       tab.classList.toggle('is-active', tab.dataset.tab === mode);
@@ -34,7 +44,10 @@
 
   function scheduleRefresh() {
     window.clearTimeout(debounceTimer);
-    debounceTimer = window.setTimeout(refreshPreview, 100);
+    debounceTimer = window.setTimeout(() => {
+      refreshPreview();
+      syncComposerScroll();
+    }, 100);
   }
 
   function wrapSelection(prefix, suffix = prefix, placeholder = '') {
@@ -112,6 +125,7 @@
     bindToolbar();
     bindTabs();
     inputEl.addEventListener('input', scheduleRefresh);
+    inputEl.addEventListener('scroll', syncComposerScroll);
     renderEmpty();
     updatePanels();
   }

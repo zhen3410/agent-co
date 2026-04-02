@@ -852,6 +852,36 @@ body.context-panel-open .main-layout {
   gap: 8px;
 }
 
+.code-block {
+  margin-top: 10px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #111827;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.14);
+}
+
+.code-block__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 10px 0;
+}
+
+.copy-code-btn {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.88);
+  color: #e5eefb;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.copy-code-btn.is-copied {
+  background: rgba(22, 163, 74, 0.22);
+  border-color: rgba(34, 197, 94, 0.38);
+  color: #dcfce7;
+}
+
 .message--loading .message__text,
 .message--thinking .message__text {
   opacity: 0.82;
