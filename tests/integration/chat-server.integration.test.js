@@ -969,6 +969,41 @@ printf '{"output_text":"这是 Codex 直接回复（无回调）"}\\n'
   }
 });
 
+test('Codex CLI 鉴权失效时，/api/chat 会直接返回真实失败信息而不是模拟回复', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-auth-error-'));
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf 'unexpected status 402 Payment Required: {"detail":{"code":"deactivated_workspace"}}\\n' >&2
+exit 1
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Codex架构师']);
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Codex架构师 请给一句建议' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
+    assert.ok(codexMessage, 'should include a visible failure message');
+    assert.match(codexMessage.text, /账号或工作区异常/u);
+    assert.match(codexMessage.text, /请检查 Codex/u);
+    assert.doesNotMatch(codexMessage.text, /我收到了你的消息/u);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('verbose 日志列表能正确显示中文智能体名 Codex架构师', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-verbose-'));
   const fakeCodex = join(tempDir, 'codex');
@@ -1029,6 +1064,75 @@ printf '{"output_text":"SSE 直出回复"}\\n'
     assert.ok(streamResponse.text.includes('event: agent_message'));
     assert.ok(streamResponse.text.includes('SSE 直出回复'));
     assert.ok(streamResponse.text.includes('event: done'));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('chat-stream 在智能体没有任何可见消息时会推送 error 事件，避免前端静默结束', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-empty-stream-'));
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '{"type":"turn.completed"}\\n'
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Codex架构师']);
+    const streamResponse = await fixture.request('/api/chat-stream', {
+      method: 'POST',
+      body: { message: '@Codex架构师 走流式但不给可见消息' }
+    });
+
+    assert.equal(streamResponse.status, 200);
+    assert.ok(streamResponse.text.includes('event: agent_thinking'));
+    assert.ok(streamResponse.text.includes('event: error'));
+    assert.ok(streamResponse.text.includes('未返回可见消息'));
+    assert.ok(streamResponse.text.includes('event: done'));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('Codex 直出包含 bot_room 工具编排痕迹时，不应把内部协作过程直接展示给用户', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-internal-leak-'));
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"先读取会话协作技能说明并拉取聊天室上下文。已按要求先调用 ` + "\"`bot_room_get_context`" + ` 获取完整会话历史，又尝试用 ` + "\"`bot_room_post_message`" + ` 往群里同步结论。"}}\\n'
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Codex架构师']);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Codex架构师 你的想法呢' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
+    assert.ok(codexMessage, 'should include a visible fallback message');
+    assert.match(codexMessage.text, /协作工具调用未成功/u);
+    assert.doesNotMatch(codexMessage.text, /bot_room_get_context/u);
+    assert.doesNotMatch(codexMessage.text, /bot_room_post_message/u);
+    assert.doesNotMatch(codexMessage.text, /先读取会话协作技能说明/u);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
