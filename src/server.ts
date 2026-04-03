@@ -852,6 +852,53 @@ function buildAgentVisibleMessages(agentName: string, providerResult: AgentInvok
   return fallbackMessage ? [fallbackMessage] : [];
 }
 
+function shouldSurfaceCliError(message: string): boolean {
+  const normalized = (message || '').toLowerCase();
+  if (!normalized) return false;
+
+  return normalized.includes('deactivated_workspace')
+    || normalized.includes('payment required')
+    || normalized.includes('auth error')
+    || normalized.includes('unauthorized')
+    || normalized.includes('forbidden')
+    || normalized.includes('402');
+}
+
+function isCliWorkspaceAuthError(message: string): boolean {
+  const normalized = (message || '').toLowerCase();
+  return normalized.includes('deactivated_workspace')
+    || normalized.includes('payment required')
+    || normalized.includes('auth error')
+    || normalized.includes('unauthorized')
+    || normalized.includes('forbidden')
+    || normalized.includes('402');
+}
+
+function buildCliErrorVisibleText(message: string): string {
+  const normalized = (message || '').trim();
+  if (isCliWorkspaceAuthError(normalized)) {
+    return '账号或工作区异常：请检查 Codex 登录状态、套餐/额度或 workspace 是否已恢复。';
+  }
+  return normalized ? `CLI 调用失败：${normalized}` : 'CLI 调用失败：智能体执行异常';
+}
+
+function isInternalToolOrchestrationLeak(text: string): boolean {
+  const normalized = (text || '').toLowerCase();
+  if (!normalized) return false;
+  const mentionsTool = normalized.includes('bot_room_get_context') || normalized.includes('bot_room_post_message');
+  const mentionsOrchestration = normalized.includes('同步到群里')
+    || normalized.includes('公开聊天室')
+    || normalized.includes('完整会话历史')
+    || normalized.includes('拿到完整历史后')
+    || normalized.includes('已按要求先调用')
+    || normalized.includes('先读取会话协作技能说明');
+  return mentionsTool && mentionsOrchestration;
+}
+
+function buildInternalToolLeakVisibleText(): string {
+  return '协作工具调用未成功：智能体未能读取完整上下文或同步公开消息，请稍后重试。';
+}
+
 async function runAgentTask(params: {
   userKey: string;
   session: UserChatSession;
@@ -897,13 +944,16 @@ async function runAgentTask(params: {
   } catch (error: unknown) {
     const err = error as Error;
     console.log(`[${logTag}] AI 调用失败: ${err.message}`);
-    if (!stream && !isApiMode) {
+    const surfaceCliError = !isApiMode && shouldSurfaceCliError(err.message);
+    if (!stream && !isApiMode && !surfaceCliError) {
       console.log('[Chat] 使用模拟回复');
     }
     appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=${errorStage} error=${err.message}`);
     const fallbackText = isApiMode
       ? `API 调用失败：${err.message}`
-      : generateMockReply(prompt, agentName);
+      : surfaceCliError
+        ? buildCliErrorVisibleText(err.message)
+        : generateMockReply(prompt, agentName);
     const extracted = extractRichBlocks(fallbackText);
     fallbackMessage = {
       id: generateId(),
@@ -917,6 +967,16 @@ async function runAgentTask(params: {
 
   const callbackReplies = consumeCallbackMessages(session.id, agentName);
   const visibleMessages = buildAgentVisibleMessages(agentName, providerResult, fallbackMessage, callbackReplies);
+
+  if (callbackReplies.length === 0) {
+    for (const message of visibleMessages) {
+      if (isInternalToolOrchestrationLeak(message.text || '')) {
+        appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=internal_tool_leak_filtered`);
+        message.text = buildInternalToolLeakVisibleText();
+        message.blocks = [];
+      }
+    }
+  }
 
   if (callbackReplies.length === 0 && providerResult && (providerResult.text || providerResult.blocks.length > 0)) {
     appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=direct_fallback reason=no_callback`);
@@ -1736,6 +1796,9 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       })),
       stream: false
     });
+    const emptyVisibleNotice = aiMessages.length === 0
+      ? `${agentsToRespond.join('、')} 未返回可见消息，请稍后重试或查看日志。`
+      : undefined;
 
     // 返回响应
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1744,7 +1807,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
       userMessage,
       aiMessages,
       currentAgent: getUserCurrentAgent(userKey, session.id),
-      notice: ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined
+      notice: emptyVisibleNotice || (ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined)
     }));
   } catch (error: unknown) {
     const err = error as Error;
@@ -1903,6 +1966,10 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
 
     if (streamClosed || res.writableEnded || res.destroyed) {
       return;
+    }
+
+    if (executionResult.aiMessages.length === 0) {
+      sendEvent('error', { error: `${agentsToRespond.join('、')} 未返回可见消息，请稍后重试或查看日志。` });
     }
 
     // 发送完成事件

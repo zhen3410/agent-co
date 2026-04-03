@@ -2201,6 +2201,22 @@
       }
     }
 
+    function normalizeStreamErrorMessage(error) {
+      const raw = String(error || '');
+      const normalized = raw.toLowerCase();
+      if (
+        normalized.includes('deactivated_workspace') ||
+        normalized.includes('payment required') ||
+        normalized.includes('auth error') ||
+        normalized.includes('unauthorized') ||
+        normalized.includes('forbidden') ||
+        normalized.includes('402')
+      ) {
+        return '账号或工作区异常：请检查 Codex 登录状态、套餐/额度或 workspace 是否已恢复';
+      }
+      return raw || '连接失败';
+    }
+
     async function sendMessage(event) {
       event.preventDefault();
 
@@ -2235,6 +2251,7 @@
 
       const thinkingAgents = new Set();
       let streamReceivedAgentMessage = false;
+      let streamReceivedError = false;
 
       try {
         const response = await fetch('/api/chat-stream', {
@@ -2292,10 +2309,13 @@
                 } else if (eventType === 'notice') {
                   showSystemNotice(data.notice);
                 } else if (eventType === 'error') {
+                  streamReceivedError = true;
+                  statusEl.textContent = '连接失败';
+                  const message = normalizeStreamErrorMessage(data.error);
                   addMessage({
                     role: 'assistant',
                     sender: '系统',
-                    text: `❌ 错误: ${data.error}`
+                    text: `❌ 错误: ${message}`
                   });
                 }
               } catch (e) {
@@ -2304,6 +2324,15 @@
               eventType = '';
             }
           }
+        }
+
+        if (!streamReceivedAgentMessage && !streamReceivedError) {
+          statusEl.textContent = '连接失败';
+          addMessage({
+            role: 'assistant',
+            sender: '系统',
+            text: '❌ 智能体未返回可见消息，请稍后重试或查看日志'
+          });
         }
 
       } catch (error) {

@@ -153,6 +153,19 @@ test('React 页面仅在流式连接尚未收到 AI 可见回复时才降级到 
   assert.ok(html.includes('if (!streamReceivedAgentMessage) {'), 'should only downgrade before visible AI output arrives');
 });
 
+test('React 页面在流式收到 error 事件或空回复结束时会明确提示失败，而不是静默停留', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assert.ok(html.includes("statusEl.textContent = '连接失败';"), 'should expose a failure status when stream reports an error');
+  assert.ok(html.includes('let streamReceivedError = false;'), 'should track terminal stream errors');
+  assert.ok(html.includes('streamReceivedError = true;'), 'should mark error events explicitly');
+  assert.ok(html.includes('if (!streamReceivedAgentMessage && !streamReceivedError) {'), 'should detect silent empty stream completions');
+  assert.ok(html.includes('text: \'❌ 智能体未返回可见消息，请稍后重试或查看日志\''), 'should show an explicit empty-stream failure message');
+  assert.ok(html.includes('function normalizeStreamErrorMessage(error) {'), 'should normalize raw stream errors for users');
+  assert.ok(html.includes('账号或工作区异常'), 'should surface a friendly workspace/account hint');
+  assert.ok(html.includes('请检查 Codex 登录状态、套餐/额度或 workspace 是否已恢复'), 'should include an actionable recovery hint');
+});
+
 test('React 页面会在收到部分回复后提供继续剩余执行入口，而不是提示手动重发', () => {
   const html = readPublicFile('public', 'index.html');
 

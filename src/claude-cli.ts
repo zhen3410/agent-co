@@ -87,6 +87,10 @@ function collectTextFromValue(value: unknown, inAssistantContext = false): strin
     chunks.push(record.text);
   }
 
+  if (record.type === 'agent_message' && typeof record.text === 'string' && record.text) {
+    chunks.push(record.text);
+  }
+
   for (const key of ['result', 'delta'] as const) {
     if ((isAssistantContext || record.type === 'output_text') && typeof record[key] === 'string' && record[key]) {
       chunks.push(record[key] as string);
