@@ -363,6 +363,108 @@ test('新建会话会返回链式传播设置字段，并在会话列表中可�
   }
 });
 
+test('新建会话返回默认 discussionMode 与 discussionState', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'discussion defaults' }
+    });
+
+    assert.equal(createResponse.status, 200);
+    assert.equal(createResponse.body.session.discussionMode, 'classic');
+    assert.equal(createResponse.body.session.discussionState, 'active');
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    const summary = historyResponse.body.chatSessions.find((session) => session.id === createResponse.body.session.id);
+    assert.ok(summary);
+    assert.equal(summary.discussionMode, 'classic');
+    assert.equal(summary.discussionState, 'active');
+    assert.equal(historyResponse.body.session.discussionMode, 'classic');
+    assert.equal(historyResponse.body.session.discussionState, 'active');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('POST /api/sessions/update 支持切换 discussionMode', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'discussion mode patch' }
+    });
+    assert.equal(createResponse.status, 200);
+    const sessionId = createResponse.body.session.id;
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { discussionMode: 'peer' }
+      }
+    });
+
+    assert.equal(updateResponse.status, 200);
+    assert.equal(updateResponse.body.session.discussionMode, 'peer');
+    assert.equal(updateResponse.body.session.discussionState, 'active');
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    const summary = historyResponse.body.chatSessions.find((session) => session.id === sessionId);
+    assert.ok(summary);
+    assert.equal(summary.discussionMode, 'peer');
+    assert.equal(summary.discussionState, 'active');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('POST /api/sessions/update 会拒绝非法 discussionMode', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'invalid discussion mode' }
+    });
+    assert.equal(createResponse.status, 200);
+    const sessionId = createResponse.body.session.id;
+
+    const invalidMode = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { discussionMode: 'group' }
+      }
+    });
+    assert.equal(invalidMode.status, 400);
+
+    const invalidState = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { discussionState: 'paused' }
+      }
+    });
+    assert.equal(invalidState.status, 400);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('旧会话数据缺少链路字段时会自动回填默认值', { skip: !isRedisSessionStateAvailable() }, async () => {
   const legacyState = {
     version: 1,

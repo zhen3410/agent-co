@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
-import { Message, AIAgentConfig, ChatRequest, RichBlock, AgentInvokeResult } from './types';
+import { Message, AIAgentConfig, ChatRequest, RichBlock, AgentInvokeResult, DiscussionMode, DiscussionState } from './types';
 import { AgentManager } from './agent-manager';
 import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
 import { loadGroupStore } from './group-store';
@@ -58,6 +58,8 @@ interface UserChatSession {
   agentWorkdirs?: Record<string, string>;
   agentChainMaxHops?: number;
   agentChainMaxCallsPerAgent?: number | null;
+  discussionMode?: DiscussionMode;
+  discussionState?: DiscussionState;
   pendingAgentTasks?: PendingAgentDispatchTask[];
   pendingVisibleMessages?: Message[];
   createdAt: number;
@@ -196,8 +198,11 @@ interface RedisPersistedState {
   userActiveChatSession: Record<string, string>;
 }
 
-type NormalizedUserChatSession = UserChatSession & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>>;
-type SessionChainPatch = Partial<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>>;
+type NormalizedUserChatSession = UserChatSession & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent' | 'discussionMode' | 'discussionState'>>;
+type SessionChainPatch = Partial<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent' | 'discussionMode'>>;
+
+const DEFAULT_DISCUSSION_MODE: DiscussionMode = 'classic';
+const DEFAULT_DISCUSSION_STATE: DiscussionState = 'active';
 
 function normalizePositiveSessionSetting(value: unknown, fallback: number | null, allowNull: boolean): number | null {
   if (value === null) {
@@ -235,11 +240,33 @@ function normalizeSessionChainSettings(source?: SessionChainPatch): Required<Pic
   };
 }
 
+function normalizeDiscussionMode(value: unknown, fallback: DiscussionMode = DEFAULT_DISCUSSION_MODE): DiscussionMode {
+  return value === 'peer' || value === 'classic' ? value : fallback;
+}
+
+function normalizeDiscussionState(value: unknown, fallback: DiscussionState = DEFAULT_DISCUSSION_STATE): DiscussionState {
+  return value === 'paused' || value === 'summarizing' || value === 'active' ? value : fallback;
+}
+
+function normalizeSessionDiscussionSettings(source?: Pick<UserChatSession, 'discussionMode' | 'discussionState'>): Required<Pick<UserChatSession, 'discussionMode' | 'discussionState'>> {
+  return {
+    discussionMode: normalizeDiscussionMode(source?.discussionMode),
+    discussionState: normalizeDiscussionState(source?.discussionState)
+  };
+}
+
 function applyNormalizedSessionChainSettings<T extends UserChatSession>(session: T): T & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>> {
   const normalized = normalizeSessionChainSettings(session);
   session.agentChainMaxHops = normalized.agentChainMaxHops;
   session.agentChainMaxCallsPerAgent = normalized.agentChainMaxCallsPerAgent;
   return session as T & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>>;
+}
+
+function applyNormalizedSessionDiscussionSettings<T extends UserChatSession>(session: T): T & Required<Pick<UserChatSession, 'discussionMode' | 'discussionState'>> {
+  const normalized = normalizeSessionDiscussionSettings(session);
+  session.discussionMode = normalized.discussionMode;
+  session.discussionState = normalized.discussionState;
+  return session as T & Required<Pick<UserChatSession, 'discussionMode' | 'discussionState'>>;
 }
 
 function parseSessionChainPatch(patch: unknown): SessionChainPatch {
@@ -252,7 +279,7 @@ function parseSessionChainPatch(patch: unknown): SessionChainPatch {
     throw new Error('patch 不能为空');
   }
 
-  const allowedFields = new Set(['agentChainMaxHops', 'agentChainMaxCallsPerAgent']);
+  const allowedFields = new Set(['agentChainMaxHops', 'agentChainMaxCallsPerAgent', 'discussionMode']);
   const normalizedPatch: SessionChainPatch = {};
 
   for (const [key, value] of entries) {
@@ -266,6 +293,14 @@ function parseSessionChainPatch(patch: unknown): SessionChainPatch {
         throw new Error('agentChainMaxHops 必须是 1 到 1000 的整数');
       }
       normalizedPatch.agentChainMaxHops = normalized;
+      continue;
+    }
+
+    if (key === 'discussionMode') {
+      if (value !== 'classic' && value !== 'peer') {
+        throw new Error("discussionMode 必须是 'classic' 或 'peer'");
+      }
+      normalizedPatch.discussionMode = value;
       continue;
     }
 
@@ -286,6 +321,7 @@ function parseSessionChainPatch(patch: unknown): SessionChainPatch {
 
 function buildSessionResponse(session: UserChatSession): NormalizedUserChatSession {
   const normalized = normalizeSessionChainSettings(session);
+  const discussion = normalizeSessionDiscussionSettings(session);
   return {
     ...session,
     history: Array.isArray(session.history) ? [...session.history] : [],
@@ -298,7 +334,9 @@ function buildSessionResponse(session: UserChatSession): NormalizedUserChatSessi
       ? session.pendingVisibleMessages.map(message => ({ ...message }))
       : undefined,
     agentChainMaxHops: normalized.agentChainMaxHops,
-    agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent
+    agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent,
+    discussionMode: discussion.discussionMode,
+    discussionState: discussion.discussionState
   };
 }
 
@@ -425,6 +463,7 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
             ? session.pendingVisibleMessages.filter(message => message && typeof message.id === 'string')
             : undefined,
           ...normalizeSessionChainSettings(session),
+          ...normalizeSessionDiscussionSettings(session),
           createdAt: Number(session.createdAt) || Date.now(),
           updatedAt: Number(session.updatedAt) || Date.now()
         });
@@ -570,6 +609,7 @@ function createUserSession(name?: string): UserChatSession {
     enabledAgents: [],
     agentWorkdirs: {},
     ...normalizeSessionChainSettings(),
+    ...normalizeSessionDiscussionSettings(),
     createdAt: now,
     updatedAt: now
   };
@@ -586,6 +626,7 @@ function ensureUserSessions(userKey: string): Map<string, UserChatSession> {
       enabledAgents: [],
       agentWorkdirs: {},
       ...normalizeSessionChainSettings(),
+      ...normalizeSessionDiscussionSettings(),
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -621,7 +662,7 @@ function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<stri
   for (const [sessionId, sourceSession] of source.entries()) {
     const existing = target.get(sessionId);
     if (!existing) {
-      target.set(sessionId, applyNormalizedSessionChainSettings(sourceSession));
+      target.set(sessionId, applyNormalizedSessionDiscussionSettings(applyNormalizedSessionChainSettings(sourceSession)));
       continue;
     }
 
@@ -632,6 +673,9 @@ function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<stri
     const normalized = normalizeSessionChainSettings(sourceSession);
     existing.agentChainMaxHops = normalized.agentChainMaxHops;
     existing.agentChainMaxCallsPerAgent = normalized.agentChainMaxCallsPerAgent;
+    const discussion = normalizeSessionDiscussionSettings(sourceSession);
+    existing.discussionMode = discussion.discussionMode;
+    existing.discussionState = discussion.discussionState;
     existing.createdAt = Math.min(existing.createdAt, sourceSession.createdAt);
     existing.updatedAt = Math.max(existing.updatedAt, sourceSession.updatedAt);
     if (sourceSession.history.length > existing.history.length) {
@@ -682,20 +726,23 @@ function resolveChatSession(req: http.IncomingMessage): { userKey: string; sessi
   return { userKey, session: activeSession };
 }
 
-function getSessionSummaries(userKey: string): Array<{ id: string; name: string; messageCount: number; updatedAt: number; createdAt: number; agentChainMaxHops: number; agentChainMaxCallsPerAgent: number | null }> {
+function getSessionSummaries(userKey: string): Array<{ id: string; name: string; messageCount: number; updatedAt: number; createdAt: number; agentChainMaxHops: number; agentChainMaxCallsPerAgent: number | null; discussionMode: DiscussionMode; discussionState: DiscussionState }> {
   const sessions = ensureUserSessions(userKey);
   return Array.from(sessions.values())
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .map((session) => {
       const normalized = normalizeSessionChainSettings(session);
+      const discussion = normalizeSessionDiscussionSettings(session);
       return {
-      id: session.id,
-      name: session.name,
-      messageCount: session.history.length,
-      updatedAt: session.updatedAt,
-      createdAt: session.createdAt,
-      agentChainMaxHops: normalized.agentChainMaxHops,
-      agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent
+        id: session.id,
+        name: session.name,
+        messageCount: session.history.length,
+        updatedAt: session.updatedAt,
+        createdAt: session.createdAt,
+        agentChainMaxHops: normalized.agentChainMaxHops,
+        agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent,
+        discussionMode: discussion.discussionMode,
+        discussionState: discussion.discussionState
       };
     });
 }
