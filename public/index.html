@@ -476,6 +476,7 @@
     let agentChainMaxHops = '';
     let agentChainMaxCallsPerAgent = null;
     const chatWorkdirState = { root: '', level2: '', level3: '', custom: '' };
+    const streamingAgentTexts = new Map();
     let groups = [];
     let expandedGroups = new Set();
     let activeGroup = null;
@@ -1888,11 +1889,15 @@
       return result;
     }
 
-    function renderMessage(msg) {
+    function renderMessage(msg, options = {}) {
       const isUser = msg.role === 'user';
       const roleClass = isUser ? 'message--user' : 'message--assistant';
       const senderColor = getSenderColor(msg.sender, msg.role);
       const avatar = getSenderAvatar(msg.sender, msg.role);
+      const extraClass = options.streamingAgentName ? ' message--streaming' : '';
+      const extraAttrs = options.streamingAgentName
+        ? ` data-agent="${escapeHtml(options.streamingAgentName)}"`
+        : '';
 
       const colorStyle = senderColor ? `style="--sender-color: ${senderColor}"` : '';
 
@@ -1913,7 +1918,7 @@
       }
 
       return `
-        <div class="message ${roleClass}" ${colorStyle}>
+        <div class="message ${roleClass}${extraClass}"${extraAttrs} ${colorStyle}>
           <div class="message__avatar">${avatar}</div>
           <div class="message__content">${content}</div>
         </div>
@@ -2047,6 +2052,51 @@
 
     function addMessage(msg) {
       appendMessageMarkup(renderMessage(msg));
+    }
+
+    function findStreamingAgentMessage(agentName) {
+      return Array.from(messagesEl.querySelectorAll('.message--streaming'))
+        .find(el => el.getAttribute('data-agent') === agentName) || null;
+    }
+
+    function appendStreamingAgentDelta(agentName, delta) {
+      if (!delta) return;
+
+      let streamingEl = findStreamingAgentMessage(agentName);
+      if (!streamingEl) {
+        hideThinkingIndicator(agentName);
+        appendMessageMarkup(renderMessage({
+          role: 'assistant',
+          sender: agentName,
+          text: ''
+        }, { streamingAgentName: agentName }));
+        streamingEl = findStreamingAgentMessage(agentName);
+      }
+
+      const nextText = `${streamingAgentTexts.get(agentName) || ''}${delta}`;
+      streamingAgentTexts.set(agentName, nextText);
+      const textEl = streamingEl ? streamingEl.querySelector('.message__text--markdown') : null;
+      if (textEl) {
+        textEl.innerHTML = window.ChatMarkdown.renderMarkdownHtml(nextText, {
+          role: 'assistant',
+          enableMentions: true
+        });
+      }
+      scrollToBottom();
+    }
+
+    function finalizeStreamingAgentMessage(message) {
+      const streamingEl = findStreamingAgentMessage(message.sender);
+      streamingAgentTexts.delete(message.sender);
+      if (!streamingEl) {
+        addMessage(message);
+        return;
+      }
+
+      streamingEl.outerHTML = renderMessage(message);
+      cacheMessageChromeElements();
+      updateCurrentAgentUI();
+      scrollToBottom();
     }
 
     function setLoading(loading, agentName = null) {
@@ -2251,6 +2301,7 @@
 
       const thinkingAgents = new Set();
       let streamReceivedAgentMessage = false;
+      let streamReceivedAgentDelta = false;
       let streamReceivedError = false;
 
       try {
@@ -2293,12 +2344,16 @@
                   thinkingAgents.add(agentName);
                   statusEl.textContent = `${agentName} 思考中...`;
                   showThinkingIndicator(agentName);
+                } else if (eventType === 'agent_delta') {
+                  streamReceivedAgentDelta = true;
+                  appendStreamingAgentDelta(data.agent, data.delta || '');
+                  statusEl.textContent = `${data.agent} 回复中...`;
                 } else if (eventType === 'agent_message') {
                   streamReceivedAgentMessage = true;
                   thinkingAgents.delete(data.sender);
                   hideThinkingIndicator(data.sender);
                   history.push(data);
-                  addMessage(data);
+                  finalizeStreamingAgentMessage(data);
                   statusEl.textContent = thinkingAgents.size > 0
                     ? `${Array.from(thinkingAgents).join(', ')} 思考中...`
                     : '已连接';
@@ -2326,7 +2381,7 @@
           }
         }
 
-        if (!streamReceivedAgentMessage && !streamReceivedError) {
+        if (!streamReceivedAgentMessage && !streamReceivedAgentDelta && !streamReceivedError) {
           statusEl.textContent = '连接失败';
           addMessage({
             role: 'assistant',
@@ -2337,7 +2392,7 @@
 
       } catch (error) {
         console.error('发送失败:', error);
-        if (!streamReceivedAgentMessage) {
+        if (!streamReceivedAgentMessage && !streamReceivedAgentDelta) {
           statusEl.textContent = '流式连接失败，尝试降级...';
           const recovered = await recoverViaDirectChat(text);
           if (!recovered) {
@@ -2356,6 +2411,8 @@
         isLoading = false;
         sendBtnEl.disabled = false;
         sendBtnEl.textContent = '发送';
+        streamingAgentTexts.clear();
+        document.querySelectorAll('.message--streaming').forEach(el => el.classList.remove('message--streaming'));
         document.querySelectorAll('.message--thinking').forEach(el => el.remove());
       }
     }

@@ -10,6 +10,7 @@ export interface InvokeAgentParams {
   history: Message[];
   includeHistory: boolean;
   extraEnv?: Record<string, string>;
+  onTextDelta?: (delta: string) => void;
 }
 
 interface NormalizedInvokeTarget {

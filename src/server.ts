@@ -918,8 +918,9 @@ async function runAgentTask(params: {
   session: UserChatSession;
   task: AgentDispatchTask;
   stream: boolean;
+  onTextDelta?: (delta: string) => void;
 }): Promise<Message[]> {
-  const { userKey, session, task, stream } = params;
+  const { userKey, session, task, stream, onTextDelta } = params;
   const { agentName, prompt, includeHistory } = task;
   const agent = agentManager.getAgent(agentName);
   if (!agent) return [];
@@ -951,7 +952,8 @@ async function runAgentTask(params: {
       agent: runtimeAgent,
       history: session.history,
       includeHistory,
-      extraEnv: callbackEnv
+      extraEnv: callbackEnv,
+      onTextDelta
     });
     providerResult = result;
     appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${doneStage} text_len=${result.text.length} blocks=${result.blocks.length}`);
@@ -1009,11 +1011,12 @@ async function executeAgentTurn(params: {
   initialTasks: AgentDispatchTask[];
   stream: boolean;
   onThinking?: (agentName: string) => void;
+  onTextDelta?: (agentName: string, delta: string) => void;
   onMessage?: (message: Message) => void;
   shouldContinue?: () => boolean;
   pendingTasks?: PendingAgentDispatchTask[];
 }): Promise<{ aiMessages: Message[]; pendingTasks: PendingAgentDispatchTask[] }> {
-  const { userKey, session, initialTasks, stream, onThinking, onMessage, shouldContinue } = params;
+  const { userKey, session, initialTasks, stream, onThinking, onTextDelta, onMessage, shouldContinue } = params;
   const queue: PendingAgentDispatchTask[] = Array.isArray(params.pendingTasks)
     ? params.pendingTasks.map(task => ({ ...task }))
     : initialTasks.map(task => ({ ...task, dispatchKind: 'initial' }));
@@ -1054,7 +1057,10 @@ async function executeAgentTurn(params: {
       userKey,
       session,
       task,
-      stream
+      stream,
+      onTextDelta: onTextDelta
+        ? (delta) => onTextDelta(task.agentName, delta)
+        : undefined
     });
 
     for (const rawMessage of visibleMessages) {
@@ -1963,6 +1969,9 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       shouldContinue: () => !streamClosed && !res.writableEnded && !res.destroyed,
       onThinking: (agentName) => {
         sendEvent('agent_thinking', { agent: agentName });
+      },
+      onTextDelta: (agentName, delta) => {
+        sendEvent('agent_delta', { agent: agentName, delta });
       },
       onMessage: (visibleMessage) => {
         const delivered = sendEvent('agent_message', visibleMessage);
