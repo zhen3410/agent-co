@@ -1004,6 +1004,40 @@ exit 1
   }
 });
 
+test('Codex CLI usage limit 时，/api/chat 会直接返回额度提示而不是模拟回复', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-usage-limit-'));
+  const fakeCodex = join(tempDir, 'codex');
+  writeFileSync(fakeCodex, `#!/usr/bin/env bash
+printf "You've hit your usage limit. To get more access now, send a request to your admin or try again at Apr 4th, 2026 3:05 AM.\\n" >&2
+exit 1
+`, 'utf8');
+  chmodSync(fakeCodex, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Codex架构师']);
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Codex架构师 请给一句建议' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
+    assert.ok(codexMessage, 'should include a visible failure message');
+    assert.match(codexMessage.text, /额度|usage limit|稍后重试/u);
+    assert.doesNotMatch(codexMessage.text, /我收到了你的消息/u);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('verbose 日志列表能正确显示中文智能体名 Codex架构师', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-verbose-'));
   const fakeCodex = join(tempDir, 'codex');
@@ -1351,6 +1385,15 @@ EOF
     assert.equal(resumeResponse.body.aiMessages.length, 1);
     assert.equal(resumeResponse.body.aiMessages[0].sender, 'Bob');
     assert.equal(resumeResponse.body.aiMessages[0].text, 'Bob 已继续完成剩余链路');
+
+    const secondResumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(secondResumeResponse.status, 200);
+    assert.equal(secondResumeResponse.body.success, true);
+    assert.equal(secondResumeResponse.body.resumed, false);
+    assert.equal(secondResumeResponse.body.aiMessages.length, 0);
 
     const historyResponse = await fixture.request('/api/history');
     assert.equal(historyResponse.status, 200);
