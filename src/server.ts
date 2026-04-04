@@ -858,6 +858,9 @@ function shouldSurfaceCliError(message: string): boolean {
 
   return normalized.includes('deactivated_workspace')
     || normalized.includes('payment required')
+    || normalized.includes('usage limit')
+    || normalized.includes('rate limit')
+    || normalized.includes('too many requests')
     || normalized.includes('auth error')
     || normalized.includes('unauthorized')
     || normalized.includes('forbidden')
@@ -874,10 +877,21 @@ function isCliWorkspaceAuthError(message: string): boolean {
     || normalized.includes('402');
 }
 
+function isCliUsageLimitError(message: string): boolean {
+  const normalized = (message || '').toLowerCase();
+  return normalized.includes('usage limit')
+    || normalized.includes('rate limit')
+    || normalized.includes('too many requests')
+    || normalized.includes('429');
+}
+
 function buildCliErrorVisibleText(message: string): string {
   const normalized = (message || '').trim();
   if (isCliWorkspaceAuthError(normalized)) {
     return '账号或工作区异常：请检查 Codex 登录状态、套餐/额度或 workspace 是否已恢复。';
+  }
+  if (isCliUsageLimitError(normalized)) {
+    return `调用额度已用尽：请稍后重试。${normalized ? ` 原始错误：${normalized}` : ''}`.trim();
   }
   return normalized ? `CLI 调用失败：${normalized}` : 'CLI 调用失败：智能体执行异常';
 }
