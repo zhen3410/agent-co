@@ -142,6 +142,53 @@ EOF
   chmodSync(fakeClaude, 0o755);
 }
 
+function createMultiVisiblePartialChainClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
+const apiUrl = process.env.BOT_ROOM_API_URL || '';
+const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+
+async function post(content, invokeAgents) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content, invokeAgents })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+(async () => {
+  if (agentName === 'Alice') {
+    await post('请 @@Bob 接力补充', ['Bob']);
+    await post('Alice 额外补充一句，但不再继续点名');
+  } else if (agentName === 'Bob') {
+    process.stdout.write('{"output_text":""}\\n');
+    return;
+  } else {
+    await post(\`\${agentName} 已完成\`);
+  }
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
 function createCyclingClaudeScript(tempDir) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
@@ -1889,6 +1936,57 @@ test('peer 模式下无显式继续对象时会将讨论标记为 paused', async
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'peer');
     assert.equal(historyResponse.body.session.discussionState, 'paused');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('peer 模式下同一轮较早消息已显式继续时不会因最后一条可见消息未继续而误判 paused', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-multi-visible-'));
+  createMultiVisiblePartialChainClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'peer multi visible discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          discussionMode: 'peer'
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请开始' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Alice']);
+    assert.deepEqual(chatResponse.body.aiMessages[0].invokeAgents, ['Bob']);
+    assert.equal(chatResponse.body.aiMessages[1].invokeAgents, undefined);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.session.discussionMode, 'peer');
+    assert.equal(historyResponse.body.session.discussionState, 'active');
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

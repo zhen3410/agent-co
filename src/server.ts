@@ -1087,7 +1087,7 @@ async function executeAgentTurn(params: {
   let streamStopped = false;
   let chainLimitReached = false;
   let sawVisibleMessage = false;
-  let lastVisibleMessageQueuedExplicitContinuation = false;
+  let queuedExplicitContinuationDuringTurn = false;
 
   const canContinue = () => shouldContinue ? shouldContinue() : true;
 
@@ -1158,7 +1158,9 @@ async function executeAgentTurn(params: {
       };
 
       sawVisibleMessage = true;
-      lastVisibleMessageQueuedExplicitContinuation = chainedMentions.length > 0;
+      if (chainedMentions.length > 0) {
+        queuedExplicitContinuationDuringTurn = true;
+      }
 
       session.history.push(message);
       aiMessages.push(message);
@@ -1211,7 +1213,7 @@ async function executeAgentTurn(params: {
   }
 
   if (!streamStopped && discussionMode === 'peer' && sawVisibleMessage && !chainLimitReached) {
-    if (lastVisibleMessageQueuedExplicitContinuation) {
+    if (queuedExplicitContinuationDuringTurn) {
       session.discussionState = 'active';
     } else {
       session.discussionState = 'paused';
