@@ -255,12 +255,12 @@ function normalizeSessionDiscussionSettings(source?: Pick<UserChatSession, 'disc
   };
 }
 
-function normalizeDispatchKind(value: unknown): AgentDispatchKind {
+function normalizeDispatchKind(value: unknown, fallback: AgentDispatchKind | null = 'initial'): AgentDispatchKind | null {
   if (value === 'explicit_chained' || value === 'implicit_chained' || value === 'summary' || value === 'initial') {
     return value;
   }
 
-  return value === 'chained' ? 'explicit_chained' : 'initial';
+  return value === 'chained' ? 'explicit_chained' : fallback;
 }
 
 function isChainedDispatchKind(dispatchKind: AgentDispatchKind): boolean {
@@ -464,12 +464,19 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
           pendingAgentTasks: Array.isArray(session.pendingAgentTasks)
             ? session.pendingAgentTasks
               .filter(task => task && typeof task.agentName === 'string' && typeof task.prompt === 'string')
-              .map(task => ({
-                agentName: task.agentName,
-                prompt: task.prompt,
-                includeHistory: task.includeHistory !== false,
-                dispatchKind: normalizeDispatchKind(task.dispatchKind)
-              }))
+              .map(task => {
+                const dispatchKind = normalizeDispatchKind(task.dispatchKind, null);
+                if (!dispatchKind) {
+                  return null;
+                }
+                return {
+                  agentName: task.agentName,
+                  prompt: task.prompt,
+                  includeHistory: task.includeHistory !== false,
+                  dispatchKind
+                };
+              })
+              .filter((task): task is PendingAgentDispatchTask => task !== null)
             : undefined,
           pendingVisibleMessages: Array.isArray(session.pendingVisibleMessages)
             ? session.pendingVisibleMessages.filter(message => message && typeof message.id === 'string')
@@ -1077,7 +1084,7 @@ async function executeAgentTurn(params: {
 }): Promise<{ aiMessages: Message[]; pendingTasks: PendingAgentDispatchTask[] }> {
   const { userKey, session, initialTasks, stream, onThinking, onTextDelta, onMessage, shouldContinue } = params;
   const queue: PendingAgentDispatchTask[] = Array.isArray(params.pendingTasks)
-    ? params.pendingTasks.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) }))
+    ? params.pendingTasks.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) || 'initial' }))
     : initialTasks.map(task => ({ ...task, dispatchKind: 'initial' }));
   const aiMessages: Message[] = [];
   const callCounts = new Map<string, number>();
@@ -1085,9 +1092,7 @@ async function executeAgentTurn(params: {
   const { discussionMode } = normalizeSessionDiscussionSettings(session);
   let chainedCalls = 0;
   let streamStopped = false;
-  let chainLimitReached = false;
   let sawVisibleMessage = false;
-  let admittedExplicitContinuationDuringTurn = false;
 
   const canContinue = () => shouldContinue ? shouldContinue() : true;
 
@@ -1100,7 +1105,6 @@ async function executeAgentTurn(params: {
 
     const task = queue.shift()!;
     if (isChainedDispatchKind(task.dispatchKind) && chainedCalls >= agentChainMaxHops) {
-      chainLimitReached = true;
       appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=chain_stop reason=max_hops hops=${agentChainMaxHops}`);
       break;
     }
@@ -1187,7 +1191,6 @@ async function executeAgentTurn(params: {
           includeHistory: true,
           dispatchKind: 'explicit_chained'
         });
-        admittedExplicitContinuationDuringTurn = true;
       }
 
       if (!canContinue()) {
@@ -1209,8 +1212,9 @@ async function executeAgentTurn(params: {
     }
   }
 
-  if (!streamStopped && discussionMode === 'peer' && sawVisibleMessage && !chainLimitReached) {
-    if (admittedExplicitContinuationDuringTurn) {
+  if (!streamStopped && discussionMode === 'peer' && sawVisibleMessage) {
+    const hasPendingExplicitContinuation = queue.some(task => task.dispatchKind === 'explicit_chained');
+    if (hasPendingExplicitContinuation) {
       session.discussionState = 'active';
     } else {
       session.discussionState = 'paused';
@@ -1221,7 +1225,7 @@ async function executeAgentTurn(params: {
 
   return {
     aiMessages,
-    pendingTasks: streamStopped ? queue.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) })) : []
+    pendingTasks: streamStopped ? queue.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) || 'initial' })) : []
   };
 }
 

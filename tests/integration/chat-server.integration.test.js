@@ -1,10 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const { spawn, spawnSync } = require('node:child_process');
 const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
+const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
 
 async function enableAgents(fixture, agentNames) {
   for (const agentName of agentNames) {
@@ -47,6 +49,223 @@ async function createOpenAICompatibleStub(handler) {
       await new Promise((resolve, reject) => {
         server.close(error => error ? reject(error) : resolve());
       });
+    }
+  };
+}
+
+function getRandomPort() {
+  return Math.floor(Math.random() * 10000) + 30000;
+}
+
+async function waitForChatServer(port, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/auth-status`);
+      if (response.ok) return;
+      lastError = new Error(`status=${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 120));
+  }
+
+  throw new Error(`chat server failed to start: ${String(lastError)}`);
+}
+
+function parseSetCookie(setCookieHeader) {
+  if (!setCookieHeader) return [];
+  if (Array.isArray(setCookieHeader)) {
+    return setCookieHeader.map(item => String(item).split(';')[0]);
+  }
+
+  return String(setCookieHeader)
+    .split(/,(?=\s*[^;]+=)/)
+    .map(item => item.trim().split(';')[0]);
+}
+
+function redisCli(args, options = {}) {
+  const result = spawnSync('redis-cli', args, {
+    encoding: 'utf8',
+    ...options
+  });
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || 'redis-cli failed').trim());
+  }
+  return (result.stdout || '').trim();
+}
+
+async function ensureRedisTestServer() {
+  try {
+    const pong = redisCli(['PING']);
+    if (pong === 'PONG') {
+      return {
+        async cleanup() {}
+      };
+    }
+  } catch {}
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-redis-it-'));
+  const child = spawn('redis-server', [
+    '--port', '6379',
+    '--bind', '127.0.0.1',
+    '--save', '',
+    '--appendonly', 'no',
+    '--dir', tempDir
+  ], {
+    cwd: process.cwd(),
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  let stderr = '';
+  child.stderr.on('data', chunk => {
+    stderr += chunk.toString();
+  });
+
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    try {
+      const pong = redisCli(['PING']);
+      if (pong === 'PONG') {
+        return {
+          async cleanup() {
+            if (!child.killed) {
+              child.kill('SIGTERM');
+              await new Promise(resolve => setTimeout(resolve, 150));
+              if (!child.killed) child.kill('SIGKILL');
+            }
+            rmSync(tempDir, { recursive: true, force: true });
+          }
+        };
+      }
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 120));
+  }
+
+  if (!child.killed) child.kill('SIGKILL');
+  rmSync(tempDir, { recursive: true, force: true });
+  throw new Error(`redis server failed to start${stderr ? `: ${stderr}` : ''}`);
+}
+
+async function createRedisBackedChatServerFixture(options = {}) {
+  const redisHandle = await ensureRedisTestServer();
+  const redisKey = `bot-room:chat:sessions:test:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+  const previousRedisKey = redisCli(['HGET', 'bot-room:config', 'chat_sessions_key']);
+  redisCli(['HSET', 'bot-room:config', 'chat_sessions_key', redisKey]);
+  if (options.redisState) {
+    redisCli(['SET', redisKey, JSON.stringify(options.redisState)]);
+  } else {
+    redisCli(['DEL', redisKey]);
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-redis-it-'));
+  const agentDataFile = join(tempDir, 'agents.json');
+  const authFixture = await createAuthAdminFixture();
+  const port = getRandomPort();
+  const child = spawn('node', ['dist/server.js'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      PORT: String(port),
+      BOT_ROOM_AUTH_ENABLED: 'true',
+      BOT_ROOM_REDIS_REQUIRED: 'false',
+      BOT_ROOM_DISABLE_REDIS: 'false',
+      AGENT_DATA_FILE: agentDataFile,
+      AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
+      AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
+      BOT_ROOM_CLI_TIMEOUT_MS: '15000',
+      BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
+      BOT_ROOM_CLI_KILL_GRACE_MS: '200',
+      ...(options.env || {})
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  let stderr = '';
+  child.stderr.on('data', chunk => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    await waitForChatServer(port);
+  } catch (error) {
+    if (!child.killed) child.kill('SIGKILL');
+    await authFixture.cleanup();
+    if (previousRedisKey) {
+      redisCli(['HSET', 'bot-room:config', 'chat_sessions_key', previousRedisKey]);
+    } else {
+      redisCli(['HDEL', 'bot-room:config', 'chat_sessions_key']);
+    }
+    redisCli(['DEL', redisKey]);
+    await redisHandle.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+    throw new Error(`${error.message}\n${stderr}`);
+  }
+
+  const cookieJar = new Map();
+
+  async function request(path, options = {}) {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    };
+
+    const cookieHeader = Array.from(cookieJar.entries())
+      .map(([key, value]) => `${key}=${value}`)
+      .join('; ');
+    if (cookieHeader) {
+      headers.Cookie = cookieHeader;
+    }
+
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: options.method || 'GET',
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined
+    });
+
+    for (const cookie of parseSetCookie(response.headers.get('set-cookie'))) {
+      const [pair] = cookie.split(';');
+      const [name, ...rest] = pair.split('=');
+      cookieJar.set(name, rest.join('='));
+    }
+
+    const text = await response.text();
+    let json = null;
+    if (text) {
+      try {
+        json = JSON.parse(text);
+      } catch {}
+    }
+
+    return { status: response.status, body: json, text };
+  }
+
+  return {
+    request,
+    async login(username = 'admin', password = 'Admin1234!@#') {
+      return request('/api/login', {
+        method: 'POST',
+        body: { username, password }
+      });
+    },
+    async cleanup() {
+      if (!child.killed) {
+        child.kill('SIGTERM');
+        await new Promise(resolve => setTimeout(resolve, 150));
+        if (!child.killed) child.kill('SIGKILL');
+      }
+      await authFixture.cleanup();
+      if (previousRedisKey) {
+        redisCli(['HSET', 'bot-room:config', 'chat_sessions_key', previousRedisKey]);
+      } else {
+        redisCli(['HDEL', 'bot-room:config', 'chat_sessions_key']);
+      }
+      redisCli(['DEL', redisKey]);
+      await redisHandle.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
     }
   };
 }
@@ -1942,7 +2161,7 @@ test('peer 模式下无显式继续对象时会将讨论标记为 paused', async
   }
 });
 
-test('peer 模式下同一轮较早消息已显式继续时不会因最后一条可见消息未继续而误判 paused', async () => {
+test('peer 模式下若最终已无待继续讨论则会标记为 paused，即使本轮较早消息曾显式继续', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-multi-visible-'));
   createMultiVisiblePartialChainClaudeScript(tempDir);
 
@@ -1986,7 +2205,7 @@ test('peer 模式下同一轮较早消息已显式继续时不会因最后一条
     const historyResponse = await fixture.request('/api/history');
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'peer');
-    assert.equal(historyResponse.body.session.discussionState, 'active');
+    assert.equal(historyResponse.body.session.discussionState, 'paused');
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -2039,6 +2258,84 @@ test('peer 模式下显式继续若因队列限制未实际入队则会标记为
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'peer');
     assert.equal(historyResponse.body.session.discussionState, 'paused');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('legacy chained pending task 在恢复执行时会被兼容映射并继续执行', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-legacy-chained-resume-'));
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+process.stdout.write(JSON.stringify({ output_text: \`\${agentName} resumed from legacy chained\` }) + '\\n');
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const now = Date.now();
+  const fixture = await createRedisBackedChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    },
+    redisState: {
+      version: 1,
+      userChatSessions: {
+        'user:admin': [
+          {
+            id: 'default',
+            name: '默认会话',
+            history: [
+              {
+                id: 'user-1',
+                role: 'user',
+                sender: '用户',
+                text: '@Bob 请继续',
+                timestamp: now - 1000
+              }
+            ],
+            currentAgent: 'Bob',
+            enabledAgents: ['Bob'],
+            agentWorkdirs: {},
+            pendingAgentTasks: [
+              {
+                agentName: 'Bob',
+                prompt: '@Bob 请继续',
+                includeHistory: true,
+                dispatchKind: 'chained'
+              }
+            ],
+            createdAt: now - 1000,
+            updatedAt: now
+          }
+        ]
+      },
+      userActiveChatSession: {
+        'user:admin': 'default'
+      }
+    }
+  });
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const resumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.deepEqual(resumeResponse.body.aiMessages.map(item => item.sender), ['Bob']);
+    assert.equal(resumeResponse.body.aiMessages[0].text, 'Bob resumed from legacy chained');
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.deepEqual(historyResponse.body.messages.map(item => item.sender), ['用户', 'Bob']);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
