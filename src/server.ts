@@ -2180,7 +2180,39 @@ function buildManualSummaryPrompt(session: UserChatSession): string {
   ].join('\n');
 }
 
+function snapshotSummaryContinuationState(session: UserChatSession): {
+  discussionState: DiscussionState;
+  pendingAgentTasks?: PendingAgentDispatchTask[];
+  pendingVisibleMessages?: Message[];
+} {
+  return {
+    discussionState: normalizeDiscussionState(session.discussionState),
+    pendingAgentTasks: Array.isArray(session.pendingAgentTasks)
+      ? session.pendingAgentTasks.map(task => ({ ...task }))
+      : undefined,
+    pendingVisibleMessages: Array.isArray(session.pendingVisibleMessages)
+      ? session.pendingVisibleMessages.map(message => ({ ...message }))
+      : undefined
+  };
+}
+
+function restoreSummaryContinuationState(session: UserChatSession, snapshot: {
+  discussionState: DiscussionState;
+  pendingAgentTasks?: PendingAgentDispatchTask[];
+  pendingVisibleMessages?: Message[];
+}): void {
+  session.pendingAgentTasks = snapshot.pendingAgentTasks && snapshot.pendingAgentTasks.length > 0
+    ? snapshot.pendingAgentTasks.map(task => ({ ...task }))
+    : undefined;
+  session.pendingVisibleMessages = snapshot.pendingVisibleMessages && snapshot.pendingVisibleMessages.length > 0
+    ? snapshot.pendingVisibleMessages.map(message => ({ ...message }))
+    : undefined;
+  session.discussionState = snapshot.discussionState === 'active' ? 'active' : 'paused';
+  touchSession(session);
+}
+
 async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  let preSummaryState: ReturnType<typeof snapshotSummaryContinuationState> | null = null;
   try {
     syncAgentsFromStore();
     const { userKey, session } = resolveChatSession(req);
@@ -2198,6 +2230,7 @@ async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResp
       return;
     }
 
+    preSummaryState = snapshotSummaryContinuationState(session);
     session.discussionState = 'summarizing';
     session.pendingAgentTasks = undefined;
     session.pendingVisibleMessages = undefined;
@@ -2216,10 +2249,7 @@ async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResp
       stream: false
     });
 
-    if (normalizeDiscussionMode(session.discussionMode) === 'peer' && session.discussionState === 'summarizing') {
-      session.discussionState = 'paused';
-      touchSession(session);
-    }
+    restoreSummaryContinuationState(session, preSummaryState);
     appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=discussion_summary_done agent=${summaryAgent} messages=${aiMessages.length}`);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2233,9 +2263,8 @@ async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResp
     console.error('[ChatSummary Error]', err);
     try {
       const { session } = resolveChatSession(req);
-      if (normalizeDiscussionMode(session.discussionMode) === 'peer' && session.discussionState === 'summarizing') {
-        session.discussionState = 'paused';
-        touchSession(session);
+      if (preSummaryState && normalizeDiscussionMode(session.discussionMode) === 'peer' && session.discussionState === 'summarizing') {
+        restoreSummaryContinuationState(session, preSummaryState);
       }
     } catch {
       // ignore rollback errors
