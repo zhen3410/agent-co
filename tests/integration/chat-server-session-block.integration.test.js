@@ -3,6 +3,11 @@ const assert = require('node:assert/strict');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 const { withIsolatedChatSessionState, isRedisSessionStateAvailable } = require('./helpers/redis-session-state-fixture');
 
+function parseSetCookiePair(setCookieHeader) {
+  if (!setCookieHeader) return '';
+  return String(setCookieHeader).split(/,(?=\s*[^;]+=)/)[0].split(';')[0];
+}
+
 test('会话接口支持创建、切换、重命名与删除（需先登录）', async () => {
   const fixture = await createChatServerFixture();
 
@@ -568,12 +573,116 @@ test('登录迁移不会用访客默认 discussion 字段覆盖已有用户会�
       });
       assert.equal(loginResponse.status, 200);
 
+      const secondLoginResponse = await fixture.request('/api/login', {
+        method: 'POST',
+        headers: {
+          Cookie: `bot_room_visitor=${visitorId}`
+        },
+        body: { username: 'admin', password: 'Admin1234!@#' }
+      });
+      assert.equal(secondLoginResponse.status, 200);
+
       const historyResponse = await fixture.request('/api/history');
       assert.equal(historyResponse.status, 200);
       assert.equal(historyResponse.body.session.discussionMode, 'peer');
       assert.equal(historyResponse.body.session.discussionState, 'paused');
 
       const summary = historyResponse.body.chatSessions.find((session) => session.id === 'default');
+      assert.ok(summary);
+      assert.equal(summary.discussionMode, 'peer');
+      assert.equal(summary.discussionState, 'paused');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+test('退出登录迁移不会让较旧的访客 discussion 字段覆盖较新的已登录会话', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const visitorId = 'fedcba9876543210fedcba9876543210';
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      [`visitor:${visitorId}`]: [{
+        id: 'default',
+        name: '默认会话',
+        history: [],
+        currentAgent: null,
+        enabledAgents: [],
+        agentWorkdirs: {},
+        discussionMode: 'classic',
+        discussionState: 'active',
+        createdAt: Date.now() - 2000,
+        updatedAt: Date.now() - 2000
+      }],
+      'user:admin': [{
+        id: 'default',
+        name: '默认会话',
+        history: [],
+        currentAgent: null,
+        enabledAgents: [],
+        agentWorkdirs: {},
+        discussionMode: 'peer',
+        discussionState: 'paused',
+        createdAt: Date.now() - 1000,
+        updatedAt: Date.now() - 500
+      }]
+    },
+    userActiveChatSession: {
+      [`visitor:${visitorId}`]: 'default',
+      'user:admin': 'default'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        BOT_ROOM_DISABLE_REDIS: 'false',
+        BOT_ROOM_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const firstLoginResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `bot_room_visitor=${visitorId}`
+        },
+        body: JSON.stringify({ username: 'admin', password: 'Admin1234!@#' })
+      });
+      assert.equal(firstLoginResponse.status, 200);
+      const firstSessionCookie = parseSetCookiePair(firstLoginResponse.headers.get('set-cookie'));
+
+      const logoutResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/logout`, {
+        method: 'POST',
+        headers: {
+          Cookie: `${firstSessionCookie}; bot_room_visitor=${visitorId}`
+        }
+      });
+      assert.equal(logoutResponse.status, 200);
+
+      const secondLoginResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `bot_room_visitor=${visitorId}`
+        },
+        body: JSON.stringify({ username: 'admin', password: 'Admin1234!@#' })
+      });
+      assert.equal(secondLoginResponse.status, 200);
+      const secondSessionCookie = parseSetCookiePair(secondLoginResponse.headers.get('set-cookie'));
+
+      const historyResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/history`, {
+        headers: {
+          Cookie: `${secondSessionCookie}; bot_room_visitor=${visitorId}`
+        }
+      });
+      assert.equal(historyResponse.status, 200);
+      const historyBody = await historyResponse.json();
+      assert.equal(historyBody.session.discussionMode, 'peer');
+      assert.equal(historyBody.session.discussionState, 'paused');
+
+      const summary = historyBody.chatSessions.find((session) => session.id === 'default');
       assert.ok(summary);
       assert.equal(summary.discussionMode, 'peer');
       assert.equal(summary.discussionState, 'paused');

@@ -2227,6 +2227,71 @@ test('peer 模式下无显式继续对象时会将讨论标记为 paused', async
   }
 });
 
+test('peer 会话切回 classic 时会将 discussionState 归一化为 active', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-to-classic-'));
+  createSingleReplyClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'peer to classic normalization' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice']);
+
+    const sessionId = createResponse.body.session.id;
+    const peerResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: {
+          discussionMode: 'peer'
+        }
+      }
+    });
+    assert.equal(peerResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请先发表看法' }
+    });
+    assert.equal(chatResponse.status, 200);
+
+    const pausedHistoryResponse = await fixture.request('/api/history');
+    assert.equal(pausedHistoryResponse.status, 200);
+    assert.equal(pausedHistoryResponse.body.session.discussionState, 'paused');
+
+    const classicResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: {
+          discussionMode: 'classic'
+        }
+      }
+    });
+    assert.equal(classicResponse.status, 200);
+    assert.equal(classicResponse.body.session.discussionMode, 'classic');
+    assert.equal(classicResponse.body.session.discussionState, 'active');
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.session.discussionMode, 'classic');
+    assert.equal(historyResponse.body.session.discussionState, 'active');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('peer 模式下若最终已无待继续讨论则会标记为 paused，即使本轮较早消息曾显式继续', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-multi-visible-'));
   createMultiVisiblePartialChainClaudeScript(tempDir);
@@ -2521,6 +2586,88 @@ test('peer 模式下可手动触发生成总结', async () => {
     assert.equal(historyResponse.body.session.discussionState, 'paused');
     assert.equal(historyResponse.body.messages.at(-1).dispatchKind, 'summary');
     assert.match(historyResponse.body.messages.at(-1).text, /总结/);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('peer 模式下生成总结支持按 sessionId 指向非当前活跃会话', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-summary-session-id-'));
+  createManualSummaryClaudeScript(tempDir, {
+    summaryText: 'Alice 总结：这是指定会话的总结。'
+  });
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const targetSessionResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'peer summary target session' }
+    });
+    assert.equal(targetSessionResponse.status, 200);
+    const targetSessionId = targetSessionResponse.body.session.id;
+    await enableAgents(fixture, ['Alice']);
+
+    const peerResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: targetSessionId,
+        patch: {
+          discussionMode: 'peer'
+        }
+      }
+    });
+    assert.equal(peerResponse.status, 200);
+
+    const targetChatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请先发表看法' }
+    });
+    assert.equal(targetChatResponse.status, 200);
+
+    const otherSessionResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'active classic session' }
+    });
+    assert.equal(otherSessionResponse.status, 200);
+    const otherSessionId = otherSessionResponse.body.session.id;
+
+    const activeHistoryBeforeSummary = await fixture.request('/api/history');
+    assert.equal(activeHistoryBeforeSummary.status, 200);
+    assert.equal(activeHistoryBeforeSummary.body.session.id, otherSessionId);
+    assert.equal(activeHistoryBeforeSummary.body.session.discussionMode, 'classic');
+
+    const summaryResponse = await fixture.request('/api/chat-summary', {
+      method: 'POST',
+      body: { sessionId: targetSessionId }
+    });
+    assert.equal(summaryResponse.status, 200);
+    assert.deepEqual(summaryResponse.body.aiMessages.map(item => item.sender), ['Alice']);
+    assert.equal(summaryResponse.body.aiMessages[0].dispatchKind, 'summary');
+    assert.match(summaryResponse.body.aiMessages[0].text, /指定会话的总结/);
+
+    const stillActiveHistory = await fixture.request('/api/history');
+    assert.equal(stillActiveHistory.status, 200);
+    assert.equal(stillActiveHistory.body.session.id, otherSessionId);
+    assert.equal(stillActiveHistory.body.session.discussionMode, 'classic');
+
+    const selectTargetResponse = await fixture.request('/api/sessions/select', {
+      method: 'POST',
+      body: { sessionId: targetSessionId }
+    });
+    assert.equal(selectTargetResponse.status, 200);
+    assert.equal(selectTargetResponse.body.session.id, targetSessionId);
+    assert.equal(selectTargetResponse.body.session.discussionMode, 'peer');
+    assert.equal(selectTargetResponse.body.session.discussionState, 'paused');
+    assert.equal(selectTargetResponse.body.messages.at(-1).dispatchKind, 'summary');
+    assert.match(selectTargetResponse.body.messages.at(-1).text, /指定会话的总结/);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

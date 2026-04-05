@@ -251,9 +251,12 @@ function normalizeDiscussionState(value: unknown, fallback: DiscussionState = DE
 }
 
 function normalizeSessionDiscussionSettings(source?: Pick<UserChatSession, 'discussionMode' | 'discussionState'>): Required<Pick<UserChatSession, 'discussionMode' | 'discussionState'>> {
+  const discussionMode = normalizeDiscussionMode(source?.discussionMode);
   return {
-    discussionMode: normalizeDiscussionMode(source?.discussionMode),
-    discussionState: normalizeDiscussionState(source?.discussionState)
+    discussionMode,
+    discussionState: discussionMode === 'peer'
+      ? normalizeDiscussionState(source?.discussionState)
+      : 'active'
   };
 }
 
@@ -694,9 +697,13 @@ function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<stri
     const normalized = normalizeSessionChainSettings(sourceSession);
     existing.agentChainMaxHops = normalized.agentChainMaxHops;
     existing.agentChainMaxCallsPerAgent = normalized.agentChainMaxCallsPerAgent;
-    const sourceDiscussion = normalizeSessionDiscussionSettings(sourceSession);
-    existing.discussionMode = normalizeDiscussionMode(existing.discussionMode, sourceDiscussion.discussionMode);
-    existing.discussionState = normalizeDiscussionState(existing.discussionState, sourceDiscussion.discussionState);
+    const mergedDiscussion = normalizeSessionDiscussionSettings(
+      sourceSession.updatedAt > existing.updatedAt
+        ? sourceSession
+        : existing
+    );
+    existing.discussionMode = mergedDiscussion.discussionMode;
+    existing.discussionState = mergedDiscussion.discussionState;
     existing.createdAt = Math.min(existing.createdAt, sourceSession.createdAt);
     existing.updatedAt = Math.max(existing.updatedAt, sourceSession.updatedAt);
     if (sourceSession.history.length > existing.history.length) {
@@ -2241,7 +2248,18 @@ async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResp
   let summarySession: UserChatSession | null = null;
   try {
     syncAgentsFromStore();
-    const { userKey, session } = resolveChatSession(req);
+    const body = await parseBody<{ sessionId?: string }>(req);
+    const userKey = getUserKeyFromRequest(req);
+    const sessions = ensureUserSessions(userKey);
+    const requestedSessionId = (body.sessionId || '').trim();
+    const activeSessionId = userActiveChatSession.get(userKey) || DEFAULT_CHAT_SESSION_ID;
+    const resolvedSessionId = requestedSessionId || activeSessionId;
+    const session = sessions.get(resolvedSessionId) || (!requestedSessionId ? sessions.get(activeSessionId) || sessions.values().next().value : null);
+    if (!session) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '会话不存在' }));
+      return;
+    }
     summarySession = session;
 
     if (normalizeDiscussionMode(session.discussionMode) !== 'peer') {
@@ -2608,6 +2626,7 @@ async function handleUpdateChatSession(req: http.IncomingMessage, res: http.Serv
 
     Object.assign(session, patch);
     applyNormalizedSessionChainSettings(session);
+    applyNormalizedSessionDiscussionSettings(session);
     touchSession(session);
     const normalizedSession = buildSessionResponse(session);
 
