@@ -1087,7 +1087,7 @@ async function executeAgentTurn(params: {
   let streamStopped = false;
   let chainLimitReached = false;
   let sawVisibleMessage = false;
-  let queuedExplicitContinuationDuringTurn = false;
+  let admittedExplicitContinuationDuringTurn = false;
 
   const canContinue = () => shouldContinue ? shouldContinue() : true;
 
@@ -1158,10 +1158,6 @@ async function executeAgentTurn(params: {
       };
 
       sawVisibleMessage = true;
-      if (chainedMentions.length > 0) {
-        queuedExplicitContinuationDuringTurn = true;
-      }
-
       session.history.push(message);
       aiMessages.push(message);
       touchSession(session);
@@ -1191,6 +1187,7 @@ async function executeAgentTurn(params: {
           includeHistory: true,
           dispatchKind: 'explicit_chained'
         });
+        admittedExplicitContinuationDuringTurn = true;
       }
 
       if (!canContinue()) {
@@ -1213,7 +1210,7 @@ async function executeAgentTurn(params: {
   }
 
   if (!streamStopped && discussionMode === 'peer' && sawVisibleMessage && !chainLimitReached) {
-    if (queuedExplicitContinuationDuringTurn) {
+    if (admittedExplicitContinuationDuringTurn) {
       session.discussionState = 'active';
     } else {
       session.discussionState = 'paused';

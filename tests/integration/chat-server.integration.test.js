@@ -1993,6 +1993,58 @@ test('peer 模式下同一轮较早消息已显式继续时不会因最后一条
   }
 });
 
+test('peer 模式下显式继续若因队列限制未实际入队则会标记为 paused', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-blocked-chain-'));
+  createExplicitThenStopClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'peer blocked continuation discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          discussionMode: 'peer',
+          agentChainMaxCallsPerAgent: 1
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice @Bob 请开始' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob']);
+    assert.deepEqual(chatResponse.body.aiMessages[0].invokeAgents, ['Bob']);
+    assert.equal(chatResponse.body.aiMessages[1].invokeAgents, undefined);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.session.discussionMode, 'peer');
+    assert.equal(historyResponse.body.session.discussionState, 'paused');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('classic 模式下原有链式传播行为保持不变', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-classic-chain-'));
   createExplicitThenStopClaudeScript(tempDir);
