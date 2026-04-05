@@ -2091,7 +2091,7 @@
         markup += renderDiscussionPauseCard();
       }
       messagesEl.innerHTML = markup;
-      if (history.length === 0) {
+      if (history.length === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {
         messagesEl.innerHTML += renderWelcomeState();
       }
       syncMessageChromeState();
@@ -2521,10 +2521,13 @@
           syncSessionSettingsState(data.session || null);
           renderSessionList();
           renderMessages();
+          return true;
         }
       } catch (error) {
         console.error('加载历史失败:', error);
+        return false;
       }
+      return false;
     }
 
     async function loadGroups() {
@@ -2580,7 +2583,10 @@
         if (!response.ok) {
           throw new Error(data.error || '生成摘要失败');
         }
-        await loadHistory();
+        const historyLoaded = await loadHistory();
+        if (!historyLoaded) {
+          throw new Error('刷新会话状态失败');
+        }
         setSessionSettingsFeedback('讨论摘要已生成。', 'success');
       } catch (error) {
         discussionState = 'paused';
