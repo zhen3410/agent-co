@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
-import { Message, AIAgentConfig, ChatRequest, RichBlock, AgentInvokeResult } from './types';
+import { Message, AIAgentConfig, ChatRequest, RichBlock, AgentInvokeResult, DiscussionMode, DiscussionState, AgentDispatchKind } from './types';
 import { AgentManager } from './agent-manager';
 import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
 import { loadGroupStore } from './group-store';
@@ -58,6 +58,8 @@ interface UserChatSession {
   agentWorkdirs?: Record<string, string>;
   agentChainMaxHops?: number;
   agentChainMaxCallsPerAgent?: number | null;
+  discussionMode?: DiscussionMode;
+  discussionState?: DiscussionState;
   pendingAgentTasks?: PendingAgentDispatchTask[];
   pendingVisibleMessages?: Message[];
   createdAt: number;
@@ -73,10 +75,11 @@ interface AgentDispatchTask {
   agentName: string;
   prompt: string;
   includeHistory: boolean;
+  dispatchKind?: AgentDispatchKind;
 }
 
 interface PendingAgentDispatchTask extends AgentDispatchTask {
-  dispatchKind: 'initial' | 'chained';
+  dispatchKind: AgentDispatchKind;
 }
 
 // ============================================
@@ -86,6 +89,7 @@ interface PendingAgentDispatchTask extends AgentDispatchTask {
 const userChatSessions = new Map<string, Map<string, UserChatSession>>();
 const userActiveChatSession = new Map<string, string>();
 const callbackMessages = new Map<string, Message[]>();
+const summaryRequestsInProgress = new Set<string>();
 const redisClient = new Redis(DEFAULT_REDIS_URL, { lazyConnect: true });
 let redisChatSessionsKey = DEFAULT_REDIS_CHAT_SESSIONS_KEY;
 let persistTimer: NodeJS.Timeout | null = null;
@@ -196,8 +200,11 @@ interface RedisPersistedState {
   userActiveChatSession: Record<string, string>;
 }
 
-type NormalizedUserChatSession = UserChatSession & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>>;
-type SessionChainPatch = Partial<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>>;
+type NormalizedUserChatSession = UserChatSession & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent' | 'discussionMode' | 'discussionState'>>;
+type SessionChainPatch = Partial<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent' | 'discussionMode'>>;
+
+const DEFAULT_DISCUSSION_MODE: DiscussionMode = 'classic';
+const DEFAULT_DISCUSSION_STATE: DiscussionState = 'active';
 
 function normalizePositiveSessionSetting(value: unknown, fallback: number | null, allowNull: boolean): number | null {
   if (value === null) {
@@ -235,11 +242,48 @@ function normalizeSessionChainSettings(source?: SessionChainPatch): Required<Pic
   };
 }
 
+function normalizeDiscussionMode(value: unknown, fallback: DiscussionMode = DEFAULT_DISCUSSION_MODE): DiscussionMode {
+  return value === 'peer' || value === 'classic' ? value : fallback;
+}
+
+function normalizeDiscussionState(value: unknown, fallback: DiscussionState = DEFAULT_DISCUSSION_STATE): DiscussionState {
+  return value === 'paused' || value === 'summarizing' || value === 'active' ? value : fallback;
+}
+
+function normalizeSessionDiscussionSettings(source?: Pick<UserChatSession, 'discussionMode' | 'discussionState'>): Required<Pick<UserChatSession, 'discussionMode' | 'discussionState'>> {
+  const discussionMode = normalizeDiscussionMode(source?.discussionMode);
+  return {
+    discussionMode,
+    discussionState: discussionMode === 'peer'
+      ? normalizeDiscussionState(source?.discussionState)
+      : 'active'
+  };
+}
+
+function normalizeDispatchKind(value: unknown, fallback: AgentDispatchKind | null = 'initial'): AgentDispatchKind | null {
+  if (value === 'explicit_chained' || value === 'implicit_chained' || value === 'summary' || value === 'initial') {
+    return value;
+  }
+
+  return value === 'chained' ? 'explicit_chained' : fallback;
+}
+
+function isChainedDispatchKind(dispatchKind: AgentDispatchKind): boolean {
+  return dispatchKind === 'explicit_chained' || dispatchKind === 'implicit_chained';
+}
+
 function applyNormalizedSessionChainSettings<T extends UserChatSession>(session: T): T & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>> {
   const normalized = normalizeSessionChainSettings(session);
   session.agentChainMaxHops = normalized.agentChainMaxHops;
   session.agentChainMaxCallsPerAgent = normalized.agentChainMaxCallsPerAgent;
   return session as T & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>>;
+}
+
+function applyNormalizedSessionDiscussionSettings<T extends UserChatSession>(session: T): T & Required<Pick<UserChatSession, 'discussionMode' | 'discussionState'>> {
+  const normalized = normalizeSessionDiscussionSettings(session);
+  session.discussionMode = normalized.discussionMode;
+  session.discussionState = normalized.discussionState;
+  return session as T & Required<Pick<UserChatSession, 'discussionMode' | 'discussionState'>>;
 }
 
 function parseSessionChainPatch(patch: unknown): SessionChainPatch {
@@ -252,7 +296,7 @@ function parseSessionChainPatch(patch: unknown): SessionChainPatch {
     throw new Error('patch 不能为空');
   }
 
-  const allowedFields = new Set(['agentChainMaxHops', 'agentChainMaxCallsPerAgent']);
+  const allowedFields = new Set(['agentChainMaxHops', 'agentChainMaxCallsPerAgent', 'discussionMode']);
   const normalizedPatch: SessionChainPatch = {};
 
   for (const [key, value] of entries) {
@@ -266,6 +310,14 @@ function parseSessionChainPatch(patch: unknown): SessionChainPatch {
         throw new Error('agentChainMaxHops 必须是 1 到 1000 的整数');
       }
       normalizedPatch.agentChainMaxHops = normalized;
+      continue;
+    }
+
+    if (key === 'discussionMode') {
+      if (value !== 'classic' && value !== 'peer') {
+        throw new Error("discussionMode 必须是 'classic' 或 'peer'");
+      }
+      normalizedPatch.discussionMode = value;
       continue;
     }
 
@@ -286,6 +338,7 @@ function parseSessionChainPatch(patch: unknown): SessionChainPatch {
 
 function buildSessionResponse(session: UserChatSession): NormalizedUserChatSession {
   const normalized = normalizeSessionChainSettings(session);
+  const discussion = normalizeSessionDiscussionSettings(session);
   return {
     ...session,
     history: Array.isArray(session.history) ? [...session.history] : [],
@@ -298,7 +351,9 @@ function buildSessionResponse(session: UserChatSession): NormalizedUserChatSessi
       ? session.pendingVisibleMessages.map(message => ({ ...message }))
       : undefined,
     agentChainMaxHops: normalized.agentChainMaxHops,
-    agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent
+    agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent,
+    discussionMode: discussion.discussionMode,
+    discussionState: discussion.discussionState
   };
 }
 
@@ -414,17 +469,25 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
           pendingAgentTasks: Array.isArray(session.pendingAgentTasks)
             ? session.pendingAgentTasks
               .filter(task => task && typeof task.agentName === 'string' && typeof task.prompt === 'string')
-              .map(task => ({
-                agentName: task.agentName,
-                prompt: task.prompt,
-                includeHistory: task.includeHistory !== false,
-                dispatchKind: task.dispatchKind === 'chained' ? 'chained' : 'initial'
-              }))
+              .map(task => {
+                const dispatchKind = normalizeDispatchKind(task.dispatchKind, null);
+                if (!dispatchKind) {
+                  return null;
+                }
+                return {
+                  agentName: task.agentName,
+                  prompt: task.prompt,
+                  includeHistory: task.includeHistory !== false,
+                  dispatchKind
+                };
+              })
+              .filter((task): task is PendingAgentDispatchTask => task !== null)
             : undefined,
           pendingVisibleMessages: Array.isArray(session.pendingVisibleMessages)
             ? session.pendingVisibleMessages.filter(message => message && typeof message.id === 'string')
             : undefined,
           ...normalizeSessionChainSettings(session),
+          ...normalizeSessionDiscussionSettings(session),
           createdAt: Number(session.createdAt) || Date.now(),
           updatedAt: Number(session.updatedAt) || Date.now()
         });
@@ -570,6 +633,7 @@ function createUserSession(name?: string): UserChatSession {
     enabledAgents: [],
     agentWorkdirs: {},
     ...normalizeSessionChainSettings(),
+    ...normalizeSessionDiscussionSettings(),
     createdAt: now,
     updatedAt: now
   };
@@ -586,6 +650,7 @@ function ensureUserSessions(userKey: string): Map<string, UserChatSession> {
       enabledAgents: [],
       agentWorkdirs: {},
       ...normalizeSessionChainSettings(),
+      ...normalizeSessionDiscussionSettings(),
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -621,7 +686,7 @@ function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<stri
   for (const [sessionId, sourceSession] of source.entries()) {
     const existing = target.get(sessionId);
     if (!existing) {
-      target.set(sessionId, applyNormalizedSessionChainSettings(sourceSession));
+      target.set(sessionId, applyNormalizedSessionDiscussionSettings(applyNormalizedSessionChainSettings(sourceSession)));
       continue;
     }
 
@@ -632,6 +697,13 @@ function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<stri
     const normalized = normalizeSessionChainSettings(sourceSession);
     existing.agentChainMaxHops = normalized.agentChainMaxHops;
     existing.agentChainMaxCallsPerAgent = normalized.agentChainMaxCallsPerAgent;
+    const mergedDiscussion = normalizeSessionDiscussionSettings(
+      sourceSession.updatedAt > existing.updatedAt
+        ? sourceSession
+        : existing
+    );
+    existing.discussionMode = mergedDiscussion.discussionMode;
+    existing.discussionState = mergedDiscussion.discussionState;
     existing.createdAt = Math.min(existing.createdAt, sourceSession.createdAt);
     existing.updatedAt = Math.max(existing.updatedAt, sourceSession.updatedAt);
     if (sourceSession.history.length > existing.history.length) {
@@ -682,20 +754,23 @@ function resolveChatSession(req: http.IncomingMessage): { userKey: string; sessi
   return { userKey, session: activeSession };
 }
 
-function getSessionSummaries(userKey: string): Array<{ id: string; name: string; messageCount: number; updatedAt: number; createdAt: number; agentChainMaxHops: number; agentChainMaxCallsPerAgent: number | null }> {
+function getSessionSummaries(userKey: string): Array<{ id: string; name: string; messageCount: number; updatedAt: number; createdAt: number; agentChainMaxHops: number; agentChainMaxCallsPerAgent: number | null; discussionMode: DiscussionMode; discussionState: DiscussionState }> {
   const sessions = ensureUserSessions(userKey);
   return Array.from(sessions.values())
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .map((session) => {
       const normalized = normalizeSessionChainSettings(session);
+      const discussion = normalizeSessionDiscussionSettings(session);
       return {
-      id: session.id,
-      name: session.name,
-      messageCount: session.history.length,
-      updatedAt: session.updatedAt,
-      createdAt: session.createdAt,
-      agentChainMaxHops: normalized.agentChainMaxHops,
-      agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent
+        id: session.id,
+        name: session.name,
+        messageCount: session.history.length,
+        updatedAt: session.updatedAt,
+        createdAt: session.createdAt,
+        agentChainMaxHops: normalized.agentChainMaxHops,
+        agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent,
+        discussionMode: discussion.discussionMode,
+        discussionState: discussion.discussionState
       };
     });
 }
@@ -918,8 +993,9 @@ async function runAgentTask(params: {
   session: UserChatSession;
   task: AgentDispatchTask;
   stream: boolean;
+  onTextDelta?: (delta: string) => void;
 }): Promise<Message[]> {
-  const { userKey, session, task, stream } = params;
+  const { userKey, session, task, stream, onTextDelta } = params;
   const { agentName, prompt, includeHistory } = task;
   const agent = agentManager.getAgent(agentName);
   if (!agent) return [];
@@ -940,7 +1016,8 @@ async function runAgentTask(params: {
     BOT_ROOM_API_URL: `http://127.0.0.1:${PORT}`,
     BOT_ROOM_SESSION_ID: session.id,
     BOT_ROOM_AGENT_NAME: agentName,
-    BOT_ROOM_CALLBACK_TOKEN: CALLBACK_AUTH_TOKEN
+    BOT_ROOM_CALLBACK_TOKEN: CALLBACK_AUTH_TOKEN,
+    BOT_ROOM_DISPATCH_KIND: normalizeDispatchKind(task.dispatchKind) || 'initial'
   };
 
   let fallbackMessage: Message | null = null;
@@ -951,7 +1028,8 @@ async function runAgentTask(params: {
       agent: runtimeAgent,
       history: session.history,
       includeHistory,
-      extraEnv: callbackEnv
+      extraEnv: callbackEnv,
+      onTextDelta
     });
     providerResult = result;
     appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${doneStage} text_len=${result.text.length} blocks=${result.blocks.length}`);
@@ -1009,19 +1087,22 @@ async function executeAgentTurn(params: {
   initialTasks: AgentDispatchTask[];
   stream: boolean;
   onThinking?: (agentName: string) => void;
+  onTextDelta?: (agentName: string, delta: string) => void;
   onMessage?: (message: Message) => void;
   shouldContinue?: () => boolean;
   pendingTasks?: PendingAgentDispatchTask[];
 }): Promise<{ aiMessages: Message[]; pendingTasks: PendingAgentDispatchTask[] }> {
-  const { userKey, session, initialTasks, stream, onThinking, onMessage, shouldContinue } = params;
+  const { userKey, session, initialTasks, stream, onThinking, onTextDelta, onMessage, shouldContinue } = params;
   const queue: PendingAgentDispatchTask[] = Array.isArray(params.pendingTasks)
-    ? params.pendingTasks.map(task => ({ ...task }))
-    : initialTasks.map(task => ({ ...task, dispatchKind: 'initial' }));
+    ? params.pendingTasks.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) || 'initial' }))
+    : initialTasks.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) || 'initial' }));
   const aiMessages: Message[] = [];
   const callCounts = new Map<string, number>();
   const { agentChainMaxHops, agentChainMaxCallsPerAgent } = normalizeSessionChainSettings(session);
+  const { discussionMode } = normalizeSessionDiscussionSettings(session);
   let chainedCalls = 0;
   let streamStopped = false;
+  let sawVisibleMessage = false;
 
   const canContinue = () => shouldContinue ? shouldContinue() : true;
 
@@ -1033,7 +1114,7 @@ async function executeAgentTurn(params: {
     }
 
     const task = queue.shift()!;
-    if (task.dispatchKind === 'chained' && chainedCalls >= agentChainMaxHops) {
+    if (isChainedDispatchKind(task.dispatchKind) && chainedCalls >= agentChainMaxHops) {
       appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=chain_stop reason=max_hops hops=${agentChainMaxHops}`);
       break;
     }
@@ -1045,7 +1126,7 @@ async function executeAgentTurn(params: {
     }
 
     callCounts.set(task.agentName, currentCalls + 1);
-    if (task.dispatchKind === 'chained') {
+    if (isChainedDispatchKind(task.dispatchKind)) {
       chainedCalls += 1;
     }
     onThinking?.(task.agentName);
@@ -1054,7 +1135,10 @@ async function executeAgentTurn(params: {
       userKey,
       session,
       task,
-      stream
+      stream,
+      onTextDelta: onTextDelta
+        ? (delta) => onTextDelta(task.agentName, delta)
+        : undefined
     });
 
     for (const rawMessage of visibleMessages) {
@@ -1083,9 +1167,11 @@ async function executeAgentTurn(params: {
         ...rawMessage,
         text: displayText,
         mentions: referenceMentions.length > 0 ? referenceMentions : undefined,
-        invokeAgents: chainedMentions.length > 0 ? chainedMentions : undefined
+        invokeAgents: chainedMentions.length > 0 ? chainedMentions : undefined,
+        dispatchKind: task.dispatchKind
       };
 
+      sawVisibleMessage = true;
       session.history.push(message);
       aiMessages.push(message);
       touchSession(session);
@@ -1094,9 +1180,10 @@ async function executeAgentTurn(params: {
         await new Promise<void>(resolve => setImmediate(resolve));
       }
       const pendingMentionsToQueue: PendingAgentDispatchTask[] = [];
+      const allowContinuationQueue = task.dispatchKind !== 'summary';
 
-      for (const mention of chainedMentions) {
-        const queuedChainedCalls = queue.filter(item => item.dispatchKind === 'chained').length;
+      for (const mention of allowContinuationQueue ? chainedMentions : []) {
+        const queuedChainedCalls = queue.filter(item => isChainedDispatchKind(item.dispatchKind)).length;
         if (chainedCalls + queuedChainedCalls + pendingMentionsToQueue.length >= agentChainMaxHops) {
           break;
         }
@@ -1113,7 +1200,7 @@ async function executeAgentTurn(params: {
           agentName: mention,
           prompt: message.text || '',
           includeHistory: true,
-          dispatchKind: 'chained'
+          dispatchKind: 'explicit_chained'
         });
       }
 
@@ -1136,9 +1223,20 @@ async function executeAgentTurn(params: {
     }
   }
 
+  if (!streamStopped && discussionMode === 'peer' && sawVisibleMessage) {
+    const hasPendingExplicitContinuation = queue.some(task => task.dispatchKind === 'explicit_chained');
+    if (hasPendingExplicitContinuation) {
+      session.discussionState = 'active';
+    } else {
+      session.discussionState = 'paused';
+      appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=discussion_pause reason=no_explicit_continuation mode=peer`);
+    }
+    touchSession(session);
+  }
+
   return {
     aiMessages,
-    pendingTasks: streamStopped ? queue.map(task => ({ ...task })) : []
+    pendingTasks: streamStopped ? queue.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) || 'initial' })) : []
   };
 }
 
@@ -1743,9 +1841,14 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
     }
 
     const { userKey, session } = resolveChatSession(req);
+    if (isSessionSummaryInProgress(userKey, session)) {
+      respondSummaryInProgress(res, '发送新消息');
+      return;
+    }
     const sessionId = `${userKey}::${session.id}`;
     const userHistory = session.history;
     const currentAgent = expireDisabledCurrentAgent(userKey, session);
+    session.discussionState = 'active';
     session.pendingAgentTasks = undefined;
     session.pendingVisibleMessages = undefined;
 
@@ -1860,9 +1963,14 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     }
 
     const { userKey, session } = resolveChatSession(req);
+    if (isSessionSummaryInProgress(userKey, session)) {
+      respondSummaryInProgress(res, '发送新消息');
+      return;
+    }
     const sessionId = `${userKey}::${session.id}`;
     const userHistory = session.history;
     const currentAgent = expireDisabledCurrentAgent(userKey, session);
+    session.discussionState = 'active';
     session.pendingAgentTasks = undefined;
     session.pendingVisibleMessages = undefined;
 
@@ -1964,6 +2072,9 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
       onThinking: (agentName) => {
         sendEvent('agent_thinking', { agent: agentName });
       },
+      onTextDelta: (agentName, delta) => {
+        sendEvent('agent_delta', { agent: agentName, delta });
+      },
       onMessage: (visibleMessage) => {
         const delivered = sendEvent('agent_message', visibleMessage);
         if (!delivered) {
@@ -2013,6 +2124,10 @@ async function handleResumePendingChat(req: http.IncomingMessage, res: http.Serv
   try {
     syncAgentsFromStore();
     const { userKey, session } = resolveChatSession(req);
+    if (isSessionSummaryInProgress(userKey, session)) {
+      respondSummaryInProgress(res, '继续执行剩余链路');
+      return;
+    }
     const pendingVisibleMessages = Array.isArray(session.pendingVisibleMessages)
       ? session.pendingVisibleMessages.map(message => ({ ...message }))
       : [];
@@ -2057,6 +2172,161 @@ async function handleResumePendingChat(req: http.IncomingMessage, res: http.Serv
     console.error('[ChatResume Error]', err);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+function resolveManualSummaryAgent(session: UserChatSession): string | null {
+  const enabledAgents = getSessionEnabledAgents(session);
+  if (enabledAgents.length === 0) {
+    return null;
+  }
+
+  if (session.currentAgent && enabledAgents.includes(session.currentAgent)) {
+    return session.currentAgent;
+  }
+
+  return enabledAgents[0] || null;
+}
+
+function buildManualSummaryPrompt(session: UserChatSession): string {
+  const messageCount = Array.isArray(session.history) ? session.history.length : 0;
+  return [
+    '请基于当前对话生成一份简明总结。',
+    '要求：',
+    '1. 提炼主要观点、分歧与当前结论；',
+    '2. 若结论未完全收敛，请明确说明；',
+    '3. 不要继续点名其他智能体，不要恢复讨论链路；',
+    `4. 当前会话消息数：${messageCount}。`
+  ].join('\n');
+}
+
+function snapshotSummaryContinuationState(session: UserChatSession): {
+  discussionState: DiscussionState;
+  pendingAgentTasks?: PendingAgentDispatchTask[];
+  pendingVisibleMessages?: Message[];
+} {
+  return {
+    discussionState: normalizeDiscussionState(session.discussionState),
+    pendingAgentTasks: Array.isArray(session.pendingAgentTasks)
+      ? session.pendingAgentTasks.map(task => ({ ...task }))
+      : undefined,
+    pendingVisibleMessages: Array.isArray(session.pendingVisibleMessages)
+      ? session.pendingVisibleMessages.map(message => ({ ...message }))
+      : undefined
+  };
+}
+
+function restoreSummaryContinuationState(session: UserChatSession, snapshot: {
+  discussionState: DiscussionState;
+  pendingAgentTasks?: PendingAgentDispatchTask[];
+  pendingVisibleMessages?: Message[];
+}): void {
+  session.pendingAgentTasks = snapshot.pendingAgentTasks && snapshot.pendingAgentTasks.length > 0
+    ? snapshot.pendingAgentTasks.map(task => ({ ...task }))
+    : undefined;
+  session.pendingVisibleMessages = snapshot.pendingVisibleMessages && snapshot.pendingVisibleMessages.length > 0
+    ? snapshot.pendingVisibleMessages.map(message => ({ ...message }))
+    : undefined;
+  session.discussionState = snapshot.discussionState === 'active' ? 'active' : 'paused';
+  touchSession(session);
+}
+
+function isSessionSummaryInProgress(userKey: string, session: UserChatSession): boolean {
+  return normalizeDiscussionMode(session.discussionMode) === 'peer'
+    && (normalizeDiscussionState(session.discussionState) === 'summarizing'
+      || summaryRequestsInProgress.has(`${userKey}::${session.id}`));
+}
+
+function respondSummaryInProgress(res: http.ServerResponse, actionLabel: string): void {
+  res.writeHead(409, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: `当前会话正在生成总结，暂时不能${actionLabel}，请稍后再试。` }));
+}
+
+async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  let preSummaryState: ReturnType<typeof snapshotSummaryContinuationState> | null = null;
+  let summaryLockKey: string | null = null;
+  let summarySession: UserChatSession | null = null;
+  try {
+    syncAgentsFromStore();
+    const body = await parseBody<{ sessionId?: string }>(req);
+    const userKey = getUserKeyFromRequest(req);
+    const sessions = ensureUserSessions(userKey);
+    const requestedSessionId = (body.sessionId || '').trim();
+    const activeSessionId = userActiveChatSession.get(userKey) || DEFAULT_CHAT_SESSION_ID;
+    const resolvedSessionId = requestedSessionId || activeSessionId;
+    const session = sessions.get(resolvedSessionId) || (!requestedSessionId ? sessions.get(activeSessionId) || sessions.values().next().value : null);
+    if (!session) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '会话不存在' }));
+      return;
+    }
+    summarySession = session;
+
+    if (normalizeDiscussionMode(session.discussionMode) !== 'peer') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '仅 peer 模式支持手动生成总结' }));
+      return;
+    }
+
+    const summaryAgent = resolveManualSummaryAgent(session);
+    if (!summaryAgent) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '当前会话没有可用于生成总结的智能体' }));
+      return;
+    }
+
+    summaryLockKey = `${userKey}::${session.id}`;
+    if (summaryRequestsInProgress.has(summaryLockKey)) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '当前会话已有总结任务进行中，请稍后再试。' }));
+      return;
+    }
+    summaryRequestsInProgress.add(summaryLockKey);
+
+    preSummaryState = snapshotSummaryContinuationState(session);
+    session.discussionState = 'summarizing';
+    session.pendingAgentTasks = undefined;
+    session.pendingVisibleMessages = undefined;
+    touchSession(session);
+    appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=discussion_summary_start agent=${summaryAgent}`);
+
+    const { aiMessages } = await executeAgentTurn({
+      userKey,
+      session,
+      initialTasks: [{
+        agentName: summaryAgent,
+        prompt: buildManualSummaryPrompt(session),
+        includeHistory: true,
+        dispatchKind: 'summary'
+      }],
+      stream: false
+    });
+
+    restoreSummaryContinuationState(session, preSummaryState);
+    appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=discussion_summary_done agent=${summaryAgent} messages=${aiMessages.length}`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      aiMessages,
+      currentAgent: getUserCurrentAgent(userKey, session.id)
+    }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('[ChatSummary Error]', err);
+    try {
+      if (summarySession && preSummaryState && normalizeDiscussionMode(summarySession.discussionMode) === 'peer' && summarySession.discussionState === 'summarizing') {
+        restoreSummaryContinuationState(summarySession, preSummaryState);
+      }
+    } catch {
+      // ignore rollback errors
+    }
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  } finally {
+    if (summaryLockKey) {
+      summaryRequestsInProgress.delete(summaryLockKey);
+    }
   }
 }
 
@@ -2356,6 +2626,7 @@ async function handleUpdateChatSession(req: http.IncomingMessage, res: http.Serv
 
     Object.assign(session, patch);
     applyNormalizedSessionChainSettings(session);
+    applyNormalizedSessionDiscussionSettings(session);
     touchSession(session);
     const normalizedSession = buildSessionResponse(session);
 
@@ -2616,6 +2887,8 @@ const server = http.createServer(async (req, res) => {
     await handleChatStream(req, res);
   } else if (requestUrl.pathname === '/api/chat-resume' && method === 'POST') {
     await handleResumePendingChat(req, res);
+  } else if (requestUrl.pathname === '/api/chat-summary' && method === 'POST') {
+    await handleChatSummary(req, res);
   } else if (requestUrl.pathname === '/api/history' && method === 'GET') {
     handleGetHistory(req, res);
   } else if (requestUrl.pathname === '/api/clear' && method === 'POST') {
@@ -2699,6 +2972,7 @@ async function startServer(): Promise<void> {
   console.log('  GET  /api/agents       - 获取智能体列表');
   console.log('  POST /api/chat        - 发送消息');
   console.log('  POST /api/chat-resume - 继续执行中断后剩余链路');
+  console.log('  POST /api/chat-summary - 手动触发 peer 讨论总结');
   console.log('  GET  /api/history    - 获取历史记录');
   console.log('  POST /api/clear      - 清空历史');
   console.log('  POST /api/login      - 登录鉴权');
