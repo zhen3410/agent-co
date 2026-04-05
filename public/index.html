@@ -2438,27 +2438,34 @@
           }
         }
 
-        if (!streamReceivedAgentMessage && !streamReceivedAgentDelta && !streamReceivedError) {
-          statusEl.textContent = '连接失败';
-          addMessage({
-            role: 'assistant',
-            sender: '系统',
-            text: '❌ 智能体未返回可见消息，请稍后重试或查看日志'
-          });
-        }
-
-      } catch (error) {
-        console.error('发送失败:', error);
-        if (!streamReceivedAgentMessage && !streamReceivedAgentDelta) {
-          statusEl.textContent = '流式连接失败，尝试降级...';
-          const recovered = await recoverViaDirectChat(text);
-          if (!recovered) {
+        if (!streamReceivedAgentMessage && !streamReceivedError) {
+          if (!streamReceivedAgentDelta) {
             statusEl.textContent = '连接失败';
             addMessage({
               role: 'assistant',
               sender: '系统',
-              text: `❌ 发送失败: ${error.message}`
+              text: '❌ 智能体未返回可见消息，请稍后重试或查看日志'
             });
+          }
+        }
+
+      } catch (error) {
+        console.error('发送失败:', error);
+        if (!streamReceivedAgentMessage) {
+          if (!streamReceivedAgentDelta) {
+            statusEl.textContent = '流式连接失败，尝试降级...';
+            const recovered = await recoverViaDirectChat(text);
+            if (!recovered) {
+              statusEl.textContent = '连接失败';
+              addMessage({
+                role: 'assistant',
+                sender: '系统',
+                text: `❌ 发送失败: ${error.message}`
+              });
+            }
+          } else {
+            statusEl.textContent = '连接中断';
+            showResumeChainNotice();
           }
         } else {
           statusEl.textContent = '连接中断';
