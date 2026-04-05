@@ -2748,6 +2748,128 @@ test('peer 模式下重复触发生成总结会被拒绝且不破坏原有讨论
   }
 });
 
+test('peer 模式下生成总结期间会拒绝新的聊天请求且不破坏原有讨论状态', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-summary-chat-block-'));
+  createManualSummaryClaudeScript(tempDir, {
+    delayMs: 700,
+    summaryText: 'Alice 总结：当前仍有待继续的讨论分支。'
+  });
+
+  const now = Date.now();
+  const fixture = await createRedisBackedChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    },
+    redisState: {
+      version: 1,
+      userChatSessions: {
+        'user:admin': [
+          {
+            id: 'default',
+            name: '默认会话',
+            history: [
+              {
+                id: 'user-1',
+                role: 'user',
+                sender: '用户',
+                text: '@Alice 请总结当前进展',
+                timestamp: now - 1000
+              }
+            ],
+            currentAgent: 'Alice',
+            enabledAgents: ['Alice', 'Bob'],
+            agentWorkdirs: {},
+            pendingAgentTasks: [
+              {
+                agentName: 'Bob',
+                prompt: '@@Bob 请继续补充',
+                includeHistory: true,
+                dispatchKind: 'explicit_chained'
+              }
+            ],
+            pendingVisibleMessages: [
+              {
+                id: 'pending-visible-1',
+                role: 'assistant',
+                sender: 'Alice',
+                text: 'Alice 之前已有一条待客户端接收的可见消息',
+                timestamp: now - 500,
+                dispatchKind: 'explicit_chained'
+              }
+            ],
+            discussionMode: 'peer',
+            discussionState: 'active',
+            createdAt: now - 2000,
+            updatedAt: now - 100
+          }
+        ]
+      },
+      userActiveChatSession: {
+        'user:admin': 'default'
+      }
+    }
+  });
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const firstSummaryRequest = fixture.request('/api/chat-summary', {
+      method: 'POST',
+      body: {}
+    });
+
+    await waitForCondition(async () => {
+      const historyResponse = await fixture.request('/api/history');
+      if (historyResponse.body.session.discussionState === 'summarizing') {
+        return historyResponse;
+      }
+      return null;
+    }, 4000, 100);
+
+    const chatDuringSummaryResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Bob 现在继续讨论' }
+    });
+    assert.equal(chatDuringSummaryResponse.status, 409);
+    assert.match(chatDuringSummaryResponse.body.error, /总结.*进行中|正在生成总结/);
+
+    const firstSummaryResponse = await firstSummaryRequest;
+    assert.equal(firstSummaryResponse.status, 200);
+    assert.equal(firstSummaryResponse.body.aiMessages[0].dispatchKind, 'summary');
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.deepEqual(historyResponse.body.messages.map(item => item.text), [
+      '@Alice 请总结当前进展',
+      'Alice 总结：当前仍有待继续的讨论分支。'
+    ]);
+    assert.equal(historyResponse.body.session.discussionState, 'active');
+    assert.deepEqual(historyResponse.body.session.pendingAgentTasks, [
+      {
+        agentName: 'Bob',
+        prompt: '@@Bob 请继续补充',
+        includeHistory: true,
+        dispatchKind: 'explicit_chained'
+      }
+    ]);
+    assert.deepEqual(historyResponse.body.session.pendingVisibleMessages, [
+      {
+        id: 'pending-visible-1',
+        role: 'assistant',
+        sender: 'Alice',
+        text: 'Alice 之前已有一条待客户端接收的可见消息',
+        timestamp: now - 500,
+        dispatchKind: 'explicit_chained'
+      }
+    ]);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('生成总结不会隐式恢复普通链式传播', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-summary-no-chain-'));
   createManualSummaryClaudeScript(tempDir, {

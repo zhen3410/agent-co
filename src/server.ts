@@ -1834,6 +1834,10 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
     }
 
     const { userKey, session } = resolveChatSession(req);
+    if (isSessionSummaryInProgress(userKey, session)) {
+      respondSummaryInProgress(res, '发送新消息');
+      return;
+    }
     const sessionId = `${userKey}::${session.id}`;
     const userHistory = session.history;
     const currentAgent = expireDisabledCurrentAgent(userKey, session);
@@ -1952,6 +1956,10 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     }
 
     const { userKey, session } = resolveChatSession(req);
+    if (isSessionSummaryInProgress(userKey, session)) {
+      respondSummaryInProgress(res, '发送新消息');
+      return;
+    }
     const sessionId = `${userKey}::${session.id}`;
     const userHistory = session.history;
     const currentAgent = expireDisabledCurrentAgent(userKey, session);
@@ -2109,6 +2117,10 @@ async function handleResumePendingChat(req: http.IncomingMessage, res: http.Serv
   try {
     syncAgentsFromStore();
     const { userKey, session } = resolveChatSession(req);
+    if (isSessionSummaryInProgress(userKey, session)) {
+      respondSummaryInProgress(res, '继续执行剩余链路');
+      return;
+    }
     const pendingVisibleMessages = Array.isArray(session.pendingVisibleMessages)
       ? session.pendingVisibleMessages.map(message => ({ ...message }))
       : [];
@@ -2212,12 +2224,25 @@ function restoreSummaryContinuationState(session: UserChatSession, snapshot: {
   touchSession(session);
 }
 
+function isSessionSummaryInProgress(userKey: string, session: UserChatSession): boolean {
+  return normalizeDiscussionMode(session.discussionMode) === 'peer'
+    && (normalizeDiscussionState(session.discussionState) === 'summarizing'
+      || summaryRequestsInProgress.has(`${userKey}::${session.id}`));
+}
+
+function respondSummaryInProgress(res: http.ServerResponse, actionLabel: string): void {
+  res.writeHead(409, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: `当前会话正在生成总结，暂时不能${actionLabel}，请稍后再试。` }));
+}
+
 async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   let preSummaryState: ReturnType<typeof snapshotSummaryContinuationState> | null = null;
   let summaryLockKey: string | null = null;
+  let summarySession: UserChatSession | null = null;
   try {
     syncAgentsFromStore();
     const { userKey, session } = resolveChatSession(req);
+    summarySession = session;
 
     if (normalizeDiscussionMode(session.discussionMode) !== 'peer') {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2272,9 +2297,8 @@ async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResp
     const err = error as Error;
     console.error('[ChatSummary Error]', err);
     try {
-      const { session } = resolveChatSession(req);
-      if (preSummaryState && normalizeDiscussionMode(session.discussionMode) === 'peer' && session.discussionState === 'summarizing') {
-        restoreSummaryContinuationState(session, preSummaryState);
+      if (summarySession && preSummaryState && normalizeDiscussionMode(summarySession.discussionMode) === 'peer' && summarySession.discussionState === 'summarizing') {
+        restoreSummaryContinuationState(summarySession, preSummaryState);
       }
     } catch {
       // ignore rollback errors
