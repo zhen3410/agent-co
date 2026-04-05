@@ -504,6 +504,79 @@ test('旧会话数据缺少链路字段时会自动回填默认值', { skip: !is
       assert.equal(typeof legacySession.agentChainMaxHops, 'number');
       assert.equal(legacySession.agentChainMaxHops > 0, true);
       assert.equal(legacySession.agentChainMaxCallsPerAgent, null);
+      assert.equal(legacySession.discussionMode, 'classic');
+      assert.equal(legacySession.discussionState, 'active');
+      assert.equal(historyResponse.body.session.discussionMode, 'classic');
+      assert.equal(historyResponse.body.session.discussionState, 'active');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+test('登录迁移不会用访客默认 discussion 字段覆盖已有用户会话', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const visitorId = '0123456789abcdef0123456789abcdef';
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      [`visitor:${visitorId}`]: [{
+        id: 'default',
+        name: '默认会话',
+        history: [],
+        currentAgent: null,
+        enabledAgents: [],
+        agentWorkdirs: {},
+        discussionMode: 'classic',
+        discussionState: 'active',
+        createdAt: Date.now() - 2000,
+        updatedAt: Date.now() - 2000
+      }],
+      'user:admin': [{
+        id: 'default',
+        name: '默认会话',
+        history: [],
+        currentAgent: null,
+        enabledAgents: [],
+        agentWorkdirs: {},
+        discussionMode: 'peer',
+        discussionState: 'paused',
+        createdAt: Date.now() - 1000,
+        updatedAt: Date.now() - 1000
+      }]
+    },
+    userActiveChatSession: {
+      [`visitor:${visitorId}`]: 'default',
+      'user:admin': 'default'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        BOT_ROOM_DISABLE_REDIS: 'false',
+        BOT_ROOM_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.request('/api/login', {
+        method: 'POST',
+        headers: {
+          Cookie: `bot_room_visitor=${visitorId}`
+        },
+        body: { username: 'admin', password: 'Admin1234!@#' }
+      });
+      assert.equal(loginResponse.status, 200);
+
+      const historyResponse = await fixture.request('/api/history');
+      assert.equal(historyResponse.status, 200);
+      assert.equal(historyResponse.body.session.discussionMode, 'peer');
+      assert.equal(historyResponse.body.session.discussionState, 'paused');
+
+      const summary = historyResponse.body.chatSessions.find((session) => session.id === 'default');
+      assert.ok(summary);
+      assert.equal(summary.discussionMode, 'peer');
+      assert.equal(summary.discussionState, 'paused');
     } finally {
       await fixture.cleanup();
     }

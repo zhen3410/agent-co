@@ -673,9 +673,9 @@ function mergeSessionMaps(target: Map<string, UserChatSession>, source: Map<stri
     const normalized = normalizeSessionChainSettings(sourceSession);
     existing.agentChainMaxHops = normalized.agentChainMaxHops;
     existing.agentChainMaxCallsPerAgent = normalized.agentChainMaxCallsPerAgent;
-    const discussion = normalizeSessionDiscussionSettings(sourceSession);
-    existing.discussionMode = discussion.discussionMode;
-    existing.discussionState = discussion.discussionState;
+    const sourceDiscussion = normalizeSessionDiscussionSettings(sourceSession);
+    existing.discussionMode = normalizeDiscussionMode(existing.discussionMode, sourceDiscussion.discussionMode);
+    existing.discussionState = normalizeDiscussionState(existing.discussionState, sourceDiscussion.discussionState);
     existing.createdAt = Math.min(existing.createdAt, sourceSession.createdAt);
     existing.updatedAt = Math.max(existing.updatedAt, sourceSession.updatedAt);
     if (sourceSession.history.length > existing.history.length) {
