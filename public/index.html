@@ -120,6 +120,7 @@
       const desktopIds = isDesktop ? {
         card: 'currentSessionSettings',
         badge: 'currentSessionSettingsBadge',
+        discussionMode: 'discussionModeSelect',
         hopsInput: 'agentChainMaxHopsInput',
         hopsSave: 'saveAgentChainMaxHopsBtn',
         unlimitedInput: 'agentChainMaxCallsUnlimitedInput',
@@ -148,6 +149,21 @@
               未选择会话
             </span>
           </div>
+          <label
+            className="session-settings-field"
+            {...(desktopIds.discussionMode ? { htmlFor: desktopIds.discussionMode } : {})}
+          >
+            <span className="session-settings-field__label">讨论模式</span>
+            <div className="session-settings-field__control">
+              <select
+                data-session-setting="discussionMode"
+                {...(desktopIds.discussionMode ? { id: desktopIds.discussionMode } : {})}
+              >
+                <option value="classic">经典链式</option>
+                <option value="peer">对等讨论</option>
+              </select>
+            </div>
+          </label>
           <label
             className="session-settings-field"
             {...(desktopIds.hopsInput ? { htmlFor: desktopIds.hopsInput } : {})}
@@ -473,6 +489,8 @@
     let activeSession = null;
     let agentWorkdirs = {};
     let enabledAgents = new Set();
+    let discussionMode = 'classic';
+    let discussionState = 'active';
     let agentChainMaxHops = '';
     let agentChainMaxCallsPerAgent = null;
     const chatWorkdirState = { root: '', level2: '', level3: '', custom: '' };
@@ -519,6 +537,7 @@
     let sessionSearchInputEl;
     let recentSessionsEl;
     let currentSessionSettingsBadgeEls = [];
+    let discussionModeSelectEls = [];
     let agentChainMaxHopsInputEls = [];
     let saveAgentChainMaxHopsBtnEls = [];
     let agentChainMaxCallsUnlimitedInputEls = [];
@@ -572,6 +591,7 @@
       sessionSearchInputEl = document.getElementById('sessionSearchInput');
       recentSessionsEl = document.getElementById('recentSessions');
       currentSessionSettingsBadgeEls = Array.from(document.querySelectorAll('[data-session-settings-badge]'));
+      discussionModeSelectEls = Array.from(document.querySelectorAll('[data-session-setting="discussionMode"]'));
       agentChainMaxHopsInputEls = Array.from(document.querySelectorAll('[data-session-setting="agentChainMaxHops"]'));
       saveAgentChainMaxHopsBtnEls = Array.from(document.querySelectorAll('[data-session-setting-save="agentChainMaxHops"]'));
       agentChainMaxCallsUnlimitedInputEls = Array.from(document.querySelectorAll('[data-session-setting="agentChainMaxCallsUnlimited"]'));
@@ -662,6 +682,8 @@
         chatSessions = [];
         activeSessionId = null;
         activeSession = null;
+        discussionMode = 'classic';
+        discussionState = 'active';
         agentChainMaxHops = '';
         agentChainMaxCallsPerAgent = null;
         sessionSearchQuery = '';
@@ -729,6 +751,8 @@
 
     function syncSessionSettingsState(session) {
       activeSession = session || null;
+      discussionMode = session && session.discussionMode === 'peer' ? 'peer' : 'classic';
+      discussionState = session && typeof session.discussionState === 'string' ? session.discussionState : 'active';
       agentChainMaxHops = session && Number.isInteger(session.agentChainMaxHops)
         ? session.agentChainMaxHops
         : '';
@@ -740,13 +764,17 @@
     }
 
     function renderSessionSettings() {
-      if (agentChainMaxHopsInputEls.length === 0 || agentChainMaxCallsUnlimitedInputEls.length === 0 || agentChainMaxCallsPerAgentInputEls.length === 0 || agentChainMaxCallsLimitRowEls.length === 0) {
+      if (discussionModeSelectEls.length === 0 || agentChainMaxHopsInputEls.length === 0 || agentChainMaxCallsUnlimitedInputEls.length === 0 || agentChainMaxCallsPerAgentInputEls.length === 0 || agentChainMaxCallsLimitRowEls.length === 0) {
         return;
       }
 
       const hasActiveSession = !!activeSession;
       const isUnlimited = agentChainMaxCallsPerAgent === null;
 
+      discussionModeSelectEls.forEach((el) => {
+        el.value = discussionMode;
+        el.disabled = !hasActiveSession;
+      });
       agentChainMaxHopsInputEls.forEach((el) => {
         el.value = agentChainMaxHops === '' ? '' : String(agentChainMaxHops);
         el.disabled = !hasActiveSession;
@@ -882,6 +910,13 @@
       } catch (error) {
         setSessionSettingsFeedback(error.message, 'error');
       }
+    }
+
+    async function saveDiscussionMode(nextMode) {
+      const normalizedMode = nextMode === 'peer' ? 'peer' : 'classic';
+      discussionMode = normalizedMode;
+      renderSessionSettings();
+      await saveSessionSettings({ discussionMode: normalizedMode }, normalizedMode === 'peer' ? '已切换为对等讨论。' : '已切换为经典链式。');
     }
 
     function handleAgentChainUnlimitedToggle(isUnlimited) {
@@ -2007,6 +2042,25 @@
       `;
     }
 
+    function renderDiscussionPauseCard() {
+      return `
+        <div class="welcome" data-session-pause-card>
+          <div class="welcome-icon">⏸️</div>
+          <h2>讨论已暂停</h2>
+          <p>当前对等讨论已自然暂停；你可以继续发言，或手动生成阶段摘要。</p>
+          <div class="pwa-banner__actions">
+            <button
+              type="button"
+              class="btn-clear"
+              onclick="window.requestDiscussionSummary && window.requestDiscussionSummary()"
+            >
+              生成摘要
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
     function syncMessageChromeState() {
       cacheMessageChromeElements();
       updateCurrentAgentUI();
@@ -2033,6 +2087,9 @@
       history.forEach(msg => {
         markup += renderMessage(msg);
       });
+      if (discussionMode === 'peer' && discussionState === 'paused') {
+        markup += renderDiscussionPauseCard();
+      }
       messagesEl.innerHTML = markup;
       if (history.length === 0) {
         messagesEl.innerHTML += renderWelcomeState();
@@ -2502,6 +2559,37 @@
       }
     }
 
+    async function requestDiscussionSummary() {
+      if (!activeSessionId) {
+        setSessionSettingsFeedback('请先选择一个会话。', 'error');
+        return;
+      }
+
+      setSessionSettingsFeedback('正在生成讨论摘要...');
+      discussionState = 'summarizing';
+      renderMessages();
+
+      try {
+        const response = await fetch('/api/chat-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ sessionId: activeSessionId })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || '生成摘要失败');
+        }
+        await loadHistory();
+        setSessionSettingsFeedback('讨论摘要已生成。', 'success');
+      } catch (error) {
+        discussionState = 'paused';
+        renderMessages();
+        setSessionSettingsFeedback(error.message || '生成摘要失败', 'error');
+        alert(error.message || '生成摘要失败');
+      }
+    }
+
     window.selectAgent = selectAgent;
     window.toggleGroupExpand = toggleGroupExpand;
     window.handleGroupSwitchById = handleGroupSwitchById;
@@ -2527,6 +2615,8 @@
     window.switchAgent = switchAgent;
     window.applyAgentWorkdir = applyAgentWorkdir;
     window.toggleSessionAgent = toggleSessionAgent;
+    window.requestDiscussionSummary = requestDiscussionSummary;
+    window.saveDiscussionMode = saveDiscussionMode;
     window.saveAgentChainMaxHops = saveAgentChainMaxHops;
     window.saveAgentChainMaxCallsPerAgent = saveAgentChainMaxCallsPerAgent;
     window.handleAgentChainUnlimitedToggle = handleAgentChainUnlimitedToggle;
@@ -2564,6 +2654,16 @@
       if (sessionSearchInputEl) {
         sessionSearchInputEl.addEventListener('input', updateSessionSearch);
       }
+
+      discussionModeSelectEls.forEach((el) => {
+        el.addEventListener('change', () => {
+          discussionMode = el.value === 'peer' ? 'peer' : 'classic';
+          discussionModeSelectEls.forEach((peer) => {
+            if (peer !== el) peer.value = discussionMode;
+          });
+          void saveDiscussionMode(discussionMode);
+        });
+      });
 
       agentChainMaxHopsInputEls.forEach((el) => {
         el.addEventListener('input', () => {
