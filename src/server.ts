@@ -89,6 +89,7 @@ interface PendingAgentDispatchTask extends AgentDispatchTask {
 const userChatSessions = new Map<string, Map<string, UserChatSession>>();
 const userActiveChatSession = new Map<string, string>();
 const callbackMessages = new Map<string, Message[]>();
+const summaryRequestsInProgress = new Set<string>();
 const redisClient = new Redis(DEFAULT_REDIS_URL, { lazyConnect: true });
 let redisChatSessionsKey = DEFAULT_REDIS_CHAT_SESSIONS_KEY;
 let persistTimer: NodeJS.Timeout | null = null;
@@ -2213,6 +2214,7 @@ function restoreSummaryContinuationState(session: UserChatSession, snapshot: {
 
 async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   let preSummaryState: ReturnType<typeof snapshotSummaryContinuationState> | null = null;
+  let summaryLockKey: string | null = null;
   try {
     syncAgentsFromStore();
     const { userKey, session } = resolveChatSession(req);
@@ -2229,6 +2231,14 @@ async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResp
       res.end(JSON.stringify({ error: '当前会话没有可用于生成总结的智能体' }));
       return;
     }
+
+    summaryLockKey = `${userKey}::${session.id}`;
+    if (summaryRequestsInProgress.has(summaryLockKey)) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '当前会话已有总结任务进行中，请稍后再试。' }));
+      return;
+    }
+    summaryRequestsInProgress.add(summaryLockKey);
 
     preSummaryState = snapshotSummaryContinuationState(session);
     session.discussionState = 'summarizing';
@@ -2271,6 +2281,10 @@ async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResp
     }
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: err.message }));
+  } finally {
+    if (summaryLockKey) {
+      summaryRequestsInProgress.delete(summaryLockKey);
+    }
   }
 }
 
