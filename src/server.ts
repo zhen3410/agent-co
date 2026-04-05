@@ -75,6 +75,7 @@ interface AgentDispatchTask {
   agentName: string;
   prompt: string;
   includeHistory: boolean;
+  dispatchKind?: AgentDispatchKind;
 }
 
 interface PendingAgentDispatchTask extends AgentDispatchTask {
@@ -1007,7 +1008,8 @@ async function runAgentTask(params: {
     BOT_ROOM_API_URL: `http://127.0.0.1:${PORT}`,
     BOT_ROOM_SESSION_ID: session.id,
     BOT_ROOM_AGENT_NAME: agentName,
-    BOT_ROOM_CALLBACK_TOKEN: CALLBACK_AUTH_TOKEN
+    BOT_ROOM_CALLBACK_TOKEN: CALLBACK_AUTH_TOKEN,
+    BOT_ROOM_DISPATCH_KIND: normalizeDispatchKind(task.dispatchKind) || 'initial'
   };
 
   let fallbackMessage: Message | null = null;
@@ -1085,7 +1087,7 @@ async function executeAgentTurn(params: {
   const { userKey, session, initialTasks, stream, onThinking, onTextDelta, onMessage, shouldContinue } = params;
   const queue: PendingAgentDispatchTask[] = Array.isArray(params.pendingTasks)
     ? params.pendingTasks.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) || 'initial' }))
-    : initialTasks.map(task => ({ ...task, dispatchKind: 'initial' }));
+    : initialTasks.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) || 'initial' }));
   const aiMessages: Message[] = [];
   const callCounts = new Map<string, number>();
   const { agentChainMaxHops, agentChainMaxCallsPerAgent } = normalizeSessionChainSettings(session);
@@ -1170,8 +1172,9 @@ async function executeAgentTurn(params: {
         await new Promise<void>(resolve => setImmediate(resolve));
       }
       const pendingMentionsToQueue: PendingAgentDispatchTask[] = [];
+      const allowContinuationQueue = task.dispatchKind !== 'summary';
 
-      for (const mention of chainedMentions) {
+      for (const mention of allowContinuationQueue ? chainedMentions : []) {
         const queuedChainedCalls = queue.filter(item => isChainedDispatchKind(item.dispatchKind)).length;
         if (chainedCalls + queuedChainedCalls + pendingMentionsToQueue.length >= agentChainMaxHops) {
           break;
@@ -2152,6 +2155,96 @@ async function handleResumePendingChat(req: http.IncomingMessage, res: http.Serv
   }
 }
 
+function resolveManualSummaryAgent(session: UserChatSession): string | null {
+  const enabledAgents = getSessionEnabledAgents(session);
+  if (enabledAgents.length === 0) {
+    return null;
+  }
+
+  if (session.currentAgent && enabledAgents.includes(session.currentAgent)) {
+    return session.currentAgent;
+  }
+
+  return enabledAgents[0] || null;
+}
+
+function buildManualSummaryPrompt(session: UserChatSession): string {
+  const messageCount = Array.isArray(session.history) ? session.history.length : 0;
+  return [
+    '请基于当前对话生成一份简明总结。',
+    '要求：',
+    '1. 提炼主要观点、分歧与当前结论；',
+    '2. 若结论未完全收敛，请明确说明；',
+    '3. 不要继续点名其他智能体，不要恢复讨论链路；',
+    `4. 当前会话消息数：${messageCount}。`
+  ].join('\n');
+}
+
+async function handleChatSummary(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    syncAgentsFromStore();
+    const { userKey, session } = resolveChatSession(req);
+
+    if (normalizeDiscussionMode(session.discussionMode) !== 'peer') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '仅 peer 模式支持手动生成总结' }));
+      return;
+    }
+
+    const summaryAgent = resolveManualSummaryAgent(session);
+    if (!summaryAgent) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '当前会话没有可用于生成总结的智能体' }));
+      return;
+    }
+
+    session.discussionState = 'summarizing';
+    session.pendingAgentTasks = undefined;
+    session.pendingVisibleMessages = undefined;
+    touchSession(session);
+    appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=discussion_summary_start agent=${summaryAgent}`);
+
+    const { aiMessages } = await executeAgentTurn({
+      userKey,
+      session,
+      initialTasks: [{
+        agentName: summaryAgent,
+        prompt: buildManualSummaryPrompt(session),
+        includeHistory: true,
+        dispatchKind: 'summary'
+      }],
+      stream: false
+    });
+
+    if (normalizeDiscussionMode(session.discussionMode) === 'peer' && session.discussionState === 'summarizing') {
+      session.discussionState = 'paused';
+      touchSession(session);
+    }
+    appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=discussion_summary_done agent=${summaryAgent} messages=${aiMessages.length}`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      aiMessages,
+      currentAgent: getUserCurrentAgent(userKey, session.id)
+    }));
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('[ChatSummary Error]', err);
+    try {
+      const { session } = resolveChatSession(req);
+      if (normalizeDiscussionMode(session.discussionMode) === 'peer' && session.discussionState === 'summarizing') {
+        session.discussionState = 'paused';
+        touchSession(session);
+      }
+    } catch {
+      // ignore rollback errors
+    }
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
 /**
  * 处理获取历史记录
  */
@@ -2708,6 +2801,8 @@ const server = http.createServer(async (req, res) => {
     await handleChatStream(req, res);
   } else if (requestUrl.pathname === '/api/chat-resume' && method === 'POST') {
     await handleResumePendingChat(req, res);
+  } else if (requestUrl.pathname === '/api/chat-summary' && method === 'POST') {
+    await handleChatSummary(req, res);
   } else if (requestUrl.pathname === '/api/history' && method === 'GET') {
     handleGetHistory(req, res);
   } else if (requestUrl.pathname === '/api/clear' && method === 'POST') {
@@ -2791,6 +2886,7 @@ async function startServer(): Promise<void> {
   console.log('  GET  /api/agents       - 获取智能体列表');
   console.log('  POST /api/chat        - 发送消息');
   console.log('  POST /api/chat-resume - 继续执行中断后剩余链路');
+  console.log('  POST /api/chat-summary - 手动触发 peer 讨论总结');
   console.log('  GET  /api/history    - 获取历史记录');
   console.log('  POST /api/clear      - 清空历史');
   console.log('  POST /api/login      - 登录鉴权');

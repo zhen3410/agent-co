@@ -361,6 +361,59 @@ EOF
   chmodSync(fakeClaude, 0o755);
 }
 
+function createManualSummaryClaudeScript(tempDir, options = {}) {
+  const fakeClaude = join(tempDir, 'claude');
+  const delayMs = Number(options.delayMs || 0);
+  const summaryInvokeAgents = options.summaryInvokeAgents || null;
+  const summaryText = options.summaryText || 'Alice 总结：当前讨论已暂停，结论如下。';
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
+const apiUrl = process.env.BOT_ROOM_API_URL || '';
+const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+const dispatchKind = process.env.BOT_ROOM_DISPATCH_KIND || 'initial';
+
+async function post(content, invokeAgents) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content, invokeAgents })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+async function sleep(ms) {
+  if (!ms) return;
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+(async () => {
+  if (dispatchKind === 'summary') {
+    await sleep(${delayMs});
+    await post(${JSON.stringify(summaryText)}, ${summaryInvokeAgents ? JSON.stringify(summaryInvokeAgents) : 'undefined'});
+  } else {
+    await post(\`\${agentName} 已给出阶段性意见，本轮不继续点名\`);
+  }
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
 function createMultiVisiblePartialChainClaudeScript(tempDir) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
@@ -487,6 +540,19 @@ printf '%s\n' '{"output_text":"CLI provider reply"}'
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+async function waitForCondition(check, timeoutMs = 3000, intervalMs = 80) {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue;
+  while (Date.now() < deadline) {
+    lastValue = await check();
+    if (lastValue) {
+      return lastValue;
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  throw new Error('condition not met before timeout');
+}
 
 test('统一 agent 调用入口在 api 模式下会调用 OpenAI-compatible provider 并解析结果', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-api-success-'));
@@ -2374,6 +2440,147 @@ test('classic 模式下原有链式传播行为保持不变', async () => {
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'classic');
     assert.equal(historyResponse.body.session.discussionState, 'active');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('peer 模式下可手动触发生成总结', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-manual-summary-'));
+  createManualSummaryClaudeScript(tempDir, {
+    delayMs: 700,
+    summaryText: 'Alice 总结：讨论已暂停，当前结论已收敛。'
+  });
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'peer manual summary discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          discussionMode: 'peer'
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请先发表看法' }
+    });
+    assert.equal(chatResponse.status, 200);
+
+    const pausedHistoryResponse = await fixture.request('/api/history');
+    assert.equal(pausedHistoryResponse.status, 200);
+    assert.equal(pausedHistoryResponse.body.session.discussionState, 'paused');
+
+    const summaryRequest = fetch(`http://127.0.0.1:${fixture.port}/api/chat-summary`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({})
+    });
+
+    await waitForCondition(async () => {
+      const historyResponse = await fixture.request('/api/history');
+      if (historyResponse.body.session.discussionState === 'summarizing') {
+        return historyResponse;
+      }
+      return null;
+    }, 4000, 100);
+
+    const summaryResponse = await summaryRequest;
+    assert.equal(summaryResponse.status, 200);
+    const summaryBody = await summaryResponse.json();
+    assert.equal(summaryBody.success, true);
+    assert.deepEqual(summaryBody.aiMessages.map(item => item.sender), ['Alice']);
+    assert.equal(summaryBody.aiMessages[0].dispatchKind, 'summary');
+    assert.match(summaryBody.aiMessages[0].text, /总结/);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.session.discussionMode, 'peer');
+    assert.equal(historyResponse.body.session.discussionState, 'paused');
+    assert.equal(historyResponse.body.messages.at(-1).dispatchKind, 'summary');
+    assert.match(historyResponse.body.messages.at(-1).text, /总结/);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('生成总结不会隐式恢复普通链式传播', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-summary-no-chain-'));
+  createManualSummaryClaudeScript(tempDir, {
+    summaryText: 'Alice 总结后尝试 @@Bob 继续讨论，但不应恢复普通链式传播。',
+    summaryInvokeAgents: ['Bob']
+  });
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'peer summary no chain discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          discussionMode: 'peer'
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请先发表看法' }
+    });
+    assert.equal(chatResponse.status, 200);
+
+    const summaryResponse = await fixture.request('/api/chat-summary', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(summaryResponse.status, 200);
+    assert.deepEqual(summaryResponse.body.aiMessages.map(item => item.sender), ['Alice']);
+    assert.equal(summaryResponse.body.aiMessages[0].dispatchKind, 'summary');
+    assert.deepEqual(summaryResponse.body.aiMessages[0].invokeAgents, ['Bob']);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.deepEqual(historyResponse.body.messages.map(item => item.sender), ['用户', 'Alice', 'Alice']);
+    assert.equal(historyResponse.body.session.discussionState, 'paused');
+    assert.equal(historyResponse.body.session.pendingAgentTasks, undefined);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
