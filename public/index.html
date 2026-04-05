@@ -2078,7 +2078,7 @@
     function renderMessages() {
       let markup = renderMessageIntro();
 
-      if (history.length === 0 && enabledAgents.size === 0) {
+      if (history.length === 0 && enabledAgents.size === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {
         messagesEl.innerHTML = markup + renderEmptyState();
         syncMessageChromeState();
         return;
