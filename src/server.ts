@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
-import { Message, AIAgentConfig, ChatRequest, RichBlock, AgentInvokeResult, DiscussionMode, DiscussionState } from './types';
+import { Message, AIAgentConfig, ChatRequest, RichBlock, AgentInvokeResult, DiscussionMode, DiscussionState, AgentDispatchKind } from './types';
 import { AgentManager } from './agent-manager';
 import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
 import { loadGroupStore } from './group-store';
@@ -78,7 +78,7 @@ interface AgentDispatchTask {
 }
 
 interface PendingAgentDispatchTask extends AgentDispatchTask {
-  dispatchKind: 'initial' | 'chained';
+  dispatchKind: AgentDispatchKind;
 }
 
 // ============================================
@@ -253,6 +253,18 @@ function normalizeSessionDiscussionSettings(source?: Pick<UserChatSession, 'disc
     discussionMode: normalizeDiscussionMode(source?.discussionMode),
     discussionState: normalizeDiscussionState(source?.discussionState)
   };
+}
+
+function normalizeDispatchKind(value: unknown): AgentDispatchKind {
+  if (value === 'explicit_chained' || value === 'implicit_chained' || value === 'summary' || value === 'initial') {
+    return value;
+  }
+
+  return value === 'chained' ? 'explicit_chained' : 'initial';
+}
+
+function isChainedDispatchKind(dispatchKind: AgentDispatchKind): boolean {
+  return dispatchKind === 'explicit_chained' || dispatchKind === 'implicit_chained';
 }
 
 function applyNormalizedSessionChainSettings<T extends UserChatSession>(session: T): T & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent'>> {
@@ -456,7 +468,7 @@ async function hydrateChatSessionsFromRedis(): Promise<void> {
                 agentName: task.agentName,
                 prompt: task.prompt,
                 includeHistory: task.includeHistory !== false,
-                dispatchKind: task.dispatchKind === 'chained' ? 'chained' : 'initial'
+                dispatchKind: normalizeDispatchKind(task.dispatchKind)
               }))
             : undefined,
           pendingVisibleMessages: Array.isArray(session.pendingVisibleMessages)
@@ -1065,13 +1077,17 @@ async function executeAgentTurn(params: {
 }): Promise<{ aiMessages: Message[]; pendingTasks: PendingAgentDispatchTask[] }> {
   const { userKey, session, initialTasks, stream, onThinking, onTextDelta, onMessage, shouldContinue } = params;
   const queue: PendingAgentDispatchTask[] = Array.isArray(params.pendingTasks)
-    ? params.pendingTasks.map(task => ({ ...task }))
+    ? params.pendingTasks.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) }))
     : initialTasks.map(task => ({ ...task, dispatchKind: 'initial' }));
   const aiMessages: Message[] = [];
   const callCounts = new Map<string, number>();
   const { agentChainMaxHops, agentChainMaxCallsPerAgent } = normalizeSessionChainSettings(session);
+  const { discussionMode } = normalizeSessionDiscussionSettings(session);
   let chainedCalls = 0;
   let streamStopped = false;
+  let chainLimitReached = false;
+  let sawVisibleMessage = false;
+  let lastVisibleMessageQueuedExplicitContinuation = false;
 
   const canContinue = () => shouldContinue ? shouldContinue() : true;
 
@@ -1083,7 +1099,8 @@ async function executeAgentTurn(params: {
     }
 
     const task = queue.shift()!;
-    if (task.dispatchKind === 'chained' && chainedCalls >= agentChainMaxHops) {
+    if (isChainedDispatchKind(task.dispatchKind) && chainedCalls >= agentChainMaxHops) {
+      chainLimitReached = true;
       appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=chain_stop reason=max_hops hops=${agentChainMaxHops}`);
       break;
     }
@@ -1095,7 +1112,7 @@ async function executeAgentTurn(params: {
     }
 
     callCounts.set(task.agentName, currentCalls + 1);
-    if (task.dispatchKind === 'chained') {
+    if (isChainedDispatchKind(task.dispatchKind)) {
       chainedCalls += 1;
     }
     onThinking?.(task.agentName);
@@ -1136,8 +1153,12 @@ async function executeAgentTurn(params: {
         ...rawMessage,
         text: displayText,
         mentions: referenceMentions.length > 0 ? referenceMentions : undefined,
-        invokeAgents: chainedMentions.length > 0 ? chainedMentions : undefined
+        invokeAgents: chainedMentions.length > 0 ? chainedMentions : undefined,
+        dispatchKind: task.dispatchKind
       };
+
+      sawVisibleMessage = true;
+      lastVisibleMessageQueuedExplicitContinuation = chainedMentions.length > 0;
 
       session.history.push(message);
       aiMessages.push(message);
@@ -1149,7 +1170,7 @@ async function executeAgentTurn(params: {
       const pendingMentionsToQueue: PendingAgentDispatchTask[] = [];
 
       for (const mention of chainedMentions) {
-        const queuedChainedCalls = queue.filter(item => item.dispatchKind === 'chained').length;
+        const queuedChainedCalls = queue.filter(item => isChainedDispatchKind(item.dispatchKind)).length;
         if (chainedCalls + queuedChainedCalls + pendingMentionsToQueue.length >= agentChainMaxHops) {
           break;
         }
@@ -1166,7 +1187,7 @@ async function executeAgentTurn(params: {
           agentName: mention,
           prompt: message.text || '',
           includeHistory: true,
-          dispatchKind: 'chained'
+          dispatchKind: 'explicit_chained'
         });
       }
 
@@ -1189,9 +1210,19 @@ async function executeAgentTurn(params: {
     }
   }
 
+  if (!streamStopped && discussionMode === 'peer' && sawVisibleMessage && !chainLimitReached) {
+    if (lastVisibleMessageQueuedExplicitContinuation) {
+      session.discussionState = 'active';
+    } else {
+      session.discussionState = 'paused';
+      appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=discussion_pause reason=no_explicit_continuation mode=peer`);
+    }
+    touchSession(session);
+  }
+
   return {
     aiMessages,
-    pendingTasks: streamStopped ? queue.map(task => ({ ...task })) : []
+    pendingTasks: streamStopped ? queue.map(task => ({ ...task, dispatchKind: normalizeDispatchKind(task.dispatchKind) })) : []
   };
 }
 
@@ -1799,6 +1830,7 @@ async function handleSendMessage(req: http.IncomingMessage, res: http.ServerResp
     const sessionId = `${userKey}::${session.id}`;
     const userHistory = session.history;
     const currentAgent = expireDisabledCurrentAgent(userKey, session);
+    session.discussionState = 'active';
     session.pendingAgentTasks = undefined;
     session.pendingVisibleMessages = undefined;
 
@@ -1916,6 +1948,7 @@ async function handleChatStream(req: http.IncomingMessage, res: http.ServerRespo
     const sessionId = `${userKey}::${session.id}`;
     const userHistory = session.history;
     const currentAgent = expireDisabledCurrentAgent(userKey, session);
+    session.discussionState = 'active';
     session.pendingAgentTasks = undefined;
     session.pendingVisibleMessages = undefined;
 

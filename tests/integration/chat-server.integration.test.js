@@ -57,6 +57,91 @@ function writeApiConnectionStore(tempDir, apiConnections) {
   return filePath;
 }
 
+
+function createExplicitThenStopClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
+const apiUrl = process.env.BOT_ROOM_API_URL || '';
+const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+
+async function post(content, invokeAgents) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content, invokeAgents })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+(async () => {
+  if (agentName === 'Alice') {
+    await post('请 @@Bob 接力补充结论', ['Bob']);
+  } else if (agentName === 'Bob') {
+    await post('Bob 已补充结论，本轮不再继续');
+  } else {
+    await post(\`\${agentName} 已完成\`);
+  }
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
+function createSingleReplyClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
+const apiUrl = process.env.BOT_ROOM_API_URL || '';
+const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+
+async function post(content, invokeAgents) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-bot-room-callback-token': token,
+      'x-bot-room-session-id': sessionId,
+      'x-bot-room-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content, invokeAgents })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+(async () => {
+  await post(\`\${agentName} 已给出阶段性意见，本轮不继续点名\`);
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
 function createCyclingClaudeScript(tempDir) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
@@ -1754,6 +1839,94 @@ EOF
     assert.ok(messages.some(msg => msg.includes('stage=start')));
     assert.ok(messages.some(msg => msg.includes('stage=cli_done')));
     assert.ok(!messages.some(msg => msg.includes('stage=empty_visible_message')));
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+
+test('peer 模式下无显式继续对象时会将讨论标记为 paused', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-paused-'));
+  createSingleReplyClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'peer paused discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          discussionMode: 'peer'
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请先发表看法' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.session.discussionMode, 'peer');
+    assert.equal(historyResponse.body.session.discussionState, 'paused');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('classic 模式下原有链式传播行为保持不变', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-classic-chain-'));
+  createExplicitThenStopClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'classic chain discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请开始讨论' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob']);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.session.discussionMode, 'classic');
+    assert.equal(historyResponse.body.session.discussionState, 'active');
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
