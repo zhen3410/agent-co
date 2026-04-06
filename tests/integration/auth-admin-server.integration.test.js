@@ -1,7 +1,7 @@
 const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
-const { mkdtempSync, rmSync, writeFileSync } = require('node:fs');
+const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
@@ -1114,4 +1114,92 @@ test('agent 配置会拒绝非正整数 apiMaxTokens', () => {
   }));
 
   assert.equal(error, 'apiMaxTokens 必须是正整数');
+});
+
+
+test('user admin service 通过 store 保持用户名规范化与凭据校验一致', () => {
+  const { createUserStore } = require('../../dist/admin/infrastructure/user-store.js');
+  const { createUserAdminService } = require('../../dist/admin/application/user-admin-service.js');
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-user-store-'));
+  const usersFile = join(tempDir, 'users.json');
+
+  try {
+    const userStore = createUserStore({
+      dataFile: usersFile,
+      defaultUsername: 'Admin',
+      defaultPassword: 'Admin1234!@#'
+    });
+    const service = createUserAdminService({ userStore });
+
+    const created = service.createUser(' Mixed.User ', 'Password123!');
+    assert.equal(created.username, 'mixed.user');
+
+    const listed = service.listUsers();
+    assert.equal(listed.some(user => user.username === 'mixed.user'), true);
+
+    const verified = service.verifyCredentials(' MIXED.USER ', 'Password123!');
+    assert.ok(verified);
+    assert.equal(verified.username, 'mixed.user');
+
+    const denied = service.verifyCredentials('mixed.user', 'wrong-password');
+    assert.equal(denied, null);
+
+    const persisted = JSON.parse(readFileSync(usersFile, 'utf-8'));
+    assert.equal(persisted.users.some(user => user.username === 'mixed.user'), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('agent admin service 支持延迟生效、显式应用并在删除时清理分组引用', () => {
+  const { createAgentAdminService, parseApplyMode } = require('../../dist/admin/application/agent-admin-service.js');
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-service-'));
+  const agentsFile = join(tempDir, 'agents.json');
+  const groupsFile = join(tempDir, 'groups.json');
+  const connectionsFile = join(tempDir, 'api-connections.json');
+
+  writeFileSync(groupsFile, JSON.stringify({
+    groups: [
+      { id: 'core', name: '核心组', icon: '🧩', agentNames: ['Codex架构师'] }
+    ],
+    updatedAt: Date.now()
+  }, null, 2), 'utf-8');
+
+  try {
+    const service = createAgentAdminService({
+      agentDataFile: agentsFile,
+      groupDataFile: groupsFile,
+      modelConnectionDataFile: connectionsFile
+    });
+
+    assert.equal(parseApplyMode('after_chat'), 'after_chat');
+    assert.equal(parseApplyMode('unexpected'), 'immediate');
+
+    const pending = service.createAgent({
+      applyMode: 'after_chat',
+      agent: {
+        name: 'Planner',
+        avatar: '🗂️',
+        color: '#7c3aed',
+        personality: '擅长整理需求和给出计划。'
+      }
+    });
+    assert.equal(pending.applyMode, 'after_chat');
+
+    const beforeApply = service.listAgents();
+    assert.equal(beforeApply.agents.some(agent => agent.name === 'Planner'), false);
+    assert.equal(beforeApply.pendingAgents.some(agent => agent.name === 'Planner'), true);
+
+    const applied = service.applyPendingAgents();
+    assert.equal(applied.agents.some(agent => agent.name === 'Planner'), true);
+
+    const deleted = service.deleteAgent('Codex架构师', 'immediate');
+    assert.equal(deleted.name, 'Codex架构师');
+
+    const groups = JSON.parse(readFileSync(groupsFile, 'utf-8'));
+    assert.deepEqual(groups.groups, []);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
