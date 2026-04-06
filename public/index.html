@@ -446,6 +446,7 @@
               <button className="context-tab is-active" data-tab="sessions" onClick={() => window.setContextTab && window.setContextTab('sessions')}>会话</button>
               <button className="context-tab" data-tab="agents" onClick={() => window.setContextTab && window.setContextTab('agents')}>智能体</button>
               <button className="context-tab" data-tab="workdir" onClick={() => window.setContextTab && window.setContextTab('workdir')}>目录</button>
+              <button className="context-tab" data-tab="logs" onClick={() => window.setContextTab && window.setContextTab('logs')}>日志</button>
             </div>
             <div className="mobile-control-sheet__body">
               <section className="context-section context-section--mobile" data-section="sessions">
@@ -462,6 +463,12 @@
               </section>
               <section className="context-section context-section--mobile" data-section="workdir">
                 <div className="mobile-workdir-mirror" id="mobileWorkdirMirror"></div>
+              </section>
+              <section className="context-section context-section--mobile" data-section="logs">
+                <div className="mobile-log-links">
+                  <button className="btn-session" onClick={() => window.open('/verbose-logs.html', '_blank')}>CLI日志</button>
+                  <button className="btn-session" onClick={() => window.open('/deps-monitor.html', '_blank')}>运维日志</button>
+                </div>
               </section>
             </div>
           </aside>

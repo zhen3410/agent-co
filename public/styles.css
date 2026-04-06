@@ -1902,6 +1902,17 @@ body.context-panel-open .main-layout {
   font-size: 12px;
 }
 
+.mobile-log-links {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mobile-log-links .btn-session {
+  width: 100%;
+  justify-content: center;
+}
+
 .mobile-composer-drawer-backdrop {
   position: fixed;
   inset: 0;
