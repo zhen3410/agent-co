@@ -5,9 +5,12 @@
  */
 
 import * as path from 'path';
-import { createAuthAdminServer } from './admin/bootstrap/create-auth-admin-server';
 import { createAgentAdminService } from './admin/application/agent-admin-service';
+import { createGroupAdminService } from './admin/application/group-admin-service';
+import { createModelConnectionAdminService } from './admin/application/model-connection-admin-service';
+import { createSystemAdminService } from './admin/application/system-admin-service';
 import { createUserAdminService } from './admin/application/user-admin-service';
+import { createAuthAdminServer } from './admin/bootstrap/create-auth-admin-server';
 import { createUserStore } from './admin/infrastructure/user-store';
 import { createAuthAdminRuntime, startAuthAdminServer } from './admin/runtime/auth-admin-runtime';
 
@@ -42,12 +45,22 @@ const agentAdminService = createAgentAdminService({
   groupDataFile: GROUP_DATA_FILE,
   modelConnectionDataFile: MODEL_CONNECTION_DATA_FILE
 });
+const groupAdminService = createGroupAdminService({
+  groupDataFile: GROUP_DATA_FILE,
+  agentDataFile: AGENT_DATA_FILE
+});
+const modelConnectionAdminService = createModelConnectionAdminService({
+  modelConnectionDataFile: MODEL_CONNECTION_DATA_FILE,
+  agentDataFile: AGENT_DATA_FILE
+});
+const systemAdminService = createSystemAdminService();
 const server = createAuthAdminServer({
   runtime,
   userAdminService,
   agentAdminService,
-  modelConnectionDataFile: MODEL_CONNECTION_DATA_FILE,
-  groupDataFile: GROUP_DATA_FILE
+  groupAdminService,
+  modelConnectionAdminService,
+  systemAdminService
 });
 
 void startAuthAdminServer(server, runtime).catch((error: unknown) => {

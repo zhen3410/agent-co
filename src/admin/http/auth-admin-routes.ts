@@ -5,7 +5,7 @@ import { sendHttpError } from '../../shared/http/errors';
 import { sendJson } from '../../shared/http/json';
 import { AgentAdminService, AgentAdminServiceError, parseApplyMode } from '../application/agent-admin-service';
 import { UserAdminService, UserAdminServiceError } from '../application/user-admin-service';
-import { normalizeAdminToken } from '../runtime/auth-admin-runtime';
+import { requireAdmin } from './admin-auth';
 
 interface AgentPathMatch {
   name: string;
@@ -16,16 +16,6 @@ export interface AuthAdminRoutesDependencies {
   adminToken: string;
   userAdminService: UserAdminService;
   agentAdminService: AgentAdminService;
-}
-
-function requireAdmin(req: http.IncomingMessage, res: http.ServerResponse, adminToken: string): boolean {
-  const token = req.headers['x-admin-token'];
-  const normalizedToken = typeof token === 'string' ? normalizeAdminToken(token) : '';
-  if (!normalizedToken || normalizedToken !== adminToken) {
-    sendJson(res, 401, { error: '未授权的管理请求' });
-    return false;
-  }
-  return true;
 }
 
 function parseAgentPath(pathname: string): AgentPathMatch | null {
@@ -149,8 +139,7 @@ export async function handleAuthAdminRoutes(
     if (!requireAdmin(req, res, deps.adminToken)) {
       return true;
     }
-    const result = deps.agentAdminService.listAgents();
-    sendJson(res, 200, result);
+    sendJson(res, 200, deps.agentAdminService.listAgents());
     return true;
   }
 
@@ -183,13 +172,17 @@ export async function handleAuthAdminRoutes(
     if (!requireAdmin(req, res, deps.adminToken)) {
       return true;
     }
-    const result = deps.agentAdminService.applyPendingAgents();
-    sendJson(res, 200, result);
+    sendJson(res, 200, deps.agentAdminService.applyPendingAgents());
     return true;
   }
 
   const agentPath = parseAgentPath(pathname);
   if (!agentPath) {
+    if (pathname.startsWith('/api/users') || pathname.startsWith('/api/agents')) {
+      if (!requireAdmin(req, res, deps.adminToken)) {
+        return true;
+      }
+    }
     return false;
   }
 
@@ -255,8 +248,7 @@ export async function handleAuthAdminRoutes(
 
   if (method === 'GET' && agentPath.action === 'template') {
     try {
-      const result = deps.agentAdminService.getAgentPromptTemplate(agentPath.name);
-      sendJson(res, 200, result);
+      sendJson(res, 200, deps.agentAdminService.getAgentPromptTemplate(agentPath.name));
     } catch (error) {
       if (error instanceof AgentAdminServiceError) {
         sendJson(res, error.statusCode, { error: error.message });
@@ -279,12 +271,6 @@ export async function handleAuthAdminRoutes(
       }
     }
     return true;
-  }
-
-  if (pathname.startsWith('/api/users') || pathname.startsWith('/api/agents')) {
-    if (!requireAdmin(req, res, deps.adminToken)) {
-      return true;
-    }
   }
 
   return false;
