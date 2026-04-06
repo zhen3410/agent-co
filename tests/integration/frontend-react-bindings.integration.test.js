@@ -216,9 +216,10 @@ test('React 页面会为用户与 AI 回复统一使用 Markdown 渲染模块，
   ], 'missing shared markdown renderer contract');
   assertContainsAll(server, [
     "requestUrl.pathname === '/chat-markdown.js'",
-    "serveStatic(req, res, 'chat-markdown.js', 'application/javascript')",
+    "serveStaticFile(res, {",
     "requestUrl.pathname === '/chat-composer.js'",
-    "serveStatic(req, res, 'chat-composer.js', 'application/javascript')"
+    "filePath: 'chat-markdown.js'",
+    "filePath: 'chat-composer.js'"
   ], 'missing static asset routes for shared markdown/composer scripts');
   assert.ok(!html.includes('${highlightMentions(renderPlainText(msg.text || \'\'))}'), 'should stop rendering user messages as plain text');
   assert.ok(!html.includes('function renderMarkdown(text) {'), 'should move markdown rendering out of index.html');
