@@ -96,6 +96,25 @@ test('server.ts 保持为组合根，不再承载 agent store 可变逻辑', () 
   assert.equal(serverSource.includes('saveAgentStore('), false);
 });
 
+test('server.ts 保持为精简组合根，不再承载安全检查和启动横幅逻辑', () => {
+  const serverSource = readFileSync(join(__dirname, '..', '..', 'src', 'server.ts'), 'utf8');
+
+  assert.equal(serverSource.includes('function performSecurityChecks'), false);
+  assert.equal(serverSource.includes('performSecurityChecks();'), false);
+  assert.equal(serverSource.includes('🚀 多 AI 智能体聊天室已启动'), false);
+  assert.equal(serverSource.includes('API 端点:'), false);
+});
+
+test('chat 应用服务对外接口不再直接耦合 IncomingMessage', () => {
+  const authServiceSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'application', 'auth-service.ts'), 'utf8');
+  const sessionServiceSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'application', 'session-service.ts'), 'utf8');
+  const chatServiceSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'application', 'chat-service.ts'), 'utf8');
+
+  assert.equal(authServiceSource.includes('IncomingMessage'), false);
+  assert.equal(sessionServiceSource.includes('IncomingMessage'), false);
+  assert.equal(chatServiceSource.includes('IncomingMessage'), false);
+});
+
 async function waitForChatServer(port, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
   let lastError;

@@ -10,6 +10,7 @@ import { ChatService } from '../application/chat-service';
 import { SessionService } from '../application/session-service';
 import { ChatRuntime } from '../runtime/chat-runtime';
 import { AgentManager } from '../../agent-manager';
+import { createAuthRequestContext } from '../http/request-context';
 
 export interface CreateChatServerDependencies {
   authService: AuthService;
@@ -59,12 +60,15 @@ export function createChatServer(deps: CreateChatServerDependencies): { server: 
     }
 
     const requestUrl = new URL(url, `http://${req.headers.host || '127.0.0.1'}`);
-    applySetCookies(res, deps.authService.ensureVisitorIdentity(req).setCookies);
+    const authContext = createAuthRequestContext(req);
+    applySetCookies(res, deps.authService.ensureVisitorIdentity(authContext).setCookies);
 
-    if (deps.authService.requiresAuthentication(requestUrl.pathname) && !deps.authService.isAuthenticated(req)) {
+    if (deps.authService.requiresAuthentication(requestUrl.pathname) && !deps.authService.isAuthenticated(authContext)) {
       sendJson(res, 401, { error: '未授权，请先登录' });
       return;
     }
+
+    const userKey = deps.authService.getUserKey(authContext);
 
     if (await handleChatRoutes(req, res, requestUrl, {
       chatService: deps.chatService,
@@ -72,7 +76,8 @@ export function createChatServer(deps: CreateChatServerDependencies): { server: 
       agentManager: deps.agentManager,
       rateLimitMaxRequests: deps.rateLimitMaxRequests,
       groupDataFile: deps.groupDataFile,
-      runtime: deps.runtime
+      runtime: deps.runtime,
+      userKey
     })) {
       return;
     }

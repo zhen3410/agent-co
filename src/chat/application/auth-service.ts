@@ -1,6 +1,5 @@
-import * as http from 'http';
 import * as crypto from 'crypto';
-import { checkRateLimit, getClientIP } from '../../rate-limiter';
+import { checkRateLimit } from '../../rate-limiter';
 import { AuthAdminClient } from '../infrastructure/auth-admin-client';
 import { ChatRuntime } from '../runtime/chat-runtime';
 
@@ -50,26 +49,19 @@ export interface AuthStatusResult {
   setCookies: string[];
 }
 
-export interface AuthService {
-  login(req: http.IncomingMessage, username: string, password: string): Promise<LoginResult>;
-  logout(req: http.IncomingMessage): LogoutResult;
-  getAuthStatus(req: http.IncomingMessage): AuthStatusResult;
-  ensureVisitorIdentity(req: http.IncomingMessage): VisitorIdentityResult;
-  isAuthenticated(req: http.IncomingMessage): boolean;
-  requiresAuthentication(pathname: string): boolean;
-  getUserKeyFromRequest(req: http.IncomingMessage): string;
+export interface AuthRequestContext {
+  cookies: Record<string, string>;
+  clientIp: string;
 }
 
-function parseCookies(req: http.IncomingMessage): Record<string, string> {
-  const header = req.headers.cookie;
-  if (!header) return {};
-
-  const entries = header.split(';').map(part => part.trim().split('='));
-  const cookieMap: Record<string, string> = {};
-  entries.forEach(([key, value]) => {
-    if (key && value) cookieMap[key] = decodeURIComponent(value);
-  });
-  return cookieMap;
+export interface AuthService {
+  login(context: AuthRequestContext, username: string, password: string): Promise<LoginResult>;
+  logout(context: AuthRequestContext): LogoutResult;
+  getAuthStatus(context: AuthRequestContext): AuthStatusResult;
+  ensureVisitorIdentity(context: AuthRequestContext): VisitorIdentityResult;
+  isAuthenticated(context: AuthRequestContext): boolean;
+  requiresAuthentication(pathname: string): boolean;
+  getUserKey(context: AuthRequestContext): string;
 }
 
 function buildUserKey(username: string): string {
@@ -129,16 +121,15 @@ export function createAuthService(
     ].join('; ');
   }
 
-  function getChatVisitorIdFromRequest(req: http.IncomingMessage): string | null {
-    const cookies = parseCookies(req);
-    const visitorId = cookies[config.visitorCookieName];
+  function getChatVisitorId(context: AuthRequestContext): string | null {
+    const visitorId = context.cookies[config.visitorCookieName];
     if (!visitorId) return null;
     if (!/^[a-f0-9]{32}$/i.test(visitorId)) return null;
     return visitorId.toLowerCase();
   }
 
-  function ensureVisitorIdentity(req: http.IncomingMessage): VisitorIdentityResult {
-    const existing = getChatVisitorIdFromRequest(req);
+  function ensureVisitorIdentity(context: AuthRequestContext): VisitorIdentityResult {
+    const existing = getChatVisitorId(context);
     if (existing) {
       return { visitorId: existing, setCookies: [] };
     }
@@ -150,11 +141,10 @@ export function createAuthService(
     };
   }
 
-  function isAuthenticated(req: http.IncomingMessage): boolean {
+  function isAuthenticated(context: AuthRequestContext): boolean {
     if (!config.authEnabled) return true;
 
-    const cookies = parseCookies(req);
-    const token = cookies[config.sessionCookieName];
+    const token = context.cookies[config.sessionCookieName];
     if (!token) return false;
 
     const session = authSessions.get(token);
@@ -168,10 +158,9 @@ export function createAuthService(
     return true;
   }
 
-  function getUserKeyFromRequest(req: http.IncomingMessage): string {
-    const visitorId = getChatVisitorIdFromRequest(req);
-    const cookies = parseCookies(req);
-    const token = cookies[config.sessionCookieName];
+  function getUserKey(context: AuthRequestContext): string {
+    const visitorId = getChatVisitorId(context);
+    const token = context.cookies[config.sessionCookieName];
     if (token) {
       const session = authSessions.get(token);
       if (session && Date.now() <= session.expiresAt) {
@@ -181,7 +170,7 @@ export function createAuthService(
     if (visitorId) {
       return `visitor:${visitorId}`;
     }
-    return `ip:${getClientIP(req)}`;
+    return `ip:${context.clientIp}`;
   }
 
   function requiresAuthentication(pathname: string): boolean {
@@ -189,7 +178,7 @@ export function createAuthService(
     return pathname.startsWith('/api/') && !publicPaths.has(pathname);
   }
 
-  async function login(req: http.IncomingMessage, usernameValue: string, password: string): Promise<LoginResult> {
+  async function login(context: AuthRequestContext, usernameValue: string, password: string): Promise<LoginResult> {
     if (!config.authEnabled) {
       return {
         success: true,
@@ -198,7 +187,7 @@ export function createAuthService(
       };
     }
 
-    const clientIP = getClientIP(req);
+    const clientIP = context.clientIp;
     const loginLimit = checkRateLimit(`login:${clientIP}`, config.loginRateLimitMax);
     if (!loginLimit.allowed) {
       throw new AuthServiceError('登录尝试过于频繁，请稍后再试', 429, Math.ceil((loginLimit.resetAt - Date.now()) / 1000));
@@ -214,9 +203,8 @@ export function createAuthService(
       throw new AuthServiceError(verifyResult.error || '用户名或密码错误', 401);
     }
 
-    const cookies = parseCookies(req);
-    const existingToken = cookies[config.sessionCookieName];
-    const visitorIdentity = ensureVisitorIdentity(req);
+    const existingToken = context.cookies[config.sessionCookieName];
+    const visitorIdentity = ensureVisitorIdentity(context);
     const token = issueSessionToken();
     authSessions.set(token, {
       username,
@@ -232,10 +220,9 @@ export function createAuthService(
     };
   }
 
-  function logout(req: http.IncomingMessage): LogoutResult {
-    const cookies = parseCookies(req);
-    const token = cookies[config.sessionCookieName];
-    const visitorIdentity = ensureVisitorIdentity(req);
+  function logout(context: AuthRequestContext): LogoutResult {
+    const token = context.cookies[config.sessionCookieName];
+    const visitorIdentity = ensureVisitorIdentity(context);
     if (token) {
       const session = authSessions.get(token);
       if (session) {
@@ -250,11 +237,11 @@ export function createAuthService(
     };
   }
 
-  function getAuthStatus(req: http.IncomingMessage): AuthStatusResult {
-    const visitorIdentity = ensureVisitorIdentity(req);
+  function getAuthStatus(context: AuthRequestContext): AuthStatusResult {
+    const visitorIdentity = ensureVisitorIdentity(context);
     return {
       authEnabled: config.authEnabled,
-      authenticated: isAuthenticated(req),
+      authenticated: isAuthenticated(context),
       setCookies: visitorIdentity.setCookies
     };
   }
@@ -266,6 +253,6 @@ export function createAuthService(
     ensureVisitorIdentity,
     isAuthenticated,
     requiresAuthentication,
-    getUserKeyFromRequest
+    getUserKey
   };
 }

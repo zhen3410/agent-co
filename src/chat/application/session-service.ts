@@ -1,4 +1,3 @@
-import * as http from 'http';
 import { DiscussionMode, DiscussionState, Message } from '../../types';
 import { ChatRuntime, UserChatSession, PendingAgentDispatchTask, SessionChainPatch } from '../runtime/chat-runtime';
 
@@ -14,23 +13,26 @@ export class SessionServiceError extends Error {
 
 export interface SessionServiceDependencies {
   runtime: ChatRuntime;
-  getUserKeyFromRequest(req: http.IncomingMessage): string;
   getAgentNames(): string[];
   hasAgent(agentName: string): boolean;
 }
 
+export interface SessionUserContext {
+  userKey: string;
+}
+
 export interface SessionService {
-  resolveChatSession(req: http.IncomingMessage): { userKey: string; session: UserChatSession };
-  getHistory(req: http.IncomingMessage, agents: unknown[]): { messages: Message[]; agents: unknown[]; currentAgent: string | null; enabledAgents: string[]; agentWorkdirs: Record<string, string>; session: ReturnType<ChatRuntime['buildDetailedSessionResponse']>; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']>; activeSessionId: string };
-  clearHistory(req: http.IncomingMessage): { success: true };
-  createChatSession(req: http.IncomingMessage, name?: string): { success: true; session: ReturnType<ChatRuntime['buildSessionResponse']>; enabledAgents: string[]; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']>; activeSessionId: string };
-  selectChatSession(req: http.IncomingMessage, sessionId: string): { success: true; messages: Message[]; currentAgent: string | null; enabledAgents: string[]; session: ReturnType<ChatRuntime['buildDetailedSessionResponse']>; activeSessionId: string; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']> };
-  renameChatSession(req: http.IncomingMessage, sessionId: string, name: string): { success: true; session: ReturnType<ChatRuntime['buildSessionResponse']>; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']> };
-  deleteChatSession(req: http.IncomingMessage, sessionId: string): { success: true; activeSessionId: string; messages: Message[]; currentAgent: string | null; enabledAgents: string[]; session: ReturnType<ChatRuntime['buildDetailedSessionResponse']>; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']> };
-  updateChatSession(req: http.IncomingMessage, sessionId: string, patch: unknown): { success: true; session: ReturnType<ChatRuntime['buildSessionResponse']>; enabledAgents: string[]; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']>; activeSessionId: string };
-  setSessionAgent(req: http.IncomingMessage, payload: { sessionId?: string; agentName: string; enabled: boolean }): { success: true; enabledAgents: string[]; currentAgentWillExpire: boolean };
-  switchAgent(req: http.IncomingMessage, agentName?: string | null): { success: true; currentAgent: string | null };
-  setWorkdir(req: http.IncomingMessage, agentName: string, workdir: string | null): { success: true; workdir: string };
+  resolveChatSession(context: SessionUserContext): { userKey: string; session: UserChatSession };
+  getHistory(context: SessionUserContext, agents: unknown[]): { messages: Message[]; agents: unknown[]; currentAgent: string | null; enabledAgents: string[]; agentWorkdirs: Record<string, string>; session: ReturnType<ChatRuntime['buildDetailedSessionResponse']>; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']>; activeSessionId: string };
+  clearHistory(context: SessionUserContext): { success: true };
+  createChatSession(context: SessionUserContext, name?: string): { success: true; session: ReturnType<ChatRuntime['buildSessionResponse']>; enabledAgents: string[]; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']>; activeSessionId: string };
+  selectChatSession(context: SessionUserContext, sessionId: string): { success: true; messages: Message[]; currentAgent: string | null; enabledAgents: string[]; session: ReturnType<ChatRuntime['buildDetailedSessionResponse']>; activeSessionId: string; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']> };
+  renameChatSession(context: SessionUserContext, sessionId: string, name: string): { success: true; session: ReturnType<ChatRuntime['buildSessionResponse']>; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']> };
+  deleteChatSession(context: SessionUserContext, sessionId: string): { success: true; activeSessionId: string; messages: Message[]; currentAgent: string | null; enabledAgents: string[]; session: ReturnType<ChatRuntime['buildDetailedSessionResponse']>; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']> };
+  updateChatSession(context: SessionUserContext, sessionId: string, patch: unknown): { success: true; session: ReturnType<ChatRuntime['buildSessionResponse']>; enabledAgents: string[]; chatSessions: ReturnType<ChatRuntime['getSessionSummaries']>; activeSessionId: string };
+  setSessionAgent(context: SessionUserContext, payload: { sessionId?: string; agentName: string; enabled: boolean }): { success: true; enabledAgents: string[]; currentAgentWillExpire: boolean };
+  switchAgent(context: SessionUserContext, agentName?: string | null): { success: true; currentAgent: string | null };
+  setWorkdir(context: SessionUserContext, agentName: string, workdir: string | null): { success: true; workdir: string };
   getSessionEnabledAgents(session: UserChatSession): string[];
   isAgentEnabledForSession(session: UserChatSession, agentName: string): boolean;
   expireDisabledCurrentAgent(userKey: string, session: UserChatSession): string | null;
@@ -49,13 +51,13 @@ export interface SessionService {
 export function createSessionService(deps: SessionServiceDependencies): SessionService {
   const { runtime } = deps;
 
-  function resolveChatSession(req: http.IncomingMessage): { userKey: string; session: UserChatSession } {
-    const userKey = deps.getUserKeyFromRequest(req);
+  function resolveChatSession(context: SessionUserContext): { userKey: string; session: UserChatSession } {
+    const { userKey } = context;
     return { userKey, session: runtime.resolveActiveSession(userKey) };
   }
 
-  function getHistory(req: http.IncomingMessage, agents: unknown[]) {
-    const { userKey, session } = resolveChatSession(req);
+  function getHistory(context: SessionUserContext, agents: unknown[]) {
+    const { userKey, session } = resolveChatSession(context);
     const normalizedSession = runtime.buildDetailedSessionResponse(session);
 
     return {
@@ -70,14 +72,14 @@ export function createSessionService(deps: SessionServiceDependencies): SessionS
     };
   }
 
-  function clearHistory(req: http.IncomingMessage): { success: true } {
-    const { userKey, session } = resolveChatSession(req);
+  function clearHistory(context: SessionUserContext): { success: true } {
+    const { userKey, session } = resolveChatSession(context);
     runtime.clearUserHistory(userKey, session.id);
     return { success: true };
   }
 
-  function createChatSession(req: http.IncomingMessage, name?: string) {
-    const userKey = deps.getUserKeyFromRequest(req);
+  function createChatSession(context: SessionUserContext, name?: string) {
+    const { userKey } = context;
     const session = runtime.buildSessionResponse(runtime.createChatSessionForUser(userKey, name));
     return {
       success: true as const,
@@ -88,8 +90,8 @@ export function createSessionService(deps: SessionServiceDependencies): SessionS
     };
   }
 
-  function selectChatSession(req: http.IncomingMessage, sessionId: string) {
-    const userKey = deps.getUserKeyFromRequest(req);
+  function selectChatSession(context: SessionUserContext, sessionId: string) {
+    const { userKey } = context;
     if (!sessionId || !runtime.setActiveChatSession(userKey, sessionId)) {
       throw new SessionServiceError('会话不存在', 400);
     }
@@ -106,8 +108,8 @@ export function createSessionService(deps: SessionServiceDependencies): SessionS
     };
   }
 
-  function renameChatSession(req: http.IncomingMessage, sessionId: string, name: string) {
-    const userKey = deps.getUserKeyFromRequest(req);
+  function renameChatSession(context: SessionUserContext, sessionId: string, name: string) {
+    const { userKey } = context;
     const renamed = runtime.renameChatSessionForUser(userKey, sessionId, name);
     if (!renamed) {
       throw new SessionServiceError('会话不存在', 400);
@@ -120,8 +122,8 @@ export function createSessionService(deps: SessionServiceDependencies): SessionS
     };
   }
 
-  function deleteChatSession(req: http.IncomingMessage, sessionId: string) {
-    const userKey = deps.getUserKeyFromRequest(req);
+  function deleteChatSession(context: SessionUserContext, sessionId: string) {
+    const { userKey } = context;
     const result = runtime.deleteChatSessionForUser(userKey, sessionId);
     if (!result.success) {
       throw new SessionServiceError('无法删除该会话（至少需要保留一个会话）', 400);
@@ -139,8 +141,8 @@ export function createSessionService(deps: SessionServiceDependencies): SessionS
     };
   }
 
-  function updateChatSession(req: http.IncomingMessage, sessionId: string, patch: unknown) {
-    const userKey = deps.getUserKeyFromRequest(req);
+  function updateChatSession(context: SessionUserContext, sessionId: string, patch: unknown) {
+    const { userKey } = context;
     if (!sessionId) {
       throw new SessionServiceError('sessionId 不能为空', 400);
     }
@@ -172,8 +174,8 @@ export function createSessionService(deps: SessionServiceDependencies): SessionS
     };
   }
 
-  function setSessionAgent(req: http.IncomingMessage, payload: { sessionId?: string; agentName: string; enabled: boolean }) {
-    const { userKey, session } = resolveChatSession(req);
+  function setSessionAgent(context: SessionUserContext, payload: { sessionId?: string; agentName: string; enabled: boolean }) {
+    const { userKey, session } = resolveChatSession(context);
     const sessionId = (payload.sessionId || session.id).trim() || session.id;
     const agentName = (payload.agentName || '').trim();
 
@@ -196,8 +198,8 @@ export function createSessionService(deps: SessionServiceDependencies): SessionS
     };
   }
 
-  function switchAgent(req: http.IncomingMessage, agentName?: string | null) {
-    const { userKey, session } = resolveChatSession(req);
+  function switchAgent(context: SessionUserContext, agentName?: string | null) {
+    const { userKey, session } = resolveChatSession(context);
     if (agentName && deps.hasAgent(agentName) && runtime.isAgentEnabledForSession(session, agentName)) {
       runtime.setUserCurrentAgent(userKey, session.id, agentName);
       return { success: true as const, currentAgent: agentName };
@@ -212,8 +214,8 @@ export function createSessionService(deps: SessionServiceDependencies): SessionS
     throw new SessionServiceError(`未知的智能体: ${agentName}`, 400);
   }
 
-  function setWorkdir(req: http.IncomingMessage, agentName: string, workdir: string | null) {
-    const { userKey, session } = resolveChatSession(req);
+  function setWorkdir(context: SessionUserContext, agentName: string, workdir: string | null) {
+    const { userKey, session } = resolveChatSession(context);
     const normalizedAgentName = (agentName || '').trim();
     if (!normalizedAgentName || !deps.hasAgent(normalizedAgentName)) {
       throw new SessionServiceError('智能体不存在', 400);

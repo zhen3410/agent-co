@@ -3,6 +3,7 @@ import { parseBody } from '../../shared/http/body';
 import { sendHttpError } from '../../shared/http/errors';
 import { sendJson } from '../../shared/http/json';
 import { AuthService, AuthServiceError } from '../application/auth-service';
+import { createAuthRequestContext } from './request-context';
 
 export interface AuthRoutesDependencies {
   authService: AuthService;
@@ -29,7 +30,8 @@ export async function handleAuthRoutes(
   if (url === '/api/login' && method === 'POST') {
     try {
       const body = await parseBody<{ username?: string; password?: string }>(req);
-      const result = await deps.authService.login(req, body.username || '', body.password || '');
+      const authContext = createAuthRequestContext(req);
+      const result = await deps.authService.login(authContext, body.username || '', body.password || '');
       applySetCookies(res, result.setCookies);
       sendJson(res, 200, { success: true, authEnabled: result.authEnabled });
     } catch (error) {
@@ -48,14 +50,14 @@ export async function handleAuthRoutes(
   }
 
   if (url === '/api/logout' && method === 'POST') {
-    const result = deps.authService.logout(req);
+    const result = deps.authService.logout(createAuthRequestContext(req));
     applySetCookies(res, result.setCookies);
     sendJson(res, 200, { success: true });
     return true;
   }
 
   if (url === '/api/auth-status' && method === 'GET') {
-    const result = deps.authService.getAuthStatus(req);
+    const result = deps.authService.getAuthStatus(createAuthRequestContext(req));
     applySetCookies(res, result.setCookies);
     sendJson(res, 200, {
       authEnabled: result.authEnabled,

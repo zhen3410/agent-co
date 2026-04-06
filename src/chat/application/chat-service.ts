@@ -1,11 +1,10 @@
-import * as http from 'http';
 import { AIAgentConfig, AgentInvokeResult, Message, RichBlock } from '../../types';
 import { AgentManager } from '../../agent-manager';
 import { generateMockReply } from '../../claude-cli';
 import { invokeAgent } from '../../agent-invoker';
 import { extractRichBlocks } from '../../rich-extract';
 import { addBlock, getStatus as getBlockBufferStatus } from '../../block-buffer';
-import { SessionService } from './session-service';
+import { SessionService, SessionUserContext } from './session-service';
 import { ChatRuntime, PendingAgentDispatchTask, UserChatSession } from '../runtime/chat-runtime';
 
 export class ChatServiceError extends Error {
@@ -45,10 +44,10 @@ export interface StreamMessageCallbacks {
 
 export interface ChatService {
   listAgents(): AIAgentConfig[];
-  sendMessage(req: http.IncomingMessage, body: { message: string; sender?: string }): Promise<{ success: true; userMessage: Message; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
-  streamMessage(req: http.IncomingMessage, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<{ currentAgent: string | null; notice?: string; hadVisibleMessages: boolean; emptyVisibleMessage?: string }>;
-  resumePendingChat(req: http.IncomingMessage): Promise<{ success: true; resumed: boolean; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
-  summarizeChat(req: http.IncomingMessage, sessionId?: string): Promise<{ success: true; aiMessages: Message[]; currentAgent: string | null }>;
+  sendMessage(context: SessionUserContext, body: { message: string; sender?: string }): Promise<{ success: true; userMessage: Message; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
+  streamMessage(context: SessionUserContext, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<{ currentAgent: string | null; notice?: string; hadVisibleMessages: boolean; emptyVisibleMessage?: string }>;
+  resumePendingChat(context: SessionUserContext): Promise<{ success: true; resumed: boolean; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
+  summarizeChat(context: SessionUserContext, sessionId?: string): Promise<{ success: true; aiMessages: Message[]; currentAgent: string | null }>;
   createBlock(payload: { sessionId?: string; block: RichBlock }): { success: true; block: RichBlock };
   getBlockStatus(): ReturnType<typeof getBlockBufferStatus>;
   postCallbackMessage(sessionId: string, agentName: string, content: string, invokeAgents?: string[]): { status: 'ok' };
@@ -438,7 +437,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     };
   }
 
-  async function sendMessage(req: http.IncomingMessage, body: { message: string; sender?: string }): Promise<{ success: true; userMessage: Message; aiMessages: Message[]; currentAgent: string | null; notice?: string }> {
+  async function sendMessage(context: SessionUserContext, body: { message: string; sender?: string }): Promise<{ success: true; userMessage: Message; aiMessages: Message[]; currentAgent: string | null; notice?: string }> {
     deps.syncAgentsFromStore();
     const { message, sender: bodySender } = body;
     const sender = bodySender || deps.defaultUserName;
@@ -446,7 +445,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       throw new ChatServiceError('缺少 message 字段', 400);
     }
 
-    const { userKey, session } = sessionService.resolveChatSession(req);
+    const { userKey, session } = sessionService.resolveChatSession(context);
     if (sessionService.isSessionSummaryInProgress(userKey, session)) {
       throw new ChatServiceError('当前会话正在生成总结，暂时不能发送新消息，请稍后再试。', 409);
     }
@@ -520,7 +519,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     };
   }
 
-  async function streamMessage(req: http.IncomingMessage, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<{ currentAgent: string | null; notice?: string; hadVisibleMessages: boolean; emptyVisibleMessage?: string }> {
+  async function streamMessage(context: SessionUserContext, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<{ currentAgent: string | null; notice?: string; hadVisibleMessages: boolean; emptyVisibleMessage?: string }> {
     deps.syncAgentsFromStore();
     const { message, sender: bodySender } = body;
     const sender = bodySender || deps.defaultUserName;
@@ -528,7 +527,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       throw new ChatServiceError('缺少 message 字段', 400);
     }
 
-    const { userKey, session } = sessionService.resolveChatSession(req);
+    const { userKey, session } = sessionService.resolveChatSession(context);
     if (sessionService.isSessionSummaryInProgress(userKey, session)) {
       throw new ChatServiceError('当前会话正在生成总结，暂时不能发送新消息，请稍后再试。', 409);
     }
@@ -608,9 +607,9 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     };
   }
 
-  async function resumePendingChat(req: http.IncomingMessage): Promise<{ success: true; resumed: boolean; aiMessages: Message[]; currentAgent: string | null; notice?: string }> {
+  async function resumePendingChat(context: SessionUserContext): Promise<{ success: true; resumed: boolean; aiMessages: Message[]; currentAgent: string | null; notice?: string }> {
     deps.syncAgentsFromStore();
-    const { userKey, session } = sessionService.resolveChatSession(req);
+    const { userKey, session } = sessionService.resolveChatSession(context);
     if (sessionService.isSessionSummaryInProgress(userKey, session)) {
       throw new ChatServiceError('当前会话正在生成总结，暂时不能继续执行剩余链路，请稍后再试。', 409);
     }
@@ -652,9 +651,9 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     };
   }
 
-  async function summarizeChat(req: http.IncomingMessage, requestedSessionId?: string): Promise<{ success: true; aiMessages: Message[]; currentAgent: string | null }> {
+  async function summarizeChat(context: SessionUserContext, requestedSessionId?: string): Promise<{ success: true; aiMessages: Message[]; currentAgent: string | null }> {
     deps.syncAgentsFromStore();
-    const userKey = deps.sessionService.resolveChatSession(req).userKey;
+    const { userKey } = context;
     const sessions = runtime.ensureUserSessions(userKey);
     const activeSessionId = runtime.resolveActiveSession(userKey).id;
     const resolvedSessionId = (requestedSessionId || '').trim() || activeSessionId;

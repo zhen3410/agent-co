@@ -18,6 +18,7 @@ export interface ChatRoutesDependencies {
   rateLimitMaxRequests: number;
   groupDataFile: string;
   runtime: ChatRuntime;
+  userKey: string;
 }
 
 function sendServiceError(res: http.ServerResponse, error: unknown): void {
@@ -65,7 +66,7 @@ export async function handleChatRoutes(
 
     try {
       const body = await parseBody<{ message: string; sender?: string }>(req);
-      sendJson(res, 200, await deps.chatService.sendMessage(req, body));
+      sendJson(res, 200, await deps.chatService.sendMessage({ userKey: deps.userKey }, body));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -90,7 +91,7 @@ export async function handleChatRoutes(
         return true;
       }
 
-      const streamSession = deps.sessionService.resolveChatSession(req).session;
+      const streamSession = deps.sessionService.resolveChatSession({ userKey: deps.userKey }).session;
 
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -128,7 +129,7 @@ export async function handleChatRoutes(
         return true;
       };
 
-      const result = await deps.chatService.streamMessage(req, body, {
+      const result = await deps.chatService.streamMessage({ userKey: deps.userKey }, body, {
         shouldContinue: () => !streamClosed && !res.writableEnded && !res.destroyed,
         onUserMessage: (message) => {
           sendEvent('user_message', message);
@@ -168,7 +169,7 @@ export async function handleChatRoutes(
 
   if (requestUrl.pathname === '/api/chat-resume' && method === 'POST') {
     try {
-      sendJson(res, 200, await deps.chatService.resumePendingChat(req));
+      sendJson(res, 200, await deps.chatService.resumePendingChat({ userKey: deps.userKey }));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -178,7 +179,7 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/chat-summary' && method === 'POST') {
     try {
       const body = await parseBody<{ sessionId?: string }>(req);
-      sendJson(res, 200, await deps.chatService.summarizeChat(req, body.sessionId));
+      sendJson(res, 200, await deps.chatService.summarizeChat({ userKey: deps.userKey }, body.sessionId));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -186,19 +187,19 @@ export async function handleChatRoutes(
   }
 
   if (requestUrl.pathname === '/api/history' && method === 'GET') {
-    sendJson(res, 200, deps.sessionService.getHistory(req, deps.agentManager.getAgentConfigs()));
+    sendJson(res, 200, deps.sessionService.getHistory({ userKey: deps.userKey }, deps.agentManager.getAgentConfigs()));
     return true;
   }
 
   if (requestUrl.pathname === '/api/clear' && method === 'POST') {
-    sendJson(res, 200, deps.sessionService.clearHistory(req));
+    sendJson(res, 200, deps.sessionService.clearHistory({ userKey: deps.userKey }));
     return true;
   }
 
   if (requestUrl.pathname === '/api/sessions' && method === 'POST') {
     try {
       const body = await parseBody<{ name?: string }>(req);
-      sendJson(res, 200, deps.sessionService.createChatSession(req, body.name));
+      sendJson(res, 200, deps.sessionService.createChatSession({ userKey: deps.userKey }, body.name));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -208,7 +209,7 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/sessions/select' && method === 'POST') {
     try {
       const body = await parseBody<{ sessionId?: string }>(req);
-      sendJson(res, 200, deps.sessionService.selectChatSession(req, (body.sessionId || '').trim()));
+      sendJson(res, 200, deps.sessionService.selectChatSession({ userKey: deps.userKey }, (body.sessionId || '').trim()));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -218,7 +219,7 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/sessions/update' && method === 'POST') {
     try {
       const body = await parseBody<{ sessionId?: string; patch?: unknown }>(req);
-      sendJson(res, 200, deps.sessionService.updateChatSession(req, (body.sessionId || '').trim(), body.patch));
+      sendJson(res, 200, deps.sessionService.updateChatSession({ userKey: deps.userKey }, (body.sessionId || '').trim(), body.patch));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -228,7 +229,7 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/sessions/rename' && method === 'POST') {
     try {
       const body = await parseBody<{ sessionId?: string; name?: string }>(req);
-      sendJson(res, 200, deps.sessionService.renameChatSession(req, (body.sessionId || '').trim(), body.name || ''));
+      sendJson(res, 200, deps.sessionService.renameChatSession({ userKey: deps.userKey }, (body.sessionId || '').trim(), body.name || ''));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -238,7 +239,7 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/sessions/delete' && method === 'POST') {
     try {
       const body = await parseBody<{ sessionId?: string }>(req);
-      sendJson(res, 200, deps.sessionService.deleteChatSession(req, (body.sessionId || '').trim()));
+      sendJson(res, 200, deps.sessionService.deleteChatSession({ userKey: deps.userKey }, (body.sessionId || '').trim()));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -263,7 +264,7 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/session-agents' && method === 'POST') {
     try {
       const body = await parseBody<{ sessionId?: string; agentName?: string; enabled?: boolean }>(req);
-      sendJson(res, 200, deps.sessionService.setSessionAgent(req, {
+      sendJson(res, 200, deps.sessionService.setSessionAgent({ userKey: deps.userKey }, {
         sessionId: body.sessionId,
         agentName: body.agentName || '',
         enabled: body.enabled as boolean
@@ -279,14 +280,14 @@ export async function handleChatRoutes(
       const body = await parseBody<{ agentName?: string; workdir?: string }>(req);
       const workdir = (body.workdir || '').trim();
       if (!workdir) {
-        sendJson(res, 200, deps.sessionService.setWorkdir(req, body.agentName || '', null));
+        sendJson(res, 200, deps.sessionService.setWorkdir({ userKey: deps.userKey }, body.agentName || '', null));
         return true;
       }
       if (!path.isAbsolute(workdir) || !fs.existsSync(workdir) || !fs.statSync(workdir).isDirectory()) {
         sendJson(res, 400, { error: 'workdir 必须是存在的绝对目录' });
         return true;
       }
-      sendJson(res, 200, deps.sessionService.setWorkdir(req, body.agentName || '', workdir));
+      sendJson(res, 200, deps.sessionService.setWorkdir({ userKey: deps.userKey }, body.agentName || '', workdir));
     } catch (error) {
       sendServiceError(res, error);
     }
