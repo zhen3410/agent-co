@@ -1,4 +1,5 @@
 import * as http from 'http';
+import { isHttpBodyParseError } from './body';
 import { sendJson } from './json';
 
 interface SendHttpErrorOptions<TBody> {
@@ -25,7 +26,7 @@ export function sendHttpError<TBody = { error: string }>(
   options: SendHttpErrorOptions<TBody> = {}
 ): void {
   const message = getErrorMessage(error);
-  const statusCode = message === 'Invalid JSON'
+  const statusCode = isHttpBodyParseError(error)
     ? (options.invalidJsonStatus ?? 400)
     : (options.fallbackStatus ?? 500);
   const body = options.mapBody

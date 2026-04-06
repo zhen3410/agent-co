@@ -5,6 +5,7 @@ const { mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
+const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 const {
   loadApiConnectionStore,
   isApiConnectionReferenced,
@@ -71,6 +72,15 @@ async function requestRawJson(url, body) {
   return { status: response.status, body: json, text };
 }
 
+async function requestRaw(url, options = {}) {
+  const response = await fetch(url, options);
+  return {
+    status: response.status,
+    headers: response.headers,
+    text: await response.text()
+  };
+}
+
 test('默认账号可登录，错误密码会被拒绝', async () => {
   const ok = await fixture.request('/api/auth/verify', {
     method: 'POST',
@@ -109,6 +119,27 @@ test('管理端点要求 x-admin-token', async () => {
   assert.equal(withToken.status, 200);
   assert.ok(Array.isArray(withToken.body.users));
   assert.equal(withToken.body.users.length, 1);
+});
+
+test('聊天端 CORS 仍保留 credentials，而管理端不应新增 credentials', async () => {
+  const chatFixture = await createChatServerFixture();
+
+  try {
+    const chatResponse = await requestRaw(`http://127.0.0.1:${chatFixture.port}/api/auth-status`, {
+      method: 'OPTIONS'
+    });
+    assert.equal(chatResponse.status, 200);
+    assert.equal(chatResponse.headers.get('access-control-allow-credentials'), 'true');
+
+    const adminResponse = await requestRaw(`http://127.0.0.1:${fixture.port}/api/users`, {
+      method: 'OPTIONS',
+      headers: { 'x-admin-token': fixture.adminToken }
+    });
+    assert.equal(adminResponse.status, 200);
+    assert.equal(adminResponse.headers.get('access-control-allow-credentials'), null);
+  } finally {
+    await chatFixture.cleanup();
+  }
 });
 
 

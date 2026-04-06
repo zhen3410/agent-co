@@ -38,6 +38,15 @@ async function requestRawJson(url, body) {
   return { status: response.status, body: json, text };
 }
 
+async function requestRaw(url, options = {}) {
+  const response = await fetch(url, options);
+  return {
+    status: response.status,
+    headers: response.headers,
+    text: await response.text()
+  };
+}
+
 async function createOpenAICompatibleStub(handler) {
   const requests = [];
   const server = http.createServer(async (req, res) => {
@@ -1353,6 +1362,19 @@ test('聊天服务对非法 JSON 登录请求返回 500 和错误信息', async 
     const response = await requestRawJson(`http://127.0.0.1:${fixture.port}/api/login`, '{');
     assert.equal(response.status, 500);
     assert.equal(response.body.error, 'Invalid JSON');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('聊天服务保持原始的 404 兜底响应', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const response = await requestRaw(`http://127.0.0.1:${fixture.port}/missing-route`);
+    assert.equal(response.status, 404);
+    assert.equal(response.text, 'Not Found');
+    assert.equal(response.headers.get('content-type'), null);
   } finally {
     await fixture.cleanup();
   }
