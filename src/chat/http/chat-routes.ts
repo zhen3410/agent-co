@@ -1,0 +1,297 @@
+import * as fs from 'fs';
+import * as http from 'http';
+import * as path from 'path';
+import { parseBody } from '../../shared/http/body';
+import { sendJson } from '../../shared/http/json';
+import { checkRateLimit, getClientIP } from '../../rate-limiter';
+import { ChatService, ChatServiceError } from '../application/chat-service';
+import { SessionService, SessionServiceError } from '../application/session-service';
+import { loadGroupStore } from '../../group-store';
+import { AgentManager } from '../../agent-manager';
+import { RichBlock } from '../../types';
+import { ChatRuntime } from '../runtime/chat-runtime';
+
+export interface ChatRoutesDependencies {
+  chatService: ChatService;
+  sessionService: SessionService;
+  agentManager: AgentManager;
+  rateLimitMaxRequests: number;
+  groupDataFile: string;
+  runtime: ChatRuntime;
+}
+
+function sendServiceError(res: http.ServerResponse, error: unknown): void {
+  if (error instanceof ChatServiceError || error instanceof SessionServiceError) {
+    sendJson(res, error.statusCode, { error: error.message });
+    return;
+  }
+
+  sendJson(res, 500, { error: (error as Error).message });
+}
+
+export async function handleChatRoutes(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  requestUrl: URL,
+  deps: ChatRoutesDependencies
+): Promise<boolean> {
+  const method = req.method || 'GET';
+
+  if (requestUrl.pathname === '/api/agents' && method === 'GET') {
+    sendJson(res, 200, { agents: deps.chatService.listAgents() });
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/groups' && method === 'GET') {
+    try {
+      const store = loadGroupStore(deps.groupDataFile);
+      sendJson(res, 200, { groups: store.groups, updatedAt: store.updatedAt });
+    } catch (error) {
+      sendJson(res, 500, { error: (error as Error).message });
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/chat' && method === 'POST') {
+    const clientIP = getClientIP(req);
+    const rateLimit = checkRateLimit(clientIP, deps.rateLimitMaxRequests);
+    if (!rateLimit.allowed) {
+      sendJson(res, 429, {
+        error: '请求过于频繁，请稍后再试',
+        retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000)
+      });
+      return true;
+    }
+
+    try {
+      const body = await parseBody<{ message: string; sender?: string }>(req);
+      sendJson(res, 200, await deps.chatService.sendMessage(req, body));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/chat-stream' && method === 'POST') {
+    const clientIP = getClientIP(req);
+    const rateLimit = checkRateLimit(clientIP, deps.rateLimitMaxRequests);
+    if (!rateLimit.allowed) {
+      sendJson(res, 429, {
+        error: '请求过于频繁，请稍后再试',
+        retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000)
+      });
+      return true;
+    }
+
+    try {
+      const body = await parseBody<{ message: string; sender?: string }>(req);
+      if (!body.message) {
+        sendJson(res, 400, { error: '缺少 message 字段' });
+        return true;
+      }
+
+      const streamSession = deps.sessionService.resolveChatSession(req).session;
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'X-Accel-Buffering': 'no'
+      });
+
+      let streamClosed = false;
+      let streamCompleted = false;
+      const markStreamClosed = (source: 'req_aborted' | 'req_close' | 'res_close') => {
+        if (streamClosed) {
+          return;
+        }
+        streamClosed = true;
+        if (!streamCompleted) {
+          deps.runtime.appendOperationalLog('info', 'chat-exec', `session=${streamSession.id} stage=stream_disconnect reason=client_disconnect source=${source}`);
+        }
+        void source;
+      };
+      req.on('aborted', () => markStreamClosed('req_aborted'));
+      req.on('close', () => markStreamClosed('req_close'));
+      res.on('close', () => markStreamClosed('res_close'));
+
+      const sendEvent = (event: string, data: unknown): boolean => {
+        if (streamClosed || res.writableEnded || res.destroyed) {
+          return false;
+        }
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+        if (typeof (res as unknown as { flush?: () => void }).flush === 'function') {
+          (res as unknown as { flush: () => void }).flush();
+        }
+        return true;
+      };
+
+      const result = await deps.chatService.streamMessage(req, body, {
+        shouldContinue: () => !streamClosed && !res.writableEnded && !res.destroyed,
+        onUserMessage: (message) => {
+          sendEvent('user_message', message);
+        },
+        onThinking: (agentName) => {
+          sendEvent('agent_thinking', { agent: agentName });
+        },
+        onTextDelta: (agentName, delta) => {
+          sendEvent('agent_delta', { agent: agentName, delta });
+        },
+        onMessage: (message) => sendEvent('agent_message', message)
+      });
+
+      if (streamClosed || res.writableEnded || res.destroyed) {
+        return true;
+      }
+
+      if (!result.hadVisibleMessages) {
+        sendEvent('error', { error: result.emptyVisibleMessage || '未返回可见消息，请稍后重试或查看日志。' });
+      }
+      if (result.notice) {
+        sendEvent('notice', { notice: result.notice });
+      }
+      sendEvent('done', { currentAgent: result.currentAgent });
+      streamCompleted = true;
+      res.end();
+    } catch (error) {
+      if (!res.headersSent) {
+        sendServiceError(res, error);
+      } else {
+        res.write(`event: error\ndata: ${JSON.stringify({ error: (error as Error).message })}\n\n`);
+        res.end();
+      }
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/chat-resume' && method === 'POST') {
+    try {
+      sendJson(res, 200, await deps.chatService.resumePendingChat(req));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/chat-summary' && method === 'POST') {
+    try {
+      const body = await parseBody<{ sessionId?: string }>(req);
+      sendJson(res, 200, await deps.chatService.summarizeChat(req, body.sessionId));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/history' && method === 'GET') {
+    sendJson(res, 200, deps.sessionService.getHistory(req, deps.agentManager.getAgentConfigs()));
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/clear' && method === 'POST') {
+    sendJson(res, 200, deps.sessionService.clearHistory(req));
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/sessions' && method === 'POST') {
+    try {
+      const body = await parseBody<{ name?: string }>(req);
+      sendJson(res, 200, deps.sessionService.createChatSession(req, body.name));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/sessions/select' && method === 'POST') {
+    try {
+      const body = await parseBody<{ sessionId?: string }>(req);
+      sendJson(res, 200, deps.sessionService.selectChatSession(req, (body.sessionId || '').trim()));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/sessions/update' && method === 'POST') {
+    try {
+      const body = await parseBody<{ sessionId?: string; patch?: unknown }>(req);
+      sendJson(res, 200, deps.sessionService.updateChatSession(req, (body.sessionId || '').trim(), body.patch));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/sessions/rename' && method === 'POST') {
+    try {
+      const body = await parseBody<{ sessionId?: string; name?: string }>(req);
+      sendJson(res, 200, deps.sessionService.renameChatSession(req, (body.sessionId || '').trim(), body.name || ''));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/sessions/delete' && method === 'POST') {
+    try {
+      const body = await parseBody<{ sessionId?: string }>(req);
+      sendJson(res, 200, deps.sessionService.deleteChatSession(req, (body.sessionId || '').trim()));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/create-block' && method === 'POST') {
+    try {
+      const body = await parseBody<{ sessionId?: string; block: RichBlock }>(req);
+      sendJson(res, 200, deps.chatService.createBlock(body));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/block-status' && method === 'GET') {
+    sendJson(res, 200, deps.chatService.getBlockStatus());
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/session-agents' && method === 'POST') {
+    try {
+      const body = await parseBody<{ sessionId?: string; agentName?: string; enabled?: boolean }>(req);
+      sendJson(res, 200, deps.sessionService.setSessionAgent(req, {
+        sessionId: body.sessionId,
+        agentName: body.agentName || '',
+        enabled: body.enabled as boolean
+      }));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/workdirs/select' && method === 'POST') {
+    try {
+      const body = await parseBody<{ agentName?: string; workdir?: string }>(req);
+      const workdir = (body.workdir || '').trim();
+      if (!workdir) {
+        sendJson(res, 200, deps.sessionService.setWorkdir(req, body.agentName || '', null));
+        return true;
+      }
+      if (!path.isAbsolute(workdir) || !fs.existsSync(workdir) || !fs.statSync(workdir).isDirectory()) {
+        sendJson(res, 400, { error: 'workdir 必须是存在的绝对目录' });
+        return true;
+      }
+      sendJson(res, 200, deps.sessionService.setWorkdir(req, body.agentName || '', workdir));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  return false;
+}
