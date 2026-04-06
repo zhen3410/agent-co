@@ -11,5 +11,6 @@ export function sendText(res: http.ServerResponse, statusCode: number, text: str
 }
 
 export function sendNotFound(res: http.ServerResponse, message = 'Not Found'): void {
-  sendText(res, 404, message);
+  res.writeHead(404);
+  res.end(message);
 }

@@ -21,7 +21,6 @@ import { checkRateLimit, getClientIP } from './rate-limiter';
 import { parseBody } from './shared/http/body';
 import { applyChatCorsHeaders } from './shared/http/cors';
 import { sendHttpError } from './shared/http/errors';
-import { sendNotFound } from './shared/http/json';
 import { serveStaticFile } from './shared/http/static-files';
 
 // ============================================
@@ -3004,7 +3003,8 @@ const server = http.createServer(async (req, res) => {
       disableHtmlCache: true
     });
   } else {
-    sendNotFound(res);
+    res.writeHead(404);
+    res.end('Not Found');
   }
 });
 

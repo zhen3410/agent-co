@@ -94,6 +94,7 @@ test('默认账号可登录，错误密码会被拒绝', async () => {
 test('鉴权管理服务对非法 JSON 登录校验请求返回 400 和错误信息', async () => {
   const response = await requestRawJson(`http://127.0.0.1:${fixture.port}/api/auth/verify`, '{');
   assert.equal(response.status, 400);
+  assert.equal(response.body.success, false);
   assert.equal(response.body.error, 'Invalid JSON');
 });
 
