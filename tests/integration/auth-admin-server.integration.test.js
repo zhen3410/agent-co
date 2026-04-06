@@ -1282,8 +1282,9 @@ test('auth admin runtime 会在 token 规范化后对空白值回退默认 token
 });
 
 
-test('user store 初始引导会按原样持久化配置的默认用户名', () => {
+test('user store 初始引导会按原样持久化默认用户名，同时支持按规范化用户名鉴权和管理', () => {
   const { createUserStore } = require('../../dist/admin/infrastructure/user-store.js');
+  const { createUserAdminService, UserAdminServiceError } = require('../../dist/admin/application/user-admin-service.js');
 
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-user-bootstrap-'));
   const usersFile = join(tempDir, 'users.json');
@@ -1294,6 +1295,7 @@ test('user store 初始引导会按原样持久化配置的默认用户名', () 
       defaultUsername: ' AdminRoot ',
       defaultPassword: 'Admin1234!@#'
     });
+    const service = createUserAdminService({ userStore });
 
     const users = userStore.listUsers();
     assert.equal(users.length, 1);
@@ -1301,6 +1303,26 @@ test('user store 初始引导会按原样持久化配置的默认用户名', () 
 
     const persisted = JSON.parse(readFileSync(usersFile, 'utf-8'));
     assert.equal(persisted.users[0].username, ' AdminRoot ');
+
+    const verified = service.verifyCredentials('adminroot', 'Admin1234!@#');
+    assert.ok(verified);
+    assert.equal(verified.username, ' AdminRoot ');
+
+    assert.throws(() => service.createUser('adminroot', 'AnotherPass123!'), error => {
+      assert.ok(error instanceof UserAdminServiceError);
+      assert.equal(error.statusCode, 409);
+      assert.equal(error.message, '用户名已存在');
+      return true;
+    });
+
+    service.changePassword('  ADMINROOT ', 'NewPassword123!');
+    assert.equal(service.verifyCredentials('adminroot', 'Admin1234!@#'), null);
+    assert.ok(service.verifyCredentials('adminroot', 'NewPassword123!'));
+
+    service.createUser('other-user', 'OtherPassword123!');
+    const removed = service.deleteUser(' adminroot ');
+    assert.equal(removed.username, 'adminroot');
+    assert.equal(service.verifyCredentials('adminroot', 'NewPassword123!'), null);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

@@ -72,6 +72,11 @@ export function validateCredentialInput(username: string, password: string): str
   return null;
 }
 
+function findUserIndex(store: UserStoreData, username: string): number {
+  const normalizedUsername = sanitizeUsername(username);
+  return store.users.findIndex(entry => sanitizeUsername(entry.username) === normalizedUsername);
+}
+
 export function createUserStore(options: CreateUserStoreOptions): UserStore {
   function loadStore(): UserStoreData {
     ensureDataDirExists(options.dataFile);
@@ -114,8 +119,9 @@ export function createUserStore(options: CreateUserStoreOptions): UserStore {
     },
 
     findUser(username: string): UserRecord | null {
-      const normalizedUsername = sanitizeUsername(username);
-      const user = loadStore().users.find(entry => entry.username === normalizedUsername);
+      const store = loadStore();
+      const index = findUserIndex(store, username);
+      const user = index === -1 ? null : store.users[index];
       return user ? { ...user } : null;
     },
 
@@ -129,9 +135,9 @@ export function createUserStore(options: CreateUserStoreOptions): UserStore {
     },
 
     updatePassword(username: string, password: string): UserRecord | null {
-      const normalizedUsername = sanitizeUsername(username);
       const store = loadStore();
-      const user = store.users.find(entry => entry.username === normalizedUsername);
+      const index = findUserIndex(store, username);
+      const user = index === -1 ? null : store.users[index];
       if (!user) {
         return null;
       }
@@ -144,9 +150,8 @@ export function createUserStore(options: CreateUserStoreOptions): UserStore {
     },
 
     deleteUser(username: string): boolean {
-      const normalizedUsername = sanitizeUsername(username);
       const store = loadStore();
-      const index = store.users.findIndex(entry => entry.username === normalizedUsername);
+      const index = findUserIndex(store, username);
       if (index === -1) {
         return false;
       }
