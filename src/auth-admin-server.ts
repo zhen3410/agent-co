@@ -37,6 +37,11 @@ import {
   saveGroupStore,
   validateGroupConfig
 } from './group-store';
+import { parseBody } from './shared/http/body';
+import { applyAdminCorsHeaders } from './shared/http/cors';
+import { sendHttpError } from './shared/http/errors';
+import { sendJson } from './shared/http/json';
+import { serveStaticFile } from './shared/http/static-files';
 
 type UserRecord = {
   username: string;
@@ -123,26 +128,6 @@ function performSecurityChecks(): void {
 
 // 启动时执行安全检查
 performSecurityChecks();
-
-function parseBody<T>(req: http.IncomingMessage): Promise<T> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', chunk => (body += chunk));
-    req.on('end', () => {
-      try {
-        resolve(body ? JSON.parse(body) : {});
-      } catch {
-        reject(new Error('Invalid JSON'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-function sendJson(res: http.ServerResponse, statusCode: number, data: unknown): void {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(data));
-}
 
 function hashPassword(password: string, salt: string): string {
   return crypto.pbkdf2Sync(password, salt, 120000, 64, 'sha512').toString('hex');
@@ -372,19 +357,6 @@ function validateAgentConnectionReference(agent: AIAgentConfig): string | null {
   return null;
 }
 
-function serveStatic(res: http.ServerResponse, filePath: string, contentType: string): void {
-  const fullPath = path.join(__dirname, '..', 'public-auth', filePath);
-
-  fs.readFile(fullPath, (err, data) => {
-    if (err) {
-      sendJson(res, 404, { error: 'Not Found' });
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': contentType });
-    res.end(data);
-  });
-}
-
 function listDirectories(targetPath: string): Array<{ name: string; path: string }> {
   const normalizedPath = path.resolve(targetPath || '/');
   if (!path.isAbsolute(normalizedPath)) {
@@ -413,9 +385,7 @@ const server = http.createServer(async (req, res) => {
   const pathname = parsedUrl.pathname;
 
   // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-token');
+  applyAdminCorsHeaders(res);
 
   if (method === 'OPTIONS') {
     res.writeHead(200);
@@ -425,7 +395,12 @@ const server = http.createServer(async (req, res) => {
 
   // Serve admin page
   if (method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
-    serveStatic(res, 'admin.html', 'text/html; charset=utf-8');
+    serveStaticFile(res, {
+      rootDir: path.join(__dirname, '..', 'public-auth'),
+      filePath: 'admin.html',
+      contentType: 'text/html; charset=utf-8',
+      onNotFound: (response) => sendJson(response, 404, { error: 'Not Found' })
+    });
     return;
   }
 
@@ -455,8 +430,11 @@ const server = http.createServer(async (req, res) => {
 
       sendJson(res, 200, { success: true, username: user.username });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { success: false, error: err.message });
+      sendHttpError(res, error, {
+        invalidJsonStatus: 400,
+        fallbackStatus: 400,
+        mapBody: (message) => ({ success: false, error: message })
+      });
     }
     return;
   }
@@ -503,8 +481,7 @@ const server = http.createServer(async (req, res) => {
       saveGroupStore(GROUP_DATA_FILE, nextStore);
       sendJson(res, 201, { success: true, group });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -544,8 +521,7 @@ const server = http.createServer(async (req, res) => {
       saveGroupStore(GROUP_DATA_FILE, nextStore);
       sendJson(res, 200, { success: true, group: updated });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -634,8 +610,7 @@ const server = http.createServer(async (req, res) => {
       saveAgentStore(AGENT_DATA_FILE, next);
       sendJson(res, 201, { success: true, applyMode, agent: normalized });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -688,8 +663,7 @@ const server = http.createServer(async (req, res) => {
         connection: serializeModelConnection(normalized, toApiConnectionSummaries([normalized])[0].apiKeyMasked)
       });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -739,8 +713,7 @@ const server = http.createServer(async (req, res) => {
         connection: serializeModelConnection(normalized, toApiConnectionSummaries([normalized])[0].apiKeyMasked)
       });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -836,8 +809,7 @@ const server = http.createServer(async (req, res) => {
       saveAgentStore(AGENT_DATA_FILE, next);
       sendJson(res, 200, { success: true, applyMode, agent: normalized });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -878,8 +850,7 @@ const server = http.createServer(async (req, res) => {
       saveAgentStore(AGENT_DATA_FILE, next);
       sendJson(res, 200, { success: true, applyMode });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -918,8 +889,7 @@ const server = http.createServer(async (req, res) => {
       saveAgentStore(AGENT_DATA_FILE, next);
       sendJson(res, 200, { success: true, applyMode, systemPrompt: restoredPrompt });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -946,8 +916,7 @@ const server = http.createServer(async (req, res) => {
         templatePrompt
       });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -979,8 +948,7 @@ const server = http.createServer(async (req, res) => {
       saveAgentStore(AGENT_DATA_FILE, next);
       sendJson(res, 200, { success: true, applyMode, name: targetName });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -1018,8 +986,7 @@ const server = http.createServer(async (req, res) => {
       saveStore(store);
       sendJson(res, 201, { success: true, username });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }
@@ -1051,8 +1018,7 @@ const server = http.createServer(async (req, res) => {
       saveStore(store);
       sendJson(res, 200, { success: true, username });
     } catch (error: unknown) {
-      const err = error as Error;
-      sendJson(res, 400, { error: err.message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return;
   }

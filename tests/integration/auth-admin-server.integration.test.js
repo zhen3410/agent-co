@@ -51,6 +51,26 @@ async function createModelTestStub(handler) {
   };
 }
 
+async function requestRawJson(url, body) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body
+  });
+
+  const text = await response.text();
+  let json = null;
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+  }
+
+  return { status: response.status, body: json, text };
+}
+
 test('默认账号可登录，错误密码会被拒绝', async () => {
   const ok = await fixture.request('/api/auth/verify', {
     method: 'POST',
@@ -69,6 +89,12 @@ test('默认账号可登录，错误密码会被拒绝', async () => {
   assert.equal(denied.status, 401);
   assert.equal(denied.body.success, false);
   assert.equal(denied.body.error, '用户名或密码错误');
+});
+
+test('鉴权管理服务对非法 JSON 登录校验请求返回 400 和错误信息', async () => {
+  const response = await requestRawJson(`http://127.0.0.1:${fixture.port}/api/auth/verify`, '{');
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'Invalid JSON');
 });
 
 test('管理端点要求 x-admin-token', async () => {

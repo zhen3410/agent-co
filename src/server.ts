@@ -18,6 +18,11 @@ import { invokeAgent } from './agent-invoker';
 import { extractRichBlocks } from './rich-extract';
 import { addBlock, getStatus as getBlockBufferStatus } from './block-buffer';
 import { checkRateLimit, getClientIP } from './rate-limiter';
+import { parseBody } from './shared/http/body';
+import { applyChatCorsHeaders } from './shared/http/cors';
+import { sendHttpError } from './shared/http/errors';
+import { sendNotFound } from './shared/http/json';
+import { serveStaticFile } from './shared/http/static-files';
 
 // ============================================
 // 配置
@@ -600,9 +605,9 @@ function handleGetDependenciesStatus(req: http.IncomingMessage, res: http.Server
       logs
     }));
   }).catch((error: unknown) => {
-    const err = error as Error;
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: err.message }));
+    sendHttpError(res, error, {
+      fallbackStatus: 500
+    });
   });
 }
 
@@ -1634,9 +1639,10 @@ async function handleLogin(req: http.IncomingMessage, res: http.ServerResponse):
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, authEnabled: true }));
   } catch (error: unknown) {
-    const err = error as Error;
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: err.message }));
+    sendHttpError(res, error, {
+      invalidJsonStatus: 500,
+      fallbackStatus: 500
+    });
   }
 }
 
@@ -1799,21 +1805,6 @@ function handleCallbackThreadContext(req: http.IncomingMessage, res: http.Server
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ sessionId, messages: session.history }));
-}
-
-function parseBody<T>(req: http.IncomingMessage): Promise<T> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
-    req.on('end', () => {
-      try {
-        resolve(body ? JSON.parse(body) : {});
-      } catch (e) {
-        reject(new Error('Invalid JSON'));
-      }
-    });
-    req.on('error', reject);
-  });
 }
 
 // ============================================
@@ -2848,30 +2839,6 @@ function handleGetVerboseLogContent(req: http.IncomingMessage, res: http.ServerR
   res.end(JSON.stringify({ fileName, content }));
 }
 
-/**
- * 提供静态文件
- */
-function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, filePath: string, contentType: string): void {
-  const fullPath = path.join(__dirname, '..', 'public', filePath);
-
-  fs.readFile(fullPath, (err, data) => {
-    if (err) {
-      res.writeHead(404);
-      res.end('Not Found');
-      return;
-    }
-    // 对 HTML 文件禁用缓存，确保用户总是获取最新版本
-    const headers: http.OutgoingHttpHeaders = { 'Content-Type': contentType };
-    if (contentType === 'text/html') {
-      headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
-      headers['Pragma'] = 'no-cache';
-      headers['Expires'] = '0';
-    }
-    res.writeHead(200, headers);
-    res.end(data);
-  });
-}
-
 // ============================================
 // 服务器入口
 // ============================================
@@ -2881,10 +2848,7 @@ const server = http.createServer(async (req, res) => {
   const method = req.method || 'GET';
 
   // CORS 头
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-bot-room-callback-token, x-bot-room-session-id, x-bot-room-agent');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  applyChatCorsHeaders(res);
 
   if (url.startsWith('/api/')) {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -2983,26 +2947,64 @@ const server = http.createServer(async (req, res) => {
   } else if (requestUrl.pathname === '/api/verbose/log-content' && method === 'GET') {
     handleGetVerboseLogContent(req, res, requestUrl);
   } else if (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html') {
-    serveStatic(req, res, 'index.html', 'text/html');
+    serveStaticFile(res, {
+      rootDir: path.join(__dirname, '..', 'public'),
+      filePath: 'index.html',
+      contentType: 'text/html',
+      disableHtmlCache: true
+    });
   } else if (requestUrl.pathname === '/styles.css') {
-    serveStatic(req, res, 'styles.css', 'text/css');
+    serveStaticFile(res, {
+      rootDir: path.join(__dirname, '..', 'public'),
+      filePath: 'styles.css',
+      contentType: 'text/css'
+    });
   } else if (requestUrl.pathname === '/chat-markdown.js') {
-    serveStatic(req, res, 'chat-markdown.js', 'application/javascript');
+    serveStaticFile(res, {
+      rootDir: path.join(__dirname, '..', 'public'),
+      filePath: 'chat-markdown.js',
+      contentType: 'application/javascript'
+    });
   } else if (requestUrl.pathname === '/chat-composer.js') {
-    serveStatic(req, res, 'chat-composer.js', 'application/javascript');
+    serveStaticFile(res, {
+      rootDir: path.join(__dirname, '..', 'public'),
+      filePath: 'chat-composer.js',
+      contentType: 'application/javascript'
+    });
   } else if (requestUrl.pathname === '/manifest.json') {
-    serveStatic(req, res, 'manifest.json', 'application/manifest+json');
+    serveStaticFile(res, {
+      rootDir: path.join(__dirname, '..', 'public'),
+      filePath: 'manifest.json',
+      contentType: 'application/manifest+json'
+    });
   } else if (requestUrl.pathname === '/service-worker.js') {
-    serveStatic(req, res, 'service-worker.js', 'application/javascript');
+    serveStaticFile(res, {
+      rootDir: path.join(__dirname, '..', 'public'),
+      filePath: 'service-worker.js',
+      contentType: 'application/javascript'
+    });
   } else if (requestUrl.pathname === '/icon.svg') {
-    serveStatic(req, res, 'icon.svg', 'image/svg+xml');
+    serveStaticFile(res, {
+      rootDir: path.join(__dirname, '..', 'public'),
+      filePath: 'icon.svg',
+      contentType: 'image/svg+xml'
+    });
   } else if (requestUrl.pathname === '/verbose-logs.html') {
-    serveStatic(req, res, 'verbose-logs.html', 'text/html');
+    serveStaticFile(res, {
+      rootDir: path.join(__dirname, '..', 'public'),
+      filePath: 'verbose-logs.html',
+      contentType: 'text/html',
+      disableHtmlCache: true
+    });
   } else if (requestUrl.pathname === '/deps-monitor.html') {
-    serveStatic(req, res, 'deps-monitor.html', 'text/html');
+    serveStaticFile(res, {
+      rootDir: path.join(__dirname, '..', 'public'),
+      filePath: 'deps-monitor.html',
+      contentType: 'text/html',
+      disableHtmlCache: true
+    });
   } else {
-    res.writeHead(404);
-    res.end('Not Found');
+    sendNotFound(res);
   }
 });
 

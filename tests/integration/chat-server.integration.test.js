@@ -18,6 +18,26 @@ async function enableAgents(fixture, agentNames) {
   }
 }
 
+async function requestRawJson(url, body) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body
+  });
+
+  const text = await response.text();
+  let json = null;
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+  }
+
+  return { status: response.status, body: json, text };
+}
+
 async function createOpenAICompatibleStub(handler) {
   const requests = [];
   const server = http.createServer(async (req, res) => {
@@ -1321,6 +1341,18 @@ test('未登录时聊天相关接口会返回 401，登录后可正常聊天', a
     assert.equal(chatResponse.body.success, true);
     assert.ok(Array.isArray(chatResponse.body.aiMessages));
     assert.ok(chatResponse.body.aiMessages.length >= 1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('聊天服务对非法 JSON 登录请求返回 500 和错误信息', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const response = await requestRawJson(`http://127.0.0.1:${fixture.port}/api/login`, '{');
+    assert.equal(response.status, 500);
+    assert.equal(response.body.error, 'Invalid JSON');
   } finally {
     await fixture.cleanup();
   }
