@@ -78,10 +78,10 @@ export function createUserStore(options: CreateUserStoreOptions): UserStore {
 
     if (!fs.existsSync(options.dataFile)) {
       const initial: UserStoreData = {
-        users: [createUserRecord(sanitizeUsername(options.defaultUsername), options.defaultPassword)]
+        users: [createUserRecord(options.defaultUsername, options.defaultPassword)]
       };
       fs.writeFileSync(options.dataFile, JSON.stringify(initial, null, 2), 'utf-8');
-      console.log(`[AuthAdmin] 初始化用户完成，默认账号: ${sanitizeUsername(options.defaultUsername)}`);
+      console.log(`[AuthAdmin] 初始化用户完成，默认账号: ${options.defaultUsername}`);
       return initial;
     }
 

@@ -1230,3 +1230,28 @@ test('auth admin runtime 会在 token 规范化后对空白值回退默认 token
   });
   assert.equal(runtimeFromQuotedEmpty.adminToken, 'change-me-in-production');
 });
+
+
+test('user store 初始引导会按原样持久化配置的默认用户名', () => {
+  const { createUserStore } = require('../../dist/admin/infrastructure/user-store.js');
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-user-bootstrap-'));
+  const usersFile = join(tempDir, 'users.json');
+
+  try {
+    const userStore = createUserStore({
+      dataFile: usersFile,
+      defaultUsername: ' AdminRoot ',
+      defaultPassword: 'Admin1234!@#'
+    });
+
+    const users = userStore.listUsers();
+    assert.equal(users.length, 1);
+    assert.equal(users[0].username, ' AdminRoot ');
+
+    const persisted = JSON.parse(readFileSync(usersFile, 'utf-8'));
+    assert.equal(persisted.users[0].username, ' AdminRoot ');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
