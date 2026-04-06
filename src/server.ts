@@ -4,12 +4,9 @@
  * 多 AI 智能体聊天室服务器
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
-import { AgentManager } from './agent-manager';
-import { loadAgentStore, saveAgentStore, applyPendingAgents } from './agent-config-store';
 import { createAuthAdminClient } from './chat/infrastructure/auth-admin-client';
-import { createChatRuntime, normalizePositiveSessionSetting } from './chat/runtime/chat-runtime';
+import { createChatRuntime, createChatAgentStoreRuntime, normalizePositiveSessionSetting, ChatRuntime } from './chat/runtime/chat-runtime';
 import { createAuthService } from './chat/application/auth-service';
 import { createSessionService } from './chat/application/session-service';
 import { createChatService } from './chat/application/chat-service';
@@ -90,9 +87,12 @@ function performSecurityChecks(): void {
 
 performSecurityChecks();
 
-let agentStore = loadAgentStore(AGENT_DATA_FILE);
-let agentStoreMtimeMs = fs.existsSync(AGENT_DATA_FILE) ? fs.statSync(AGENT_DATA_FILE).mtimeMs : 0;
-const agentManager = new AgentManager(agentStore.activeAgents);
+let runtimeRef: ChatRuntime | undefined;
+const agentStoreRuntime = createChatAgentStoreRuntime({
+  agentDataFile: AGENT_DATA_FILE,
+  isChatSessionActive: () => runtimeRef?.isChatSessionActive() ?? false
+});
+const { agentManager, syncAgentsFromStore } = agentStoreRuntime;
 
 const runtime = createChatRuntime({
   redisUrl: DEFAULT_REDIS_URL,
@@ -107,29 +107,7 @@ const runtime = createChatRuntime({
   defaultAgentChainMaxHops: DEFAULT_AGENT_CHAIN_MAX_HOPS,
   getValidAgentNames: () => agentManager.getAgentConfigs().map(agent => agent.name)
 });
-
-function syncAgentsFromStore(): void {
-  try {
-    const mtime = fs.existsSync(AGENT_DATA_FILE) ? fs.statSync(AGENT_DATA_FILE).mtimeMs : 0;
-    if (mtime <= agentStoreMtimeMs && !agentStore.pendingAgents) {
-      return;
-    }
-
-    agentStore = loadAgentStore(AGENT_DATA_FILE);
-    agentStoreMtimeMs = mtime;
-
-    if (agentStore.pendingAgents && !runtime.isChatSessionActive()) {
-      agentStore = applyPendingAgents(agentStore);
-      saveAgentStore(AGENT_DATA_FILE, agentStore);
-      agentStoreMtimeMs = fs.existsSync(AGENT_DATA_FILE) ? fs.statSync(AGENT_DATA_FILE).mtimeMs : Date.now();
-      console.log('[AgentStore] 已应用等待生效的智能体配置');
-    }
-
-    agentManager.replaceAgents(agentStore.activeAgents);
-  } catch (error: unknown) {
-    console.error('[AgentStore] 同步失败:', (error as Error).message);
-  }
-}
+runtimeRef = runtime;
 
 const authAdminClient = createAuthAdminClient(AUTH_ADMIN_BASE_URL);
 const authService = createAuthService({

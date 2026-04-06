@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { spawn, spawnSync } = require('node:child_process');
-const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require('node:fs');
+const { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
@@ -85,6 +85,16 @@ async function createOpenAICompatibleStub(handler) {
 function getRandomPort() {
   return Math.floor(Math.random() * 10000) + 30000;
 }
+
+test('server.ts 保持为组合根，不再承载 agent store 可变逻辑', () => {
+  const serverSource = readFileSync(join(__dirname, '..', '..', 'src', 'server.ts'), 'utf8');
+
+  assert.equal(serverSource.includes('let agentStore ='), false);
+  assert.equal(serverSource.includes('let agentStoreMtimeMs ='), false);
+  assert.equal(serverSource.includes('function syncAgentsFromStore'), false);
+  assert.equal(serverSource.includes('applyPendingAgents('), false);
+  assert.equal(serverSource.includes('saveAgentStore('), false);
+});
 
 async function waitForChatServer(port, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
