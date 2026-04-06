@@ -1203,3 +1203,30 @@ test('agent admin service 支持延迟生效、显式应用并在删除时清理
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+
+test('auth admin runtime 会在 token 规范化后对空白值回退默认 token', () => {
+  const { createAuthAdminRuntime } = require('../../dist/admin/runtime/auth-admin-runtime.js');
+
+  const runtimeFromWhitespace = createAuthAdminRuntime({
+    port: 3003,
+    adminToken: '   ',
+    dataFile: '/tmp/users.json',
+    defaultPassword: 'Admin1234!@#',
+    agentDataFile: '/tmp/agents.json',
+    nodeEnv: 'test',
+    publicDir: '/tmp/public-auth'
+  });
+  assert.equal(runtimeFromWhitespace.adminToken, 'change-me-in-production');
+
+  const runtimeFromQuotedEmpty = createAuthAdminRuntime({
+    port: 3003,
+    adminToken: ' "" ',
+    dataFile: '/tmp/users.json',
+    defaultPassword: 'Admin1234!@#',
+    agentDataFile: '/tmp/agents.json',
+    nodeEnv: 'test',
+    publicDir: '/tmp/public-auth'
+  });
+  assert.equal(runtimeFromQuotedEmpty.adminToken, 'change-me-in-production');
+});

@@ -28,7 +28,7 @@ export function normalizeAdminToken(rawToken?: string): string {
 export function createAuthAdminRuntime(config: AuthAdminRuntimeConfig): AuthAdminRuntime {
   return {
     ...config,
-    adminToken: normalizeAdminToken(config.adminToken)
+    adminToken: normalizeAdminToken(config.adminToken) || 'change-me-in-production'
   };
 }
 
