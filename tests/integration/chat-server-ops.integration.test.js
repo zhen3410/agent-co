@@ -5,6 +5,10 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
+function sortedKeys(value) {
+  return Object.keys(value).sort();
+}
+
 function createVerboseLogFixtureDir() {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-verbose-it-'));
   const verboseDir = join(tempDir, 'verbose-logs');
@@ -42,6 +46,7 @@ test('依赖状态与日志查询仍返回 JSON 契约并支持过滤', async ()
 
     const statusResponse = await fixture.request('/api/dependencies/status');
     assert.equal(statusResponse.status, 200);
+    assert.deepEqual(sortedKeys(statusResponse.body), ['checkedAt', 'dependencies', 'healthy', 'logs']);
     assert.equal(typeof statusResponse.body.healthy, 'boolean');
     assert.equal(typeof statusResponse.body.checkedAt, 'number');
     assert.equal(Array.isArray(statusResponse.body.dependencies), true);
@@ -54,6 +59,7 @@ test('依赖状态与日志查询仍返回 JSON 契约并支持过滤', async ()
 
     const logsResponse = await fixture.request('/api/dependencies/logs?dependency=redis&keyword=redis&level=info');
     assert.equal(logsResponse.status, 200);
+    assert.deepEqual(sortedKeys(logsResponse.body), ['logs', 'query', 'total']);
     assert.equal(typeof logsResponse.body.total, 'number');
     assert.equal(logsResponse.body.query.dependency, 'redis');
     assert.equal(logsResponse.body.query.keyword, 'redis');
@@ -80,6 +86,7 @@ test('verbose 日志接口支持中文智能体名称并可读取文件内容', 
       `/api/verbose/logs?agent=${encodeURIComponent(verboseFixture.agentName)}`
     );
     assert.equal(logsResponse.status, 200);
+    assert.deepEqual(sortedKeys(logsResponse.body), ['agent', 'logs']);
     assert.equal(logsResponse.body.agent, verboseFixture.agentName);
     assert.equal(Array.isArray(logsResponse.body.logs), true);
     assert.equal(logsResponse.body.logs.length, 1);
@@ -91,6 +98,7 @@ test('verbose 日志接口支持中文智能体名称并可读取文件内容', 
       `/api/verbose/log-content?file=${encodeURIComponent(verboseFixture.fileName)}`
     );
     assert.equal(contentResponse.status, 200);
+    assert.deepEqual(sortedKeys(contentResponse.body), ['content', 'fileName']);
     assert.equal(contentResponse.body.fileName, verboseFixture.fileName);
     assert.equal(contentResponse.body.content, verboseFixture.content);
   } finally {
