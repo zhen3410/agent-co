@@ -68,6 +68,7 @@ test('默认账号可登录，错误密码会被拒绝', async () => {
 
   assert.equal(denied.status, 401);
   assert.equal(denied.body.success, false);
+  assert.equal(denied.body.error, '用户名或密码错误');
 });
 
 test('管理端点要求 x-admin-token', async () => {

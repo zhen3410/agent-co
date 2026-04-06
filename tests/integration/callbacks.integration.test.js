@@ -22,9 +22,11 @@ test('callback 接口未鉴权返回 401', async () => {
       body: { content: 'hello' }
     });
     assert.equal(postResponse.status, 401);
+    assert.equal(postResponse.body.error, 'Unauthorized');
 
     const contextResponse = await fixture.request('/api/callbacks/thread-context?sessionid=default');
     assert.equal(contextResponse.status, 401);
+    assert.equal(contextResponse.body.error, 'Unauthorized');
   } finally {
     await fixture.cleanup();
   }

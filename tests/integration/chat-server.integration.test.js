@@ -1197,6 +1197,22 @@ test('聊天主链在 API 模式下会通过统一 invoker 调用 OpenAI-compati
   }
 });
 
+test('依赖状态接口继续返回可解析的 JSON 结构', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const response = await fixture.request('/api/dependencies/status');
+    assert.equal(response.status === 200 || response.status === 503, true);
+    assert.equal(typeof response.body.healthy, 'boolean');
+    assert.equal(typeof response.body.checkedAt, 'number');
+    assert.equal(Array.isArray(response.body.dependencies), true);
+    assert.equal(Array.isArray(response.body.logs), true);
+    assert.equal(response.body.dependencies.some(item => item.name === 'redis'), true);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('chat-stream 在 API 模式下会先推送 agent_delta，再推送最终 agent_message', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-stream-api-agent-'));
   const connectionStub = await createOpenAICompatibleStub((req, res) => {
