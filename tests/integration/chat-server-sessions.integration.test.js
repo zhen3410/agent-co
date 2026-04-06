@@ -28,11 +28,12 @@ test('会话 HTTP 契约：创建、选择、重命名与删除都保持 activeS
     });
     assert.equal(createResponse.status, 200);
     assert.equal(createResponse.body.success, true);
-    assert.ok(createResponse.body.activeSessionId);
-    assert.equal(createResponse.body.activeSessionId, createResponse.body.session.id);
-    assert.equal(createResponse.body.session.name.length <= 40, true);
-
     const secondSessionId = createResponse.body.session.id;
+    assert.ok(createResponse.body.activeSessionId);
+    assert.notEqual(createResponse.body.activeSessionId, 'default');
+    assert.equal(createResponse.body.activeSessionId, createResponse.body.session.id);
+    assert.equal(createResponse.body.activeSessionId, secondSessionId);
+    assert.equal(createResponse.body.session.name.length <= 40, true);
 
     const secondMessage = 'second session message';
     const secondChat = await fixture.request('/api/chat', {
