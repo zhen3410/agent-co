@@ -38,6 +38,7 @@ const DEFAULT_REDIS_CHAT_SESSIONS_KEY = 'bot-room:chat:sessions:v1';
 const REDIS_PERSIST_DEBOUNCE_MS = 500;
 const REDIS_REQUIRED = process.env.BOT_ROOM_REDIS_REQUIRED !== 'false';
 const REDIS_DISABLED = process.env.BOT_ROOM_DISABLE_REDIS === 'true';
+const ENV_REDIS_CHAT_SESSIONS_KEY = (process.env.BOT_ROOM_CHAT_SESSIONS_KEY || '').trim();
 const CALLBACK_AUTH_TOKEN = process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
 const CALLBACK_AUTH_HEADER = 'x-bot-room-callback-token';
 const SESSION_CHAIN_SETTINGS_MAX = 1000;
@@ -369,13 +370,28 @@ function buildDetailedSessionResponse(session: UserChatSession): NormalizedUserC
   };
 }
 
+function isTestRedisChatSessionsKey(key: string): boolean {
+  return key.startsWith('bot-room:chat:sessions:test:')
+    || key.startsWith('bot-room:test:session-chain-settings:');
+}
+
 async function loadRuntimeConfigFromRedis(): Promise<void> {
   if (REDIS_DISABLED) return;
   try {
+    if (ENV_REDIS_CHAT_SESSIONS_KEY) {
+      redisChatSessionsKey = ENV_REDIS_CHAT_SESSIONS_KEY;
+      console.log(`[Redis] 已使用环境变量指定 chat_sessions_key=${redisChatSessionsKey}`);
+      return;
+    }
+
     const config = await redisClient.hgetall(REDIS_CONFIG_KEY);
     const configuredKey = (config.chat_sessions_key || '').trim();
     if (configuredKey) {
-      redisChatSessionsKey = configuredKey;
+      if (process.env.NODE_ENV !== 'test' && isTestRedisChatSessionsKey(configuredKey)) {
+        console.warn(`[Redis] 检测到残留测试 chat_sessions_key=${configuredKey}，当前 NODE_ENV=${process.env.NODE_ENV || 'development'}，已回退默认 key=${DEFAULT_REDIS_CHAT_SESSIONS_KEY}`);
+      } else {
+        redisChatSessionsKey = configuredKey;
+      }
     }
     console.log(`[Redis] 已加载运行配置 key=${REDIS_CONFIG_KEY}, chat_sessions_key=${redisChatSessionsKey}`);
   } catch (error) {
@@ -830,6 +846,31 @@ function collectEligibleMentions(message: string, session: UserChatSession): { m
   };
 }
 
+function collectImplicitPeerContinuationMentions(message: string, session: UserChatSession, sender?: string | null): string[] {
+  const text = message || '';
+  if (!text) return [];
+
+  const continuationHints = '(?:请|继续|补充|回应|跟进|接着|展开|说明|回答|评估|接力|发表|给出|看看|确认|讲讲)';
+  const handoffHints = '(?:请|让|由|烦请|麻烦)';
+  const matches: string[] = [];
+
+  for (const agentName of getSessionEnabledAgents(session)) {
+    if (!agentName || agentName === sender) {
+      continue;
+    }
+
+    const escapedName = agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const directHandoffPattern = new RegExp(`${handoffHints}\\s*@${escapedName}(?=\\s|$|[，。！？、,:：；;])`, 'u');
+    const mentionThenContinuePattern = new RegExp(`@${escapedName}\\s*(?=${continuationHints})`, 'u');
+
+    if (directHandoffPattern.test(text) || mentionThenContinuePattern.test(text)) {
+      matches.push(agentName);
+    }
+  }
+
+  return matches;
+}
+
 function expireDisabledCurrentAgent(userKey: string, session: UserChatSession): string | null {
   if (!session.currentAgent) return null;
   if (isAgentEnabledForSession(session, session.currentAgent)) {
@@ -1151,6 +1192,12 @@ async function executeAgentTurn(params: {
         chainTargets = rawMessage.invokeAgents;
       } else {
         chainTargets = agentManager.extractChainInvocations(rawMessage.text || '');
+        if (chainTargets.length === 0 && discussionMode === 'peer') {
+          chainTargets = collectImplicitPeerContinuationMentions(rawMessage.text || '', session, rawMessage.sender);
+          if (chainTargets.length > 0) {
+            appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${rawMessage.sender || task.agentName} stage=implicit_single_at_upgrade targets=${chainTargets.join(',')}`);
+          }
+        }
       }
       const chainedMentions = chainTargets.filter(name => name !== rawMessage.sender && agentManager.hasAgent(name));
 
@@ -1158,6 +1205,12 @@ async function executeAgentTurn(params: {
       let displayText = rawMessage.text || '';
       if (rawMessage.invokeAgents && rawMessage.invokeAgents.length > 0 && !agentManager.extractChainInvocations(displayText).length) {
         for (const agentName of rawMessage.invokeAgents) {
+          const escapedName = agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          displayText = displayText.replace(new RegExp(`@${escapedName}`, 'g'), `@@${agentName}`);
+        }
+      }
+      if (discussionMode === 'peer' && chainTargets.length > 0 && !agentManager.extractChainInvocations(displayText).length) {
+        for (const agentName of chainTargets) {
           const escapedName = agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           displayText = displayText.replace(new RegExp(`@${escapedName}`, 'g'), `@@${agentName}`);
         }

@@ -152,8 +152,6 @@ async function ensureRedisTestServer() {
 async function createRedisBackedChatServerFixture(options = {}) {
   const redisHandle = await ensureRedisTestServer();
   const redisKey = `bot-room:chat:sessions:test:${Date.now()}:${Math.random().toString(16).slice(2)}`;
-  const previousRedisKey = redisCli(['HGET', 'bot-room:config', 'chat_sessions_key']);
-  redisCli(['HSET', 'bot-room:config', 'chat_sessions_key', redisKey]);
   if (options.redisState) {
     redisCli(['SET', redisKey, JSON.stringify(options.redisState)]);
   } else {
@@ -169,13 +167,14 @@ async function createRedisBackedChatServerFixture(options = {}) {
     env: {
       ...process.env,
       NODE_ENV: 'test',
-      PORT: String(port),
-      BOT_ROOM_AUTH_ENABLED: 'true',
-      BOT_ROOM_REDIS_REQUIRED: 'false',
-      BOT_ROOM_DISABLE_REDIS: 'false',
-      AGENT_DATA_FILE: agentDataFile,
-      AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
-      AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
+        PORT: String(port),
+        BOT_ROOM_AUTH_ENABLED: 'true',
+        BOT_ROOM_REDIS_REQUIRED: 'false',
+        BOT_ROOM_DISABLE_REDIS: 'false',
+        BOT_ROOM_CHAT_SESSIONS_KEY: redisKey,
+        AGENT_DATA_FILE: agentDataFile,
+        AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
+        AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
       BOT_ROOM_CLI_TIMEOUT_MS: '15000',
       BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
       BOT_ROOM_CLI_KILL_GRACE_MS: '200',
@@ -194,11 +193,6 @@ async function createRedisBackedChatServerFixture(options = {}) {
   } catch (error) {
     if (!child.killed) child.kill('SIGKILL');
     await authFixture.cleanup();
-    if (previousRedisKey) {
-      redisCli(['HSET', 'bot-room:config', 'chat_sessions_key', previousRedisKey]);
-    } else {
-      redisCli(['HDEL', 'bot-room:config', 'chat_sessions_key']);
-    }
     redisCli(['DEL', redisKey]);
     await redisHandle.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -258,11 +252,6 @@ async function createRedisBackedChatServerFixture(options = {}) {
         if (!child.killed) child.kill('SIGKILL');
       }
       await authFixture.cleanup();
-      if (previousRedisKey) {
-        redisCli(['HSET', 'bot-room:config', 'chat_sessions_key', previousRedisKey]);
-      } else {
-        redisCli(['HDEL', 'bot-room:config', 'chat_sessions_key']);
-      }
       redisCli(['DEL', redisKey]);
       await redisHandle.cleanup();
       rmSync(tempDir, { recursive: true, force: true });
@@ -501,6 +490,55 @@ async function post(content, invokeAgents) {
   console.error(error);
   process.exit(1);
 });
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
+function createSingleAtContinuationClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+if (agentName === 'Alice') {
+  process.stdout.write(JSON.stringify({ output_text: '@Bob 请从增长视角继续补充。' }) + '\\n');
+} else if (agentName === 'Bob') {
+  process.stdout.write(JSON.stringify({ output_text: 'Bob 已收到 Alice 的点名并继续补充。' }) + '\\n');
+} else {
+  process.stdout.write(JSON.stringify({ output_text: \`\${agentName} 默认回复\` }) + '\\n');
+}
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
+function createSingleAtReferenceOnlyClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+if (agentName === 'Alice') {
+  process.stdout.write(JSON.stringify({ output_text: '我同意 @Bob 刚才提到的增长判断。' }) + '\\n');
+} else if (agentName === 'Bob') {
+  process.stdout.write(JSON.stringify({ output_text: 'Bob 不应因普通引用被继续触发。' }) + '\\n');
+} else {
+  process.stdout.write(JSON.stringify({ output_text: \`\${agentName} 默认回复\` }) + '\\n');
+}
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
+function createAllMentionClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+if (agentName === 'Alice') {
+  process.stdout.write(JSON.stringify({ output_text: '我建议 @所有人 稍后一起看下这个方向。' }) + '\\n');
+} else {
+  process.stdout.write(JSON.stringify({ output_text: \`\${agentName} 不应因 @所有人 被隐式继续触发\` }) + '\\n');
+}
 EOF
 `, 'utf8');
   chmodSync(fakeClaude, 0o755);
@@ -2395,6 +2433,157 @@ test('peer 模式下显式继续若因队列限制未实际入队则会标记为
   }
 });
 
+test('peer 模式下单 @ 点名会兼容升级为继续传播', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-single-at-upgrade-'));
+  createSingleAtContinuationClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'peer single at upgrade discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          discussionMode: 'peer'
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请开始讨论' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob']);
+    assert.deepEqual(chatResponse.body.aiMessages[0].invokeAgents, ['Bob']);
+    assert.match(chatResponse.body.aiMessages[0].text, /@@Bob/);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.session.discussionMode, 'peer');
+    assert.equal(historyResponse.body.session.discussionState, 'paused');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('peer 模式下普通引用型单 @ 不会被兼容升级为继续传播', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-single-at-reference-only-'));
+  createSingleAtReferenceOnlyClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'peer single at reference only discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          discussionMode: 'peer'
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请开始讨论' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
+    assert.equal(chatResponse.body.aiMessages[0].invokeAgents, undefined);
+    assert.doesNotMatch(chatResponse.body.aiMessages[0].text, /@@Bob/);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.session.discussionState, 'paused');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('peer 模式下 @所有人 不会被兼容升级为继续传播', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-all-no-upgrade-'));
+  createAllMentionClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'peer all no upgrade discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId: createResponse.body.session.id,
+        patch: {
+          discussionMode: 'peer'
+        }
+      }
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请开始讨论' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
+    assert.equal(chatResponse.body.aiMessages[0].invokeAgents, undefined);
+    assert.doesNotMatch(chatResponse.body.aiMessages[0].text, /@@/);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.session.discussionState, 'paused');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('legacy chained pending task 在恢复执行时会被兼容映射并继续执行', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-legacy-chained-resume-'));
   const fakeClaude = join(tempDir, 'claude');
@@ -2500,6 +2689,45 @@ test('classic 模式下原有链式传播行为保持不变', async () => {
 
     assert.equal(chatResponse.status, 200);
     assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob']);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.session.discussionMode, 'classic');
+    assert.equal(historyResponse.body.session.discussionState, 'active');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('classic 模式下单 @ 点名不会兼容升级为继续传播', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-classic-single-at-no-upgrade-'));
+  createSingleAtContinuationClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'classic single at no upgrade discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请开始讨论' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
+    assert.equal(chatResponse.body.aiMessages[0].invokeAgents, undefined);
 
     const historyResponse = await fixture.request('/api/history');
     assert.equal(historyResponse.status, 200);
@@ -3014,6 +3242,140 @@ test('peer 模式下生成总结期间会拒绝新的聊天请求且不破坏原
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('非 test 环境启动时会忽略 Redis 中残留的测试 chat_sessions_key 并回退正式 key', async () => {
+  const previousDefaultState = redisCli(['GET', 'bot-room:chat:sessions:v1']);
+  const previousConfiguredKey = redisCli(['HGET', 'bot-room:config', 'chat_sessions_key']);
+  const now = Date.now();
+  const testRedisKey = `bot-room:chat:sessions:test:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+  const productionState = {
+    version: 1,
+    userChatSessions: {
+      'user:admin': [
+        {
+          id: 'default',
+          name: '正式恢复会话',
+          history: [
+            {
+              id: 'prod-msg-1',
+              role: 'user',
+              sender: '用户',
+              text: '这是一条正式会话消息',
+              timestamp: now - 1000
+            }
+          ],
+          currentAgent: null,
+          enabledAgents: [],
+          agentWorkdirs: {},
+          createdAt: now - 1000,
+          updatedAt: now
+        }
+      ]
+    },
+    userActiveChatSession: {
+      'user:admin': 'default'
+    }
+  };
+
+  redisCli(['SET', 'bot-room:chat:sessions:v1', JSON.stringify(productionState)]);
+  redisCli(['SET', testRedisKey, JSON.stringify({
+    version: 1,
+    userChatSessions: {
+      'user:admin': [
+        {
+          id: 'default',
+          name: '测试污染会话',
+          history: [],
+          currentAgent: null,
+          enabledAgents: [],
+          agentWorkdirs: {},
+          createdAt: now - 500,
+          updatedAt: now - 500
+        }
+      ]
+    },
+    userActiveChatSession: {
+      'user:admin': 'default'
+    }
+  })]);
+  redisCli(['HSET', 'bot-room:config', 'chat_sessions_key', testRedisKey]);
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-prod-ignore-test-key-'));
+  const agentDataFile = join(tempDir, 'agents.json');
+  const authFixture = await createAuthAdminFixture();
+  const port = getRandomPort();
+  const child = spawn('node', ['dist/server.js'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      PORT: String(port),
+      BOT_ROOM_AUTH_ENABLED: 'true',
+      BOT_ROOM_REDIS_REQUIRED: 'false',
+      BOT_ROOM_DISABLE_REDIS: 'false',
+      AGENT_DATA_FILE: agentDataFile,
+      AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
+      AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
+      BOT_ROOM_CLI_TIMEOUT_MS: '15000',
+      BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
+      BOT_ROOM_CLI_KILL_GRACE_MS: '200'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  let stderr = '';
+  child.stderr.on('data', chunk => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    await waitForChatServer(port);
+
+    const loginResponse = await fetch(`http://127.0.0.1:${port}/api/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ username: 'admin', password: 'Admin1234!@#' })
+    });
+    const loginText = await loginResponse.text();
+    assert.equal(loginResponse.status, 200, loginText);
+
+    const cookies = parseSetCookie(loginResponse.headers.get('set-cookie')).join('; ');
+    const historyResponse = await fetch(`http://127.0.0.1:${port}/api/history`, {
+      headers: {
+        Cookie: cookies
+      }
+    });
+    const historyText = await historyResponse.text();
+    assert.equal(historyResponse.status, 200, historyText);
+    const historyBody = JSON.parse(historyText);
+
+    assert.equal(historyBody.session.name, '正式恢复会话');
+    assert.equal(historyBody.messages.length, 1);
+    assert.ok(historyBody.chatSessions.some(item => item.name === '正式恢复会话'));
+    assert.ok(!historyBody.chatSessions.some(item => item.name === '测试污染会话'));
+  } finally {
+    if (!child.killed) {
+      child.kill('SIGTERM');
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (!child.killed) child.kill('SIGKILL');
+    }
+    await authFixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+    redisCli(['DEL', testRedisKey]);
+    if (previousConfiguredKey) {
+      redisCli(['HSET', 'bot-room:config', 'chat_sessions_key', previousConfiguredKey]);
+    } else {
+      redisCli(['HDEL', 'bot-room:config', 'chat_sessions_key']);
+    }
+    if (previousDefaultState) {
+      redisCli(['SET', 'bot-room:chat:sessions:v1', previousDefaultState]);
+    } else {
+      redisCli(['DEL', 'bot-room:chat:sessions:v1']);
+    }
   }
 });
 
