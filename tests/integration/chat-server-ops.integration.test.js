@@ -63,7 +63,9 @@ test('依赖状态与日志查询仍返回 JSON 契约并支持过滤', async ()
     assert.equal(typeof logsResponse.body.total, 'number');
     assert.equal(logsResponse.body.query.dependency, 'redis');
     assert.equal(logsResponse.body.query.keyword, 'redis');
+    assert.equal(logsResponse.body.query.level, 'info');
     assert.equal(Array.isArray(logsResponse.body.logs), true);
+    assert.equal(logsResponse.body.logs.length > 0, true);
     assert.equal(logsResponse.body.logs.every(item => item.dependency === 'redis'), true);
   } finally {
     await fixture.cleanup();
