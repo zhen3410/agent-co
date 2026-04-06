@@ -6,7 +6,8 @@
 
 import * as path from 'path';
 import { createAuthAdminClient } from './chat/infrastructure/auth-admin-client';
-import { createChatRuntime, createChatAgentStoreRuntime, normalizePositiveSessionSetting, ChatRuntime } from './chat/runtime/chat-runtime';
+import { createChatRuntime, normalizePositiveSessionSetting, ChatRuntime } from './chat/runtime/chat-runtime';
+import { createChatAgentStoreRuntime } from './chat/runtime/chat-agent-store-runtime';
 import { createAuthService } from './chat/application/auth-service';
 import { createSessionService } from './chat/application/session-service';
 import { createChatService } from './chat/application/chat-service';

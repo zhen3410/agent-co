@@ -1,6 +1,4 @@
-import * as fs from 'fs';
 import * as http from 'http';
-import * as path from 'path';
 import { parseBody } from '../../shared/http/body';
 import { sendJson } from '../../shared/http/json';
 import { checkRateLimit, getClientIP } from '../../rate-limiter';
@@ -10,6 +8,8 @@ import { loadGroupStore } from '../../group-store';
 import { AgentManager } from '../../agent-manager';
 import { RichBlock } from '../../types';
 import { ChatRuntime } from '../runtime/chat-runtime';
+import { runChatSse } from './chat-sse';
+import { isExistingAbsoluteDirectory } from './workdir-path';
 
 export interface ChatRoutesDependencies {
   chatService: ChatService;
@@ -92,77 +92,19 @@ export async function handleChatRoutes(
       }
 
       const streamSession = deps.sessionService.resolveChatSession({ userKey: deps.userKey }).session;
-
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'X-Accel-Buffering': 'no'
+      await runChatSse(req, res, {
+        runtime: deps.runtime,
+        sessionId: streamSession.id,
+        execute: (callbacks) => deps.chatService.streamMessage({ userKey: deps.userKey }, body, {
+          shouldContinue: callbacks.shouldContinue,
+          onUserMessage: callbacks.onUserMessage,
+          onThinking: callbacks.onThinking,
+          onTextDelta: callbacks.onTextDelta,
+          onMessage: callbacks.onMessage
+        })
       });
-
-      let streamClosed = false;
-      let streamCompleted = false;
-      const markStreamClosed = (source: 'req_aborted' | 'req_close' | 'res_close') => {
-        if (streamClosed) {
-          return;
-        }
-        streamClosed = true;
-        if (!streamCompleted) {
-          deps.runtime.appendOperationalLog('info', 'chat-exec', `session=${streamSession.id} stage=stream_disconnect reason=client_disconnect source=${source}`);
-        }
-        void source;
-      };
-      req.on('aborted', () => markStreamClosed('req_aborted'));
-      req.on('close', () => markStreamClosed('req_close'));
-      res.on('close', () => markStreamClosed('res_close'));
-
-      const sendEvent = (event: string, data: unknown): boolean => {
-        if (streamClosed || res.writableEnded || res.destroyed) {
-          return false;
-        }
-        res.write(`event: ${event}\n`);
-        res.write(`data: ${JSON.stringify(data)}\n\n`);
-        if (typeof (res as unknown as { flush?: () => void }).flush === 'function') {
-          (res as unknown as { flush: () => void }).flush();
-        }
-        return true;
-      };
-
-      const result = await deps.chatService.streamMessage({ userKey: deps.userKey }, body, {
-        shouldContinue: () => !streamClosed && !res.writableEnded && !res.destroyed,
-        onUserMessage: (message) => {
-          sendEvent('user_message', message);
-        },
-        onThinking: (agentName) => {
-          sendEvent('agent_thinking', { agent: agentName });
-        },
-        onTextDelta: (agentName, delta) => {
-          sendEvent('agent_delta', { agent: agentName, delta });
-        },
-        onMessage: (message) => sendEvent('agent_message', message)
-      });
-
-      if (streamClosed || res.writableEnded || res.destroyed) {
-        return true;
-      }
-
-      if (!result.hadVisibleMessages) {
-        sendEvent('error', { error: result.emptyVisibleMessage || '未返回可见消息，请稍后重试或查看日志。' });
-      }
-      if (result.notice) {
-        sendEvent('notice', { notice: result.notice });
-      }
-      sendEvent('done', { currentAgent: result.currentAgent });
-      streamCompleted = true;
-      res.end();
     } catch (error) {
-      if (!res.headersSent) {
-        sendServiceError(res, error);
-      } else {
-        res.write(`event: error\ndata: ${JSON.stringify({ error: (error as Error).message })}\n\n`);
-        res.end();
-      }
+      sendServiceError(res, error);
     }
     return true;
   }
@@ -283,7 +225,7 @@ export async function handleChatRoutes(
         sendJson(res, 200, deps.sessionService.setWorkdir({ userKey: deps.userKey }, body.agentName || '', null));
         return true;
       }
-      if (!path.isAbsolute(workdir) || !fs.existsSync(workdir) || !fs.statSync(workdir).isDirectory()) {
+      if (!isExistingAbsoluteDirectory(workdir)) {
         sendJson(res, 400, { error: 'workdir 必须是存在的绝对目录' });
         return true;
       }

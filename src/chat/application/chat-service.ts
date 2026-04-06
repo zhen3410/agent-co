@@ -64,7 +64,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
 
   function collectEligibleMentions(message: string, session: UserChatSession): { mentions: string[]; ignoredMentions: string[] } {
     const allMentions = agentManager.extractMentions(message);
-    const enabledSet = new Set(sessionService.getSessionEnabledAgents(session));
+    const enabledSet = new Set(sessionService.getEnabledAgents(session));
     return {
       mentions: allMentions.filter(name => enabledSet.has(name)),
       ignoredMentions: allMentions.filter(name => !enabledSet.has(name))
@@ -79,7 +79,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     const handoffHints = '(?:请|让|由|烦请|麻烦)';
     const matches: string[] = [];
 
-    for (const agentName of sessionService.getSessionEnabledAgents(session)) {
+    for (const agentName of sessionService.getEnabledAgents(session)) {
       if (!agentName || agentName === sender) {
         continue;
       }
@@ -188,7 +188,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     const agent = agentManager.getAgent(agentName);
     if (!agent) return [];
 
-    const runtimeWorkdir = sessionService.getUserAgentWorkdir(userKey, session.id, agentName) || agent.workdir;
+    const runtimeWorkdir = sessionService.getAgentWorkdir(userKey, session.id, agentName) || agent.workdir;
     const runtimeAgent = runtimeWorkdir ? { ...agent, workdir: runtimeWorkdir } : agent;
     const logTag = stream ? 'ChatStream' : 'Chat';
     const isApiMode = runtimeAgent.executionMode === 'api';
@@ -369,9 +369,8 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
         };
 
         sawVisibleMessage = true;
-        session.history.push(message);
+        sessionService.appendMessage(session, message);
         aiMessages.push(message);
-        sessionService.touchSession(session);
         onMessage?.(message);
         if (stream) {
           await new Promise<void>(resolve => setImmediate(resolve));
@@ -423,12 +422,11 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     if (!streamStopped && discussionMode === 'peer' && sawVisibleMessage) {
       const hasPendingExplicitContinuation = queue.some(task => task.dispatchKind === 'explicit_chained');
       if (hasPendingExplicitContinuation) {
-        session.discussionState = 'active';
+        sessionService.setDiscussionState(session, 'active');
       } else {
-        session.discussionState = 'paused';
+        sessionService.setDiscussionState(session, 'paused');
         runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=discussion_pause reason=no_explicit_continuation mode=peer`);
       }
-      sessionService.touchSession(session);
     }
 
     return {
@@ -450,10 +448,8 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       throw new ChatServiceError('当前会话正在生成总结，暂时不能发送新消息，请稍后再试。', 409);
     }
     const sessionId = `${userKey}::${session.id}`;
-    const currentAgent = sessionService.expireDisabledCurrentAgent(userKey, session);
-    session.discussionState = 'active';
-    session.pendingAgentTasks = undefined;
-    session.pendingVisibleMessages = undefined;
+    const currentAgent = sessionService.expireInvalidCurrentAgent(userKey, session);
+    sessionService.prepareForIncomingMessage(session);
 
     console.log(`\n[Chat] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
 
@@ -466,7 +462,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       for (const mention of mentions) {
         agentsToRespond.push(mention);
       }
-      sessionService.setUserCurrentAgent(userKey, session.id, mentions[0]);
+      sessionService.selectCurrentAgent(userKey, session.id, mentions[0]);
       console.log(`[Chat] 设置当前对话智能体: ${mentions[0]}`);
     } else if (currentAgent) {
       agentsToRespond.push(currentAgent);
@@ -482,20 +478,18 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       mentions: mentions.length > 0 ? mentions : undefined
     };
 
-    session.history.push(userMessage);
-    sessionService.touchSession(session);
+    sessionService.appendMessage(session, userMessage);
 
     if (agentsToRespond.length === 0) {
       return {
         success: true,
         userMessage,
         aiMessages: [],
-        currentAgent: sessionService.getUserCurrentAgent(userKey, session.id),
+        currentAgent: sessionService.getCurrentAgent(userKey, session.id),
         notice: sessionService.buildNoEnabledAgentsNotice(session, ignoredMentions)
       };
     }
 
-    session.pendingAgentTasks = undefined;
     const { aiMessages } = await executeAgentTurn({
       userKey,
       session,
@@ -514,7 +508,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       success: true,
       userMessage,
       aiMessages,
-      currentAgent: sessionService.getUserCurrentAgent(userKey, session.id),
+      currentAgent: sessionService.getCurrentAgent(userKey, session.id),
       notice: emptyVisibleNotice || (ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined)
     };
   }
@@ -532,10 +526,8 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       throw new ChatServiceError('当前会话正在生成总结，暂时不能发送新消息，请稍后再试。', 409);
     }
     const sessionId = `${userKey}::${session.id}`;
-    const currentAgent = sessionService.expireDisabledCurrentAgent(userKey, session);
-    session.discussionState = 'active';
-    session.pendingAgentTasks = undefined;
-    session.pendingVisibleMessages = undefined;
+    const currentAgent = sessionService.expireInvalidCurrentAgent(userKey, session);
+    sessionService.prepareForIncomingMessage(session);
 
     console.log(`\n[ChatStream] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
     const { mentions, ignoredMentions } = collectEligibleMentions(message, session);
@@ -546,7 +538,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       for (const mention of mentions) {
         agentsToRespond.push(mention);
       }
-      sessionService.setUserCurrentAgent(userKey, session.id, mentions[0]);
+      sessionService.selectCurrentAgent(userKey, session.id, mentions[0]);
       console.log(`[ChatStream] 设置当前对话智能体: ${mentions[0]}`);
     } else if (currentAgent) {
       agentsToRespond.push(currentAgent);
@@ -561,20 +553,18 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       timestamp: Date.now(),
       mentions: mentions.length > 0 ? mentions : undefined
     };
-    session.history.push(userMessage);
-    sessionService.touchSession(session);
+    sessionService.appendMessage(session, userMessage);
     callbacks.onUserMessage(userMessage);
 
     if (agentsToRespond.length === 0) {
       return {
-        currentAgent: sessionService.getUserCurrentAgent(userKey, session.id),
+        currentAgent: sessionService.getCurrentAgent(userKey, session.id),
         notice: sessionService.buildNoEnabledAgentsNotice(session, ignoredMentions),
         hadVisibleMessages: false
       };
     }
 
     const undeliveredMessages: Message[] = [];
-    session.pendingAgentTasks = undefined;
     const executionResult = await executeAgentTurn({
       userKey,
       session,
@@ -594,11 +584,10 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
         }
       }
     });
-    session.pendingAgentTasks = executionResult.pendingTasks.length > 0 ? executionResult.pendingTasks : undefined;
-    session.pendingVisibleMessages = undeliveredMessages.length > 0 ? undeliveredMessages : undefined;
+    sessionService.updatePendingExecution(session, executionResult.pendingTasks, undeliveredMessages);
 
     return {
-      currentAgent: sessionService.getUserCurrentAgent(userKey, session.id),
+      currentAgent: sessionService.getCurrentAgent(userKey, session.id),
       notice: ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined,
       hadVisibleMessages: executionResult.aiMessages.length > 0,
       emptyVisibleMessage: executionResult.aiMessages.length === 0
@@ -613,25 +602,18 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     if (sessionService.isSessionSummaryInProgress(userKey, session)) {
       throw new ChatServiceError('当前会话正在生成总结，暂时不能继续执行剩余链路，请稍后再试。', 409);
     }
-    const pendingVisibleMessages = Array.isArray(session.pendingVisibleMessages)
-      ? session.pendingVisibleMessages.map(message => ({ ...message }))
-      : [];
-    const pendingTasks = Array.isArray(session.pendingAgentTasks)
-      ? session.pendingAgentTasks.map(task => ({ ...task }))
-      : [];
+    const { pendingVisibleMessages, pendingTasks } = sessionService.takePendingExecution(session);
 
     if (pendingVisibleMessages.length === 0 && pendingTasks.length === 0) {
       return {
         success: true,
         resumed: false,
         aiMessages: [],
-        currentAgent: sessionService.getUserCurrentAgent(userKey, session.id),
+        currentAgent: sessionService.getCurrentAgent(userKey, session.id),
         notice: '当前没有可继续执行的剩余链路。'
       };
     }
 
-    session.pendingVisibleMessages = undefined;
-    session.pendingAgentTasks = undefined;
     const { aiMessages, pendingTasks: remainingTasks } = await executeAgentTurn({
       userKey,
       session,
@@ -639,14 +621,14 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       pendingTasks,
       stream: false
     });
-    session.pendingAgentTasks = remainingTasks.length > 0 ? remainingTasks : undefined;
+    sessionService.updatePendingExecution(session, remainingTasks);
     const resumedMessages = [...pendingVisibleMessages, ...aiMessages];
 
     return {
       success: true,
       resumed: true,
       aiMessages: resumedMessages,
-      currentAgent: sessionService.getUserCurrentAgent(userKey, session.id),
+      currentAgent: sessionService.getCurrentAgent(userKey, session.id),
       notice: remainingTasks.length > 0 ? '仍有未完成链路，可再次继续执行。' : undefined
     };
   }
@@ -678,10 +660,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
 
     const preSummaryState = sessionService.snapshotSummaryContinuationState(session);
     try {
-      session.discussionState = 'summarizing';
-      session.pendingAgentTasks = undefined;
-      session.pendingVisibleMessages = undefined;
-      sessionService.touchSession(session);
+      sessionService.markSummaryInProgress(session);
       runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=discussion_summary_start agent=${summaryAgent}`);
 
       const { aiMessages } = await executeAgentTurn({
@@ -702,7 +681,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       return {
         success: true,
         aiMessages,
-        currentAgent: sessionService.getUserCurrentAgent(userKey, session.id)
+        currentAgent: sessionService.getCurrentAgent(userKey, session.id)
       };
     } catch (error) {
       if (runtime.normalizeDiscussionMode(session.discussionMode) === 'peer' && session.discussionState === 'summarizing') {

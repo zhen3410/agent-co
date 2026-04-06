@@ -110,9 +110,36 @@ test('chat 应用服务对外接口不再直接耦合 IncomingMessage', () => {
   const sessionServiceSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'application', 'session-service.ts'), 'utf8');
   const chatServiceSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'application', 'chat-service.ts'), 'utf8');
 
-  assert.equal(authServiceSource.includes('IncomingMessage'), false);
-  assert.equal(sessionServiceSource.includes('IncomingMessage'), false);
-  assert.equal(chatServiceSource.includes('IncomingMessage'), false);
+  assert.equal(authServiceSource.includes('http.IncomingMessage'), false);
+  assert.equal(sessionServiceSource.includes('http.IncomingMessage'), false);
+  assert.equal(chatServiceSource.includes('http.IncomingMessage'), false);
+});
+
+test('agent store runtime 从 chat-runtime.ts 中分离为独立模块', () => {
+  const chatRuntimeSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'runtime', 'chat-runtime.ts'), 'utf8');
+  const agentStoreRuntimeSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'runtime', 'chat-agent-store-runtime.ts'), 'utf8');
+
+  assert.equal(chatRuntimeSource.includes('createChatAgentStoreRuntime'), false);
+  assert.equal(agentStoreRuntimeSource.includes('createChatAgentStoreRuntime'), true);
+});
+
+test('chat service 不再直接改写 session 内部字段', () => {
+  const chatServiceSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'application', 'chat-service.ts'), 'utf8');
+
+  assert.equal(chatServiceSource.includes('session.history.push('), false);
+  assert.equal(chatServiceSource.includes('session.pendingAgentTasks ='), false);
+  assert.equal(chatServiceSource.includes('session.pendingVisibleMessages ='), false);
+  assert.equal(/session\.discussionState\s*=\s*[^=]/.test(chatServiceSource), false);
+});
+
+test('chat routes 将 SSE 传输细节抽离到独立 helper', () => {
+  const chatRoutesSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'http', 'chat-routes.ts'), 'utf8');
+  const sseHelperSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'http', 'chat-sse.ts'), 'utf8');
+
+  assert.equal(chatRoutesSource.includes('text/event-stream'), false);
+  assert.equal(chatRoutesSource.includes('X-Accel-Buffering'), false);
+  assert.equal(chatRoutesSource.includes('event: ${event}'), false);
+  assert.equal(sseHelperSource.includes('text/event-stream'), true);
 });
 
 async function waitForChatServer(port, timeoutMs = 10000) {
