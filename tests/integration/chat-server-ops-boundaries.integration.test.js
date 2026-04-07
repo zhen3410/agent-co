@@ -3,25 +3,8 @@ const assert = require('node:assert/strict');
 const { existsSync, mkdtempSync, writeFileSync, rmSync } = require('node:fs');
 const path = require('node:path');
 const { tmpdir } = require('node:os');
-const { spawnSync } = require('node:child_process');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
-
-function ensureBuildArtifacts() {
-  const opsRoutesDistPath = path.join(repoRoot, 'dist', 'chat', 'http', 'ops-routes.js');
-  if (existsSync(opsRoutesDistPath)) {
-    return;
-  }
-
-  const result = spawnSync('npm', ['run', 'build'], {
-    cwd: repoRoot,
-    env: process.env,
-    encoding: 'utf8'
-  });
-  if (result.status !== 0) {
-    throw new Error(`failed to build boundary test artifacts:\n${result.stdout || ''}\n${result.stderr || ''}`);
-  }
-}
 
 function createMockResponse() {
   return {
@@ -46,8 +29,26 @@ function parseJsonResponse(res) {
   };
 }
 
+test('ops route modules 保持稳定的 handler export surface', () => {
+  assert.deepEqual(
+    Object.keys(require(path.join(repoRoot, 'dist', 'chat', 'http', 'ops-routes.js'))).sort(),
+    ['handleOpsRoutes']
+  );
+  assert.deepEqual(
+    Object.keys(require(path.join(repoRoot, 'dist', 'chat', 'http', 'ops', 'dependency-routes.js'))).sort(),
+    ['handleDependencyRoutes']
+  );
+  assert.deepEqual(
+    Object.keys(require(path.join(repoRoot, 'dist', 'chat', 'http', 'ops', 'system-routes.js'))).sort(),
+    ['handleSystemRoutes']
+  );
+  assert.deepEqual(
+    Object.keys(require(path.join(repoRoot, 'dist', 'chat', 'http', 'ops', 'verbose-log-routes.js'))).sort(),
+    ['handleVerboseLogRoutes']
+  );
+});
+
 test('依赖路由 helper 返回依赖状态 JSON 契约', async () => {
-  ensureBuildArtifacts();
   const { handleDependencyRoutes } = require(path.join(repoRoot, 'dist', 'chat', 'http', 'ops', 'dependency-routes.js'));
   const res = createMockResponse();
 
@@ -76,7 +77,6 @@ test('依赖路由 helper 返回依赖状态 JSON 契约', async () => {
 });
 
 test('系统路由 helper 返回 workdir 选项数组', async () => {
-  ensureBuildArtifacts();
   const { handleSystemRoutes } = require(path.join(repoRoot, 'dist', 'chat', 'http', 'ops', 'system-routes.js'));
   const res = createMockResponse();
 
@@ -94,7 +94,6 @@ test('系统路由 helper 返回 workdir 选项数组', async () => {
 });
 
 test('verbose log 路由 helper 能返回指定 agent 的日志列表', async () => {
-  ensureBuildArtifacts();
   const { handleVerboseLogRoutes } = require(path.join(repoRoot, 'dist', 'chat', 'http', 'ops', 'verbose-log-routes.js'));
   const tempDir = mkdtempSync(path.join(tmpdir(), 'ops-boundary-logs-'));
   try {
@@ -117,14 +116,57 @@ test('verbose log 路由 helper 能返回指定 agent 的日志列表', async ()
     assert.equal(response.statusCode, 200);
     assert.equal(response.body.agent, 'Codex架构师');
     assert.equal(response.body.logs.length, 1);
-    assert.equal(response.body.logs[0].agent, 'Codex架构师');
+  assert.equal(response.body.logs[0].agent, 'Codex架构师');
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
+test('依赖日志路由对倒置时间范围保持稳定的验证错误响应', async () => {
+  const { handleDependencyRoutes } = require(path.join(repoRoot, 'dist', 'chat', 'http', 'ops', 'dependency-routes.js'));
+  const res = createMockResponse();
+
+  const handled = await handleDependencyRoutes(
+    { method: 'GET' },
+    res,
+    new URL('http://127.0.0.1/api/dependencies/logs?startDate=2026-04-08&endDate=2026-04-07'),
+    {
+      runtime: {
+        listDependencyStatusLogs() {
+          return [];
+        }
+      }
+    }
+  );
+
+  assert.equal(handled, true);
+  assert.deepEqual(parseJsonResponse(res), {
+    statusCode: 400,
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: { error: 'startDate 不能晚于 endDate' }
+  });
+});
+
+test('verbose log content 路由对非法文件参数保持稳定的验证错误响应', async () => {
+  const { handleVerboseLogRoutes } = require(path.join(repoRoot, 'dist', 'chat', 'http', 'ops', 'verbose-log-routes.js'));
+  const res = createMockResponse();
+
+  const handled = await handleVerboseLogRoutes(
+    { method: 'GET' },
+    res,
+    new URL('http://127.0.0.1/api/verbose/log-content?file=../secret.txt'),
+    { verboseLogDir: path.join(repoRoot, 'logs') }
+  );
+
+  assert.equal(handled, true);
+  assert.deepEqual(parseJsonResponse(res), {
+    statusCode: 400,
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: { error: '非法 file 参数' }
+  });
+});
+
 test('ops-routes 继续委托 JSON/ops 路由并对未知路径返回 false', async () => {
-  ensureBuildArtifacts();
   const { handleOpsRoutes } = require(path.join(repoRoot, 'dist', 'chat', 'http', 'ops-routes.js'));
 
   const handledRes = createMockResponse();

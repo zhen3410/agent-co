@@ -13,6 +13,21 @@ function requireBuiltModule(...segments) {
   return require(modulePath);
 }
 
+test('agent invocation low-level modules expose a stable export surface', () => {
+  assert.deepEqual(
+    Object.keys(requireBuiltModule('agent-invocation', 'invoke-target.js')).sort(),
+    ['normalizeCliName', 'normalizeInvokeTarget']
+  );
+  assert.deepEqual(
+    Object.keys(requireBuiltModule('agent-invocation', 'model-connection-loader.js')).sort(),
+    ['loadApiAgentConnection', 'resolveModelConnectionDataFile']
+  );
+  assert.deepEqual(
+    Object.keys(requireBuiltModule('agent-invocation', 'invoke-cli-agent.js')).sort(),
+    ['buildCliInvokeParams', 'invokeCliAgent']
+  );
+});
+
 test('invoke target normalization keeps api mode and prefers cliName over legacy cli', () => {
   const { normalizeCliName, normalizeInvokeTarget } = requireBuiltModule('agent-invocation', 'invoke-target.js');
 

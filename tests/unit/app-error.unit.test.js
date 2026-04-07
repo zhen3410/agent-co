@@ -2,36 +2,59 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const distDir = path.join(repoRoot, 'dist');
 
-function ensureBuildArtifacts() {
-  if (fs.existsSync(path.join(distDir, 'shared', 'errors', 'app-error.js'))) {
-    return;
-  }
-
-  const result = spawnSync('npm', ['run', 'build'], {
-    cwd: repoRoot,
-    env: process.env,
-    encoding: 'utf8'
-  });
-  if (result.status !== 0) {
-    throw new Error(`failed to build unit test artifacts:\n${result.stdout || ''}\n${result.stderr || ''}`);
-  }
+function requireBuiltModule(...segments) {
+  const modulePath = path.join(distDir, ...segments);
+  delete require.cache[require.resolve(modulePath)];
+  return require(modulePath);
 }
 
-test('AppError 提供稳定的 code/status/details 映射', () => {
-  ensureBuildArtifacts();
+test('fast test scripts build first and fast-layer tests do not self-build', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
 
-  const { AppError, isAppError } = require(path.join(distDir, 'shared', 'errors', 'app-error.js'));
+  assert.match(packageJson.scripts['test:unit'], /^npm run build && /);
+  assert.match(packageJson.scripts['test:fast'], /^npm run build && /);
+
+  for (const relativePath of [
+    'tests/unit/agent-invocation.unit.test.js',
+    'tests/unit/session-discussion-rules.unit.test.js',
+    'tests/integration/chat-server-runtime-contract.integration.test.js',
+    'tests/integration/chat-server-service-boundaries.integration.test.js',
+    'tests/integration/chat-server-session-service-boundaries.integration.test.js',
+    'tests/integration/chat-server-ops-boundaries.integration.test.js'
+  ]) {
+    const source = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+    assert.doesNotMatch(source, /ensureBuildArtifacts/);
+    assert.doesNotMatch(source, /spawnSync\((?:'|")npm(?:'|"),\s*\[(?:'|")run(?:'|"),\s*(?:'|")build(?:'|")\]\)/);
+  }
+});
+
+test('typed app error modules expose a stable low-level export surface', () => {
+  assert.deepEqual(
+    Object.keys(requireBuiltModule('shared', 'errors', 'app-error.js')).sort(),
+    ['AppError', 'isAppError']
+  );
+  assert.deepEqual(
+    Object.keys(requireBuiltModule('shared', 'errors', 'app-error-codes.js')).sort(),
+    ['APP_ERROR_CODES', 'getAppErrorCodeForStatusCode', 'getAppErrorStatusCode']
+  );
+  assert.deepEqual(
+    Object.keys(requireBuiltModule('shared', 'http', 'error-mapper.js')).sort(),
+    ['mapHttpError']
+  );
+});
+
+test('AppError 提供稳定的 code/status/details 映射', () => {
+  const { AppError, isAppError } = requireBuiltModule('shared', 'errors', 'app-error.js');
   const {
     APP_ERROR_CODES,
     getAppErrorCodeForStatusCode,
     getAppErrorStatusCode
-  } = require(path.join(distDir, 'shared', 'errors', 'app-error-codes.js'));
-  const { mapHttpError } = require(path.join(distDir, 'shared', 'http', 'error-mapper.js'));
+  } = requireBuiltModule('shared', 'errors', 'app-error-codes.js');
+  const { mapHttpError } = requireBuiltModule('shared', 'http', 'error-mapper.js');
 
   const error = new AppError('登录尝试过于频繁，请稍后再试', {
     code: APP_ERROR_CODES.RATE_LIMITED
@@ -49,12 +72,10 @@ test('AppError 提供稳定的 code/status/details 映射', () => {
 });
 
 test('HTTP 错误映射保留 invalid JSON 与 fallback 语义', () => {
-  ensureBuildArtifacts();
-
-  const { createHttpBodyParseError } = require(path.join(distDir, 'shared', 'http', 'body.js'));
-  const { AppError } = require(path.join(distDir, 'shared', 'errors', 'app-error.js'));
-  const { APP_ERROR_CODES } = require(path.join(distDir, 'shared', 'errors', 'app-error-codes.js'));
-  const { mapHttpError } = require(path.join(distDir, 'shared', 'http', 'error-mapper.js'));
+  const { createHttpBodyParseError } = requireBuiltModule('shared', 'http', 'body.js');
+  const { AppError } = requireBuiltModule('shared', 'errors', 'app-error.js');
+  const { APP_ERROR_CODES } = requireBuiltModule('shared', 'errors', 'app-error-codes.js');
+  const { mapHttpError } = requireBuiltModule('shared', 'http', 'error-mapper.js');
 
   assert.deepEqual(mapHttpError(createHttpBodyParseError(), { invalidJsonStatus: 422 }), {
     statusCode: 422,
@@ -89,9 +110,7 @@ test('HTTP 错误映射保留 invalid JSON 与 fallback 语义', () => {
 });
 
 test('状态码到 AppError code 的映射是严格的，不会静默吞掉未知状态', () => {
-  ensureBuildArtifacts();
-
-  const { getAppErrorCodeForStatusCode } = require(path.join(distDir, 'shared', 'errors', 'app-error-codes.js'));
+  const { getAppErrorCodeForStatusCode } = requireBuiltModule('shared', 'errors', 'app-error-codes.js');
 
   assert.throws(
     () => getAppErrorCodeForStatusCode(418),
@@ -99,12 +118,23 @@ test('状态码到 AppError code 的映射是严格的，不会静默吞掉未�
   );
 });
 
-test('默认 HTTP 错误映射不会盲目暴露 AppError 的额外字段', () => {
-  ensureBuildArtifacts();
+test('AppError 允许在保留语义 code 的前提下覆盖具体 status', () => {
+  const { AppError } = requireBuiltModule('shared', 'errors', 'app-error.js');
+  const { APP_ERROR_CODES } = requireBuiltModule('shared', 'errors', 'app-error-codes.js');
 
-  const { AppError } = require(path.join(distDir, 'shared', 'errors', 'app-error.js'));
-  const { APP_ERROR_CODES } = require(path.join(distDir, 'shared', 'errors', 'app-error-codes.js'));
-  const { mapHttpError } = require(path.join(distDir, 'shared', 'http', 'error-mapper.js'));
+  const error = new AppError('上游超时', {
+    code: APP_ERROR_CODES.DEPENDENCY_FAILURE,
+    statusCode: 504
+  });
+
+  assert.equal(error.code, APP_ERROR_CODES.DEPENDENCY_FAILURE);
+  assert.equal(error.statusCode, 504);
+});
+
+test('默认 HTTP 错误映射不会盲目暴露 AppError 的额外字段', () => {
+  const { AppError } = requireBuiltModule('shared', 'errors', 'app-error.js');
+  const { APP_ERROR_CODES } = requireBuiltModule('shared', 'errors', 'app-error-codes.js');
+  const { mapHttpError } = requireBuiltModule('shared', 'http', 'error-mapper.js');
 
   const error = new AppError('bad request', {
     code: APP_ERROR_CODES.VALIDATION_FAILED,
