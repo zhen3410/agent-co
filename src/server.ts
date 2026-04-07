@@ -106,13 +106,6 @@ process.on('SIGINT', () => {
   void shutdown().finally(() => process.exit(0));
 });
 
-// Static asset routes remain in create-chat-server.ts / ops-routes.ts.
-// requestUrl.pathname === '/chat-markdown.js'
-// serveStaticFile(res, {
-// requestUrl.pathname === '/chat-composer.js'
-// filePath: 'chat-markdown.js'
-// filePath: 'chat-composer.js'
-
 void startChatServer({
   server,
   hydrate: () => runtime.hydrate(),
