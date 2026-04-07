@@ -1,10 +1,11 @@
 const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
-const { mkdtempSync, rmSync, writeFileSync } = require('node:fs');
+const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
+const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 const {
   loadApiConnectionStore,
   isApiConnectionReferenced,
@@ -51,6 +52,35 @@ async function createModelTestStub(handler) {
   };
 }
 
+async function requestRawJson(url, body) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body
+  });
+
+  const text = await response.text();
+  let json = null;
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+  }
+
+  return { status: response.status, body: json, text };
+}
+
+async function requestRaw(url, options = {}) {
+  const response = await fetch(url, options);
+  return {
+    status: response.status,
+    headers: response.headers,
+    text: await response.text()
+  };
+}
+
 test('默认账号可登录，错误密码会被拒绝', async () => {
   const ok = await fixture.request('/api/auth/verify', {
     method: 'POST',
@@ -68,6 +98,14 @@ test('默认账号可登录，错误密码会被拒绝', async () => {
 
   assert.equal(denied.status, 401);
   assert.equal(denied.body.success, false);
+  assert.equal(denied.body.error, '用户名或密码错误');
+});
+
+test('鉴权管理服务对非法 JSON 登录校验请求返回 400 和错误信息', async () => {
+  const response = await requestRawJson(`http://127.0.0.1:${fixture.port}/api/auth/verify`, '{');
+  assert.equal(response.status, 400);
+  assert.equal(response.body.success, false);
+  assert.equal(response.body.error, 'Invalid JSON');
 });
 
 test('管理端点要求 x-admin-token', async () => {
@@ -81,6 +119,27 @@ test('管理端点要求 x-admin-token', async () => {
   assert.equal(withToken.status, 200);
   assert.ok(Array.isArray(withToken.body.users));
   assert.equal(withToken.body.users.length, 1);
+});
+
+test('聊天端 CORS 仍保留 credentials，而管理端不应新增 credentials', async () => {
+  const chatFixture = await createChatServerFixture();
+
+  try {
+    const chatResponse = await requestRaw(`http://127.0.0.1:${chatFixture.port}/api/auth-status`, {
+      method: 'OPTIONS'
+    });
+    assert.equal(chatResponse.status, 200);
+    assert.equal(chatResponse.headers.get('access-control-allow-credentials'), 'true');
+
+    const adminResponse = await requestRaw(`http://127.0.0.1:${fixture.port}/api/users`, {
+      method: 'OPTIONS',
+      headers: { 'x-admin-token': fixture.adminToken }
+    });
+    assert.equal(adminResponse.status, 200);
+    assert.equal(adminResponse.headers.get('access-control-allow-credentials'), null);
+  } finally {
+    await chatFixture.cleanup();
+  }
 });
 
 
@@ -296,6 +355,56 @@ test('智能体列表会补齐内置智能体，并保留手动添加的智能�
   assert.equal(names.includes('Codex架构师'), true);
   assert.equal(names.includes('Claude'), true);
   assert.equal(names.includes('ManualOnly'), true);
+});
+
+
+
+test('管理端分组接口支持创建、更新和删除', async () => {
+  const headers = { 'x-admin-token': fixture.adminToken };
+
+  const initialAgents = await fixture.request('/api/agents', { headers });
+  assert.equal(initialAgents.status, 200);
+  const seedNames = initialAgents.body.agents.slice(0, 2).map(agent => agent.name);
+  assert.equal(seedNames.length >= 1, true);
+
+  const created = await fixture.request('/api/groups', {
+    method: 'POST',
+    headers,
+    body: {
+      id: 'core',
+      name: '核心组',
+      icon: '🧩',
+      agentNames: [seedNames[0]]
+    }
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.group.id, 'core');
+
+  const updated = await fixture.request('/api/groups/core', {
+    method: 'PUT',
+    headers,
+    body: {
+      name: '核心组2',
+      icon: '🧠',
+      agentNames: seedNames
+    }
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.group.name, '核心组2');
+
+  const listed = await fixture.request('/api/groups', { headers });
+  assert.equal(listed.status, 200);
+  const group = listed.body.groups.find(item => item.id === 'core');
+  assert.ok(group);
+  assert.equal(group.name, '核心组2');
+  assert.deepEqual(group.agentNames, seedNames);
+
+  const removed = await fixture.request('/api/groups/core', {
+    method: 'DELETE',
+    headers
+  });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.id, 'core');
 });
 
 test('管理端可按层级读取当前环境目录用于工作目录下拉', async () => {
@@ -1055,4 +1164,166 @@ test('agent 配置会拒绝非正整数 apiMaxTokens', () => {
   }));
 
   assert.equal(error, 'apiMaxTokens 必须是正整数');
+});
+
+
+test('user admin service 通过 store 保持用户名规范化与凭据校验一致', () => {
+  const { createUserStore } = require('../../dist/admin/infrastructure/user-store.js');
+  const { createUserAdminService } = require('../../dist/admin/application/user-admin-service.js');
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-user-store-'));
+  const usersFile = join(tempDir, 'users.json');
+
+  try {
+    const userStore = createUserStore({
+      dataFile: usersFile,
+      defaultUsername: 'Admin',
+      defaultPassword: 'Admin1234!@#'
+    });
+    const service = createUserAdminService({ userStore });
+
+    const created = service.createUser(' Mixed.User ', 'Password123!');
+    assert.equal(created.username, 'mixed.user');
+
+    const listed = service.listUsers();
+    assert.equal(listed.some(user => user.username === 'mixed.user'), true);
+
+    const verified = service.verifyCredentials(' MIXED.USER ', 'Password123!');
+    assert.ok(verified);
+    assert.equal(verified.username, 'mixed.user');
+
+    const denied = service.verifyCredentials('mixed.user', 'wrong-password');
+    assert.equal(denied, null);
+
+    const persisted = JSON.parse(readFileSync(usersFile, 'utf-8'));
+    assert.equal(persisted.users.some(user => user.username === 'mixed.user'), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('agent admin service 支持延迟生效、显式应用并在删除时清理分组引用', () => {
+  const { createAgentAdminService, parseApplyMode } = require('../../dist/admin/application/agent-admin-service.js');
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-service-'));
+  const agentsFile = join(tempDir, 'agents.json');
+  const groupsFile = join(tempDir, 'groups.json');
+  const connectionsFile = join(tempDir, 'api-connections.json');
+
+  writeFileSync(groupsFile, JSON.stringify({
+    groups: [
+      { id: 'core', name: '核心组', icon: '🧩', agentNames: ['Codex架构师'] }
+    ],
+    updatedAt: Date.now()
+  }, null, 2), 'utf-8');
+
+  try {
+    const service = createAgentAdminService({
+      agentDataFile: agentsFile,
+      groupDataFile: groupsFile,
+      modelConnectionDataFile: connectionsFile
+    });
+
+    assert.equal(parseApplyMode('after_chat'), 'after_chat');
+    assert.equal(parseApplyMode('unexpected'), 'immediate');
+
+    const pending = service.createAgent({
+      applyMode: 'after_chat',
+      agent: {
+        name: 'Planner',
+        avatar: '🗂️',
+        color: '#7c3aed',
+        personality: '擅长整理需求和给出计划。'
+      }
+    });
+    assert.equal(pending.applyMode, 'after_chat');
+
+    const beforeApply = service.listAgents();
+    assert.equal(beforeApply.agents.some(agent => agent.name === 'Planner'), false);
+    assert.equal(beforeApply.pendingAgents.some(agent => agent.name === 'Planner'), true);
+
+    const applied = service.applyPendingAgents();
+    assert.equal(applied.agents.some(agent => agent.name === 'Planner'), true);
+
+    const deleted = service.deleteAgent('Codex架构师', 'immediate');
+    assert.equal(deleted.name, 'Codex架构师');
+
+    const groups = JSON.parse(readFileSync(groupsFile, 'utf-8'));
+    assert.deepEqual(groups.groups, []);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+
+test('auth admin runtime 会在 token 规范化后对空白值回退默认 token', () => {
+  const { createAuthAdminRuntime } = require('../../dist/admin/runtime/auth-admin-runtime.js');
+
+  const runtimeFromWhitespace = createAuthAdminRuntime({
+    port: 3003,
+    adminToken: '   ',
+    dataFile: '/tmp/users.json',
+    defaultPassword: 'Admin1234!@#',
+    agentDataFile: '/tmp/agents.json',
+    nodeEnv: 'test',
+    publicDir: '/tmp/public-auth'
+  });
+  assert.equal(runtimeFromWhitespace.adminToken, 'change-me-in-production');
+
+  const runtimeFromQuotedEmpty = createAuthAdminRuntime({
+    port: 3003,
+    adminToken: ' "" ',
+    dataFile: '/tmp/users.json',
+    defaultPassword: 'Admin1234!@#',
+    agentDataFile: '/tmp/agents.json',
+    nodeEnv: 'test',
+    publicDir: '/tmp/public-auth'
+  });
+  assert.equal(runtimeFromQuotedEmpty.adminToken, 'change-me-in-production');
+});
+
+
+test('user store 初始引导会按原样持久化默认用户名，同时支持按规范化用户名鉴权和管理', () => {
+  const { createUserStore } = require('../../dist/admin/infrastructure/user-store.js');
+  const { createUserAdminService, UserAdminServiceError } = require('../../dist/admin/application/user-admin-service.js');
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-user-bootstrap-'));
+  const usersFile = join(tempDir, 'users.json');
+
+  try {
+    const userStore = createUserStore({
+      dataFile: usersFile,
+      defaultUsername: ' AdminRoot ',
+      defaultPassword: 'Admin1234!@#'
+    });
+    const service = createUserAdminService({ userStore });
+
+    const users = userStore.listUsers();
+    assert.equal(users.length, 1);
+    assert.equal(users[0].username, ' AdminRoot ');
+
+    const persisted = JSON.parse(readFileSync(usersFile, 'utf-8'));
+    assert.equal(persisted.users[0].username, ' AdminRoot ');
+
+    const verified = service.verifyCredentials('adminroot', 'Admin1234!@#');
+    assert.ok(verified);
+    assert.equal(verified.username, ' AdminRoot ');
+
+    assert.throws(() => service.createUser('adminroot', 'AnotherPass123!'), error => {
+      assert.ok(error instanceof UserAdminServiceError);
+      assert.equal(error.statusCode, 409);
+      assert.equal(error.message, '用户名已存在');
+      return true;
+    });
+
+    service.changePassword('  ADMINROOT ', 'NewPassword123!');
+    assert.equal(service.verifyCredentials('adminroot', 'Admin1234!@#'), null);
+    assert.ok(service.verifyCredentials('adminroot', 'NewPassword123!'));
+
+    service.createUser('other-user', 'OtherPassword123!');
+    const removed = service.deleteUser(' adminroot ');
+    assert.equal(removed.username, 'adminroot');
+    assert.equal(service.verifyCredentials('adminroot', 'NewPassword123!'), null);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });

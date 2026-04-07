@@ -1,7 +1,7 @@
-const { mkdtempSync, rmSync } = require('node:fs');
+const { existsSync, mkdtempSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { createAuthAdminFixture } = require('./auth-admin-fixture');
 
 function getRandomPort() {
@@ -37,6 +37,27 @@ function parseSetCookie(setCookieHeader) {
     .map(item => item.trim().split(';')[0]);
 }
 
+let didEnsureBuild = false;
+
+function ensureBuildArtifacts() {
+  if (didEnsureBuild) {
+    return;
+  }
+
+  if (!existsSync(join(process.cwd(), 'dist', 'server.js'))) {
+    const result = spawnSync('npm', ['run', 'build'], {
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: 'utf8'
+    });
+    if (result.status !== 0) {
+      throw new Error(`failed to build integration fixtures:\n${result.stdout || ''}\n${result.stderr || ''}`);
+    }
+  }
+
+  didEnsureBuild = true;
+}
+
 async function createChatServerFixture(options = {}) {
   const maxAttempts = options.maxAttempts || 5;
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-it-'));
@@ -46,6 +67,7 @@ async function createChatServerFixture(options = {}) {
   let stderr = '';
   let port = getRandomPort();
   let lastStartupError = null;
+  ensureBuildArtifacts();
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     port = getRandomPort();

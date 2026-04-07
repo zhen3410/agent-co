@@ -120,6 +120,7 @@
       const desktopIds = isDesktop ? {
         card: 'currentSessionSettings',
         badge: 'currentSessionSettingsBadge',
+        discussionMode: 'discussionModeSelect',
         hopsInput: 'agentChainMaxHopsInput',
         hopsSave: 'saveAgentChainMaxHopsBtn',
         unlimitedInput: 'agentChainMaxCallsUnlimitedInput',
@@ -148,6 +149,21 @@
               未选择会话
             </span>
           </div>
+          <label
+            className="session-settings-field"
+            {...(desktopIds.discussionMode ? { htmlFor: desktopIds.discussionMode } : {})}
+          >
+            <span className="session-settings-field__label">讨论模式</span>
+            <div className="session-settings-field__control">
+              <select
+                data-session-setting="discussionMode"
+                {...(desktopIds.discussionMode ? { id: desktopIds.discussionMode } : {})}
+              >
+                <option value="classic">经典链式</option>
+                <option value="peer">对等讨论</option>
+              </select>
+            </div>
+          </label>
           <label
             className="session-settings-field"
             {...(desktopIds.hopsInput ? { htmlFor: desktopIds.hopsInput } : {})}
@@ -261,7 +277,7 @@
                     <h1>Focused Chat</h1>
                     <p className="header-subtitle">让消息成为主视图，其余上下文按需展开。</p>
                   </div>
-                  <div className="header-session-pill" id="activeSessionBadge">当前会话</div>
+                  <div className="header-session-pill header-session-pill--mobile-hidden" id="activeSessionBadge">当前会话</div>
                 </div>
                 <div className="header-actions">
                   <span className="status" id="status">已连接</span>
@@ -269,11 +285,11 @@
                   <button className="btn-clear btn-desktop-context" data-tab="sessions" onClick={() => window.toggleContextPanel && window.toggleContextPanel('sessions')}>会话</button>
                   <button className="btn-clear btn-desktop-context" data-tab="agents" onClick={() => window.toggleContextPanel && window.toggleContextPanel('agents')}>智能体</button>
                   <button className="btn-clear btn-desktop-context" data-tab="workdir" onClick={() => window.toggleContextPanel && window.toggleContextPanel('workdir')}>目录</button>
-                  <button className="btn-clear" id="loginBtnHeader" style={{ display: 'none' }} onClick={() => window.showLoginOverlay && window.showLoginOverlay()}>登录</button>
-                  <button className="btn-clear" id="logoutBtn" style={{ display: 'none' }} onClick={() => window.logout && window.logout()}>退出</button>
-                  <button className="btn-clear" onClick={() => window.open('/verbose-logs.html', '_blank')}>CLI日志</button>
-                  <button className="btn-clear" onClick={() => window.open('/deps-monitor.html', '_blank')}>运维日志</button>
-                  <button className="btn-clear" onClick={() => window.clearHistory && window.clearHistory()}>清空</button>
+                  <button className="btn-clear btn-header-secondary" id="loginBtnHeader" style={{ display: 'none' }} onClick={() => window.showLoginOverlay && window.showLoginOverlay()}>登录</button>
+                  <button className="btn-clear btn-header-secondary" id="logoutBtn" style={{ display: 'none' }} onClick={() => window.logout && window.logout()}>退出</button>
+                  <button className="btn-clear btn-header-secondary" onClick={() => window.open('/verbose-logs.html', '_blank')}>CLI日志</button>
+                  <button className="btn-clear btn-header-secondary" onClick={() => window.open('/deps-monitor.html', '_blank')}>运维日志</button>
+                  <button className="btn-clear btn-header-secondary" onClick={() => window.clearHistory && window.clearHistory()}>清空</button>
                 </div>
               </header>
 
@@ -430,6 +446,7 @@
               <button className="context-tab is-active" data-tab="sessions" onClick={() => window.setContextTab && window.setContextTab('sessions')}>会话</button>
               <button className="context-tab" data-tab="agents" onClick={() => window.setContextTab && window.setContextTab('agents')}>智能体</button>
               <button className="context-tab" data-tab="workdir" onClick={() => window.setContextTab && window.setContextTab('workdir')}>目录</button>
+              <button className="context-tab" data-tab="logs" onClick={() => window.setContextTab && window.setContextTab('logs')}>日志</button>
             </div>
             <div className="mobile-control-sheet__body">
               <section className="context-section context-section--mobile" data-section="sessions">
@@ -446,6 +463,12 @@
               </section>
               <section className="context-section context-section--mobile" data-section="workdir">
                 <div className="mobile-workdir-mirror" id="mobileWorkdirMirror"></div>
+              </section>
+              <section className="context-section context-section--mobile" data-section="logs">
+                <div className="mobile-log-links">
+                  <button className="btn-session" onClick={() => window.open('/verbose-logs.html', '_blank')}>CLI日志</button>
+                  <button className="btn-session" onClick={() => window.open('/deps-monitor.html', '_blank')}>运维日志</button>
+                </div>
               </section>
             </div>
           </aside>
@@ -473,9 +496,12 @@
     let activeSession = null;
     let agentWorkdirs = {};
     let enabledAgents = new Set();
+    let discussionMode = 'classic';
+    let discussionState = 'active';
     let agentChainMaxHops = '';
     let agentChainMaxCallsPerAgent = null;
     const chatWorkdirState = { root: '', level2: '', level3: '', custom: '' };
+    const streamingAgentTexts = new Map();
     let groups = [];
     let expandedGroups = new Set();
     let activeGroup = null;
@@ -518,6 +544,7 @@
     let sessionSearchInputEl;
     let recentSessionsEl;
     let currentSessionSettingsBadgeEls = [];
+    let discussionModeSelectEls = [];
     let agentChainMaxHopsInputEls = [];
     let saveAgentChainMaxHopsBtnEls = [];
     let agentChainMaxCallsUnlimitedInputEls = [];
@@ -571,6 +598,7 @@
       sessionSearchInputEl = document.getElementById('sessionSearchInput');
       recentSessionsEl = document.getElementById('recentSessions');
       currentSessionSettingsBadgeEls = Array.from(document.querySelectorAll('[data-session-settings-badge]'));
+      discussionModeSelectEls = Array.from(document.querySelectorAll('[data-session-setting="discussionMode"]'));
       agentChainMaxHopsInputEls = Array.from(document.querySelectorAll('[data-session-setting="agentChainMaxHops"]'));
       saveAgentChainMaxHopsBtnEls = Array.from(document.querySelectorAll('[data-session-setting-save="agentChainMaxHops"]'));
       agentChainMaxCallsUnlimitedInputEls = Array.from(document.querySelectorAll('[data-session-setting="agentChainMaxCallsUnlimited"]'));
@@ -661,6 +689,8 @@
         chatSessions = [];
         activeSessionId = null;
         activeSession = null;
+        discussionMode = 'classic';
+        discussionState = 'active';
         agentChainMaxHops = '';
         agentChainMaxCallsPerAgent = null;
         sessionSearchQuery = '';
@@ -728,6 +758,8 @@
 
     function syncSessionSettingsState(session) {
       activeSession = session || null;
+      discussionMode = session && session.discussionMode === 'peer' ? 'peer' : 'classic';
+      discussionState = session && typeof session.discussionState === 'string' ? session.discussionState : 'active';
       agentChainMaxHops = session && Number.isInteger(session.agentChainMaxHops)
         ? session.agentChainMaxHops
         : '';
@@ -739,13 +771,17 @@
     }
 
     function renderSessionSettings() {
-      if (agentChainMaxHopsInputEls.length === 0 || agentChainMaxCallsUnlimitedInputEls.length === 0 || agentChainMaxCallsPerAgentInputEls.length === 0 || agentChainMaxCallsLimitRowEls.length === 0) {
+      if (discussionModeSelectEls.length === 0 || agentChainMaxHopsInputEls.length === 0 || agentChainMaxCallsUnlimitedInputEls.length === 0 || agentChainMaxCallsPerAgentInputEls.length === 0 || agentChainMaxCallsLimitRowEls.length === 0) {
         return;
       }
 
       const hasActiveSession = !!activeSession;
       const isUnlimited = agentChainMaxCallsPerAgent === null;
 
+      discussionModeSelectEls.forEach((el) => {
+        el.value = discussionMode;
+        el.disabled = !hasActiveSession;
+      });
       agentChainMaxHopsInputEls.forEach((el) => {
         el.value = agentChainMaxHops === '' ? '' : String(agentChainMaxHops);
         el.disabled = !hasActiveSession;
@@ -881,6 +917,13 @@
       } catch (error) {
         setSessionSettingsFeedback(error.message, 'error');
       }
+    }
+
+    async function saveDiscussionMode(nextMode) {
+      const normalizedMode = nextMode === 'peer' ? 'peer' : 'classic';
+      discussionMode = normalizedMode;
+      renderSessionSettings();
+      await saveSessionSettings({ discussionMode: normalizedMode }, normalizedMode === 'peer' ? '已切换为对等讨论。' : '已切换为经典链式。');
     }
 
     function handleAgentChainUnlimitedToggle(isUnlimited) {
@@ -1888,11 +1931,15 @@
       return result;
     }
 
-    function renderMessage(msg) {
+    function renderMessage(msg, options = {}) {
       const isUser = msg.role === 'user';
       const roleClass = isUser ? 'message--user' : 'message--assistant';
       const senderColor = getSenderColor(msg.sender, msg.role);
       const avatar = getSenderAvatar(msg.sender, msg.role);
+      const extraClass = options.streamingAgentName ? ' message--streaming' : '';
+      const extraAttrs = options.streamingAgentName
+        ? ` data-agent="${escapeHtml(options.streamingAgentName)}"`
+        : '';
 
       const colorStyle = senderColor ? `style="--sender-color: ${senderColor}"` : '';
 
@@ -1913,7 +1960,7 @@
       }
 
       return `
-        <div class="message ${roleClass}" ${colorStyle}>
+        <div class="message ${roleClass}${extraClass}"${extraAttrs} ${colorStyle}>
           <div class="message__avatar">${avatar}</div>
           <div class="message__content">${content}</div>
         </div>
@@ -2002,6 +2049,25 @@
       `;
     }
 
+    function renderDiscussionPauseCard() {
+      return `
+        <div class="welcome" data-session-pause-card>
+          <div class="welcome-icon">⏸️</div>
+          <h2>讨论已暂停</h2>
+          <p>当前对等讨论已自然暂停；你可以继续发言，或手动生成阶段摘要。</p>
+          <div class="pwa-banner__actions">
+            <button
+              type="button"
+              class="btn-clear"
+              onclick="window.requestDiscussionSummary && window.requestDiscussionSummary()"
+            >
+              生成摘要
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
     function syncMessageChromeState() {
       cacheMessageChromeElements();
       updateCurrentAgentUI();
@@ -2019,7 +2085,7 @@
     function renderMessages() {
       let markup = renderMessageIntro();
 
-      if (history.length === 0 && enabledAgents.size === 0) {
+      if (history.length === 0 && enabledAgents.size === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {
         messagesEl.innerHTML = markup + renderEmptyState();
         syncMessageChromeState();
         return;
@@ -2028,8 +2094,11 @@
       history.forEach(msg => {
         markup += renderMessage(msg);
       });
+      if (discussionMode === 'peer' && discussionState === 'paused') {
+        markup += renderDiscussionPauseCard();
+      }
       messagesEl.innerHTML = markup;
-      if (history.length === 0) {
+      if (history.length === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {
         messagesEl.innerHTML += renderWelcomeState();
       }
       syncMessageChromeState();
@@ -2047,6 +2116,51 @@
 
     function addMessage(msg) {
       appendMessageMarkup(renderMessage(msg));
+    }
+
+    function findStreamingAgentMessage(agentName) {
+      return Array.from(messagesEl.querySelectorAll('.message--streaming'))
+        .find(el => el.getAttribute('data-agent') === agentName) || null;
+    }
+
+    function appendStreamingAgentDelta(agentName, delta) {
+      if (!delta) return;
+
+      let streamingEl = findStreamingAgentMessage(agentName);
+      if (!streamingEl) {
+        hideThinkingIndicator(agentName);
+        appendMessageMarkup(renderMessage({
+          role: 'assistant',
+          sender: agentName,
+          text: ''
+        }, { streamingAgentName: agentName }));
+        streamingEl = findStreamingAgentMessage(agentName);
+      }
+
+      const nextText = `${streamingAgentTexts.get(agentName) || ''}${delta}`;
+      streamingAgentTexts.set(agentName, nextText);
+      const textEl = streamingEl ? streamingEl.querySelector('.message__text--markdown') : null;
+      if (textEl) {
+        textEl.innerHTML = window.ChatMarkdown.renderMarkdownHtml(nextText, {
+          role: 'assistant',
+          enableMentions: true
+        });
+      }
+      scrollToBottom();
+    }
+
+    function finalizeStreamingAgentMessage(message) {
+      const streamingEl = findStreamingAgentMessage(message.sender);
+      streamingAgentTexts.delete(message.sender);
+      if (!streamingEl) {
+        addMessage(message);
+        return;
+      }
+
+      streamingEl.outerHTML = renderMessage(message);
+      cacheMessageChromeElements();
+      updateCurrentAgentUI();
+      scrollToBottom();
     }
 
     function setLoading(loading, agentName = null) {
@@ -2201,6 +2315,22 @@
       }
     }
 
+    function normalizeStreamErrorMessage(error) {
+      const raw = String(error || '');
+      const normalized = raw.toLowerCase();
+      if (
+        normalized.includes('deactivated_workspace') ||
+        normalized.includes('payment required') ||
+        normalized.includes('auth error') ||
+        normalized.includes('unauthorized') ||
+        normalized.includes('forbidden') ||
+        normalized.includes('402')
+      ) {
+        return '账号或工作区异常：请检查 Codex 登录状态、套餐/额度或 workspace 是否已恢复';
+      }
+      return raw || '连接失败';
+    }
+
     async function sendMessage(event) {
       event.preventDefault();
 
@@ -2235,6 +2365,8 @@
 
       const thinkingAgents = new Set();
       let streamReceivedAgentMessage = false;
+      let streamReceivedAgentDelta = false;
+      let streamReceivedError = false;
 
       try {
         const response = await fetch('/api/chat-stream', {
@@ -2276,12 +2408,16 @@
                   thinkingAgents.add(agentName);
                   statusEl.textContent = `${agentName} 思考中...`;
                   showThinkingIndicator(agentName);
+                } else if (eventType === 'agent_delta') {
+                  streamReceivedAgentDelta = true;
+                  appendStreamingAgentDelta(data.agent, data.delta || '');
+                  statusEl.textContent = `${data.agent} 回复中...`;
                 } else if (eventType === 'agent_message') {
                   streamReceivedAgentMessage = true;
                   thinkingAgents.delete(data.sender);
                   hideThinkingIndicator(data.sender);
                   history.push(data);
-                  addMessage(data);
+                  finalizeStreamingAgentMessage(data);
                   statusEl.textContent = thinkingAgents.size > 0
                     ? `${Array.from(thinkingAgents).join(', ')} 思考中...`
                     : '已连接';
@@ -2292,10 +2428,13 @@
                 } else if (eventType === 'notice') {
                   showSystemNotice(data.notice);
                 } else if (eventType === 'error') {
+                  streamReceivedError = true;
+                  statusEl.textContent = '连接失败';
+                  const message = normalizeStreamErrorMessage(data.error);
                   addMessage({
                     role: 'assistant',
                     sender: '系统',
-                    text: `❌ 错误: ${data.error}`
+                    text: `❌ 错误: ${message}`
                   });
                 }
               } catch (e) {
@@ -2306,18 +2445,34 @@
           }
         }
 
-      } catch (error) {
-        console.error('发送失败:', error);
-        if (!streamReceivedAgentMessage) {
-          statusEl.textContent = '流式连接失败，尝试降级...';
-          const recovered = await recoverViaDirectChat(text);
-          if (!recovered) {
+        if (!streamReceivedAgentMessage && !streamReceivedError) {
+          if (!streamReceivedAgentDelta) {
             statusEl.textContent = '连接失败';
             addMessage({
               role: 'assistant',
               sender: '系统',
-              text: `❌ 发送失败: ${error.message}`
+              text: '❌ 智能体未返回可见消息，请稍后重试或查看日志'
             });
+          }
+        }
+
+      } catch (error) {
+        console.error('发送失败:', error);
+        if (!streamReceivedAgentMessage) {
+          if (!streamReceivedAgentDelta) {
+            statusEl.textContent = '流式连接失败，尝试降级...';
+            const recovered = await recoverViaDirectChat(text);
+            if (!recovered) {
+              statusEl.textContent = '连接失败';
+              addMessage({
+                role: 'assistant',
+                sender: '系统',
+                text: `❌ 发送失败: ${error.message}`
+              });
+            }
+          } else {
+            statusEl.textContent = '连接中断';
+            showResumeChainNotice();
           }
         } else {
           statusEl.textContent = '连接中断';
@@ -2327,6 +2482,8 @@
         isLoading = false;
         sendBtnEl.disabled = false;
         sendBtnEl.textContent = '发送';
+        streamingAgentTexts.clear();
+        document.querySelectorAll('.message--streaming').forEach(el => el.classList.remove('message--streaming'));
         document.querySelectorAll('.message--thinking').forEach(el => el.remove());
       }
     }
@@ -2378,10 +2535,13 @@
           syncSessionSettingsState(data.session || null);
           renderSessionList();
           renderMessages();
+          return true;
         }
       } catch (error) {
         console.error('加载历史失败:', error);
+        return false;
       }
+      return false;
     }
 
     async function loadGroups() {
@@ -2416,6 +2576,40 @@
       }
     }
 
+    async function requestDiscussionSummary() {
+      if (!activeSessionId) {
+        setSessionSettingsFeedback('请先选择一个会话。', 'error');
+        return;
+      }
+
+      setSessionSettingsFeedback('正在生成讨论摘要...');
+      discussionState = 'summarizing';
+      renderMessages();
+
+      try {
+        const response = await fetch('/api/chat-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ sessionId: activeSessionId })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || '生成摘要失败');
+        }
+        const historyLoaded = await loadHistory();
+        if (!historyLoaded) {
+          throw new Error('刷新会话状态失败');
+        }
+        setSessionSettingsFeedback('讨论摘要已生成。', 'success');
+      } catch (error) {
+        discussionState = 'paused';
+        renderMessages();
+        setSessionSettingsFeedback(error.message || '生成摘要失败', 'error');
+        alert(error.message || '生成摘要失败');
+      }
+    }
+
     window.selectAgent = selectAgent;
     window.toggleGroupExpand = toggleGroupExpand;
     window.handleGroupSwitchById = handleGroupSwitchById;
@@ -2441,6 +2635,8 @@
     window.switchAgent = switchAgent;
     window.applyAgentWorkdir = applyAgentWorkdir;
     window.toggleSessionAgent = toggleSessionAgent;
+    window.requestDiscussionSummary = requestDiscussionSummary;
+    window.saveDiscussionMode = saveDiscussionMode;
     window.saveAgentChainMaxHops = saveAgentChainMaxHops;
     window.saveAgentChainMaxCallsPerAgent = saveAgentChainMaxCallsPerAgent;
     window.handleAgentChainUnlimitedToggle = handleAgentChainUnlimitedToggle;
@@ -2478,6 +2674,16 @@
       if (sessionSearchInputEl) {
         sessionSearchInputEl.addEventListener('input', updateSessionSearch);
       }
+
+      discussionModeSelectEls.forEach((el) => {
+        el.addEventListener('change', () => {
+          discussionMode = el.value === 'peer' ? 'peer' : 'classic';
+          discussionModeSelectEls.forEach((peer) => {
+            if (peer !== el) peer.value = discussionMode;
+          });
+          void saveDiscussionMode(discussionMode);
+        });
+      });
 
       agentChainMaxHopsInputEls.forEach((el) => {
         el.addEventListener('input', () => {

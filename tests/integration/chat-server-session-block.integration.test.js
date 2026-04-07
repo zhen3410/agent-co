@@ -3,6 +3,11 @@ const assert = require('node:assert/strict');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 const { withIsolatedChatSessionState, isRedisSessionStateAvailable } = require('./helpers/redis-session-state-fixture');
 
+function parseSetCookiePair(setCookieHeader) {
+  if (!setCookieHeader) return '';
+  return String(setCookieHeader).split(/,(?=\s*[^;]+=)/)[0].split(';')[0];
+}
+
 test('会话接口支持创建、切换、重命名与删除（需先登录）', async () => {
   const fixture = await createChatServerFixture();
 
@@ -363,6 +368,108 @@ test('新建会话会返回链式传播设置字段，并在会话列表中可�
   }
 });
 
+test('新建会话返回默认 discussionMode 与 discussionState', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'discussion defaults' }
+    });
+
+    assert.equal(createResponse.status, 200);
+    assert.equal(createResponse.body.session.discussionMode, 'classic');
+    assert.equal(createResponse.body.session.discussionState, 'active');
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    const summary = historyResponse.body.chatSessions.find((session) => session.id === createResponse.body.session.id);
+    assert.ok(summary);
+    assert.equal(summary.discussionMode, 'classic');
+    assert.equal(summary.discussionState, 'active');
+    assert.equal(historyResponse.body.session.discussionMode, 'classic');
+    assert.equal(historyResponse.body.session.discussionState, 'active');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('POST /api/sessions/update 支持切换 discussionMode', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'discussion mode patch' }
+    });
+    assert.equal(createResponse.status, 200);
+    const sessionId = createResponse.body.session.id;
+
+    const updateResponse = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { discussionMode: 'peer' }
+      }
+    });
+
+    assert.equal(updateResponse.status, 200);
+    assert.equal(updateResponse.body.session.discussionMode, 'peer');
+    assert.equal(updateResponse.body.session.discussionState, 'active');
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    const summary = historyResponse.body.chatSessions.find((session) => session.id === sessionId);
+    assert.ok(summary);
+    assert.equal(summary.discussionMode, 'peer');
+    assert.equal(summary.discussionState, 'active');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('POST /api/sessions/update 会拒绝非法 discussionMode', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'invalid discussion mode' }
+    });
+    assert.equal(createResponse.status, 200);
+    const sessionId = createResponse.body.session.id;
+
+    const invalidMode = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { discussionMode: 'group' }
+      }
+    });
+    assert.equal(invalidMode.status, 400);
+
+    const invalidState = await fixture.request('/api/sessions/update', {
+      method: 'POST',
+      body: {
+        sessionId,
+        patch: { discussionState: 'paused' }
+      }
+    });
+    assert.equal(invalidState.status, 400);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('旧会话数据缺少链路字段时会自动回填默认值', { skip: !isRedisSessionStateAvailable() }, async () => {
   const legacyState = {
     version: 1,
@@ -402,6 +509,183 @@ test('旧会话数据缺少链路字段时会自动回填默认值', { skip: !is
       assert.equal(typeof legacySession.agentChainMaxHops, 'number');
       assert.equal(legacySession.agentChainMaxHops > 0, true);
       assert.equal(legacySession.agentChainMaxCallsPerAgent, null);
+      assert.equal(legacySession.discussionMode, 'classic');
+      assert.equal(legacySession.discussionState, 'active');
+      assert.equal(historyResponse.body.session.discussionMode, 'classic');
+      assert.equal(historyResponse.body.session.discussionState, 'active');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+test('登录迁移不会用访客默认 discussion 字段覆盖已有用户会话', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const visitorId = '0123456789abcdef0123456789abcdef';
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      [`visitor:${visitorId}`]: [{
+        id: 'default',
+        name: '默认会话',
+        history: [],
+        currentAgent: null,
+        enabledAgents: [],
+        agentWorkdirs: {},
+        discussionMode: 'classic',
+        discussionState: 'active',
+        createdAt: Date.now() - 2000,
+        updatedAt: Date.now() - 2000
+      }],
+      'user:admin': [{
+        id: 'default',
+        name: '默认会话',
+        history: [],
+        currentAgent: null,
+        enabledAgents: [],
+        agentWorkdirs: {},
+        discussionMode: 'peer',
+        discussionState: 'paused',
+        createdAt: Date.now() - 1000,
+        updatedAt: Date.now() - 1000
+      }]
+    },
+    userActiveChatSession: {
+      [`visitor:${visitorId}`]: 'default',
+      'user:admin': 'default'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        BOT_ROOM_DISABLE_REDIS: 'false',
+        BOT_ROOM_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.request('/api/login', {
+        method: 'POST',
+        headers: {
+          Cookie: `bot_room_visitor=${visitorId}`
+        },
+        body: { username: 'admin', password: 'Admin1234!@#' }
+      });
+      assert.equal(loginResponse.status, 200);
+
+      const secondLoginResponse = await fixture.request('/api/login', {
+        method: 'POST',
+        headers: {
+          Cookie: `bot_room_visitor=${visitorId}`
+        },
+        body: { username: 'admin', password: 'Admin1234!@#' }
+      });
+      assert.equal(secondLoginResponse.status, 200);
+
+      const historyResponse = await fixture.request('/api/history');
+      assert.equal(historyResponse.status, 200);
+      assert.equal(historyResponse.body.session.discussionMode, 'peer');
+      assert.equal(historyResponse.body.session.discussionState, 'paused');
+
+      const summary = historyResponse.body.chatSessions.find((session) => session.id === 'default');
+      assert.ok(summary);
+      assert.equal(summary.discussionMode, 'peer');
+      assert.equal(summary.discussionState, 'paused');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+test('退出登录迁移不会让较旧的访客 discussion 字段覆盖较新的已登录会话', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const visitorId = 'fedcba9876543210fedcba9876543210';
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      [`visitor:${visitorId}`]: [{
+        id: 'default',
+        name: '默认会话',
+        history: [],
+        currentAgent: null,
+        enabledAgents: [],
+        agentWorkdirs: {},
+        discussionMode: 'classic',
+        discussionState: 'active',
+        createdAt: Date.now() - 2000,
+        updatedAt: Date.now() - 2000
+      }],
+      'user:admin': [{
+        id: 'default',
+        name: '默认会话',
+        history: [],
+        currentAgent: null,
+        enabledAgents: [],
+        agentWorkdirs: {},
+        discussionMode: 'peer',
+        discussionState: 'paused',
+        createdAt: Date.now() - 1000,
+        updatedAt: Date.now() - 500
+      }]
+    },
+    userActiveChatSession: {
+      [`visitor:${visitorId}`]: 'default',
+      'user:admin': 'default'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        BOT_ROOM_DISABLE_REDIS: 'false',
+        BOT_ROOM_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const firstLoginResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `bot_room_visitor=${visitorId}`
+        },
+        body: JSON.stringify({ username: 'admin', password: 'Admin1234!@#' })
+      });
+      assert.equal(firstLoginResponse.status, 200);
+      const firstSessionCookie = parseSetCookiePair(firstLoginResponse.headers.get('set-cookie'));
+
+      const logoutResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/logout`, {
+        method: 'POST',
+        headers: {
+          Cookie: `${firstSessionCookie}; bot_room_visitor=${visitorId}`
+        }
+      });
+      assert.equal(logoutResponse.status, 200);
+
+      const secondLoginResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `bot_room_visitor=${visitorId}`
+        },
+        body: JSON.stringify({ username: 'admin', password: 'Admin1234!@#' })
+      });
+      assert.equal(secondLoginResponse.status, 200);
+      const secondSessionCookie = parseSetCookiePair(secondLoginResponse.headers.get('set-cookie'));
+
+      const historyResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/history`, {
+        headers: {
+          Cookie: `${secondSessionCookie}; bot_room_visitor=${visitorId}`
+        }
+      });
+      assert.equal(historyResponse.status, 200);
+      const historyBody = await historyResponse.json();
+      assert.equal(historyBody.session.discussionMode, 'peer');
+      assert.equal(historyBody.session.discussionState, 'paused');
+
+      const summary = historyBody.chatSessions.find((session) => session.id === 'default');
+      assert.ok(summary);
+      assert.equal(summary.discussionMode, 'peer');
+      assert.equal(summary.discussionState, 'paused');
     } finally {
       await fixture.cleanup();
     }

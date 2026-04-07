@@ -2,12 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
 function readPublicFile(...parts) {
-  return fs.readFileSync(path.join(__dirname, '..', '..', ...parts), 'utf8');
-}
-
-function readSourceFile(...parts) {
   return fs.readFileSync(path.join(__dirname, '..', '..', ...parts), 'utf8');
 }
 
@@ -153,6 +150,19 @@ test('React 页面仅在流式连接尚未收到 AI 可见回复时才降级到 
   assert.ok(html.includes('if (!streamReceivedAgentMessage) {'), 'should only downgrade before visible AI output arrives');
 });
 
+test('React 页面在流式收到 error 事件或空回复结束时会明确提示失败，而不是静默停留', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assert.ok(html.includes("statusEl.textContent = '连接失败';"), 'should expose a failure status when stream reports an error');
+  assert.ok(html.includes('let streamReceivedError = false;'), 'should track terminal stream errors');
+  assert.ok(html.includes('streamReceivedError = true;'), 'should mark error events explicitly');
+  assert.ok(html.includes('if (!streamReceivedAgentMessage && !streamReceivedError) {'), 'should detect silent empty stream completions');
+  assert.ok(html.includes('text: \'❌ 智能体未返回可见消息，请稍后重试或查看日志\''), 'should show an explicit empty-stream failure message');
+  assert.ok(html.includes('function normalizeStreamErrorMessage(error) {'), 'should normalize raw stream errors for users');
+  assert.ok(html.includes('账号或工作区异常'), 'should surface a friendly workspace/account hint');
+  assert.ok(html.includes('请检查 Codex 登录状态、套餐/额度或 workspace 是否已恢复'), 'should include an actionable recovery hint');
+});
+
 test('React 页面会在收到部分回复后提供继续剩余执行入口，而不是提示手动重发', () => {
   const html = readPublicFile('public', 'index.html');
 
@@ -190,25 +200,31 @@ test('管理后台为专业智能体提示词提供模板预览入口', () => {
   assert.ok(!html.includes('window.alert('), 'should use an in-page modal instead of alert for preview');
 });
 
-test('React 页面会为用户与 AI 回复统一使用 Markdown 渲染模块，并引入独立 composer/markdown 脚本', () => {
+test('React 页面会为用户与 AI 回复统一使用 Markdown 渲染模块，并引入独立 composer/markdown 脚本', async () => {
   const html = readPublicFile('public', 'index.html');
-  const server = readSourceFile('src', 'server.ts');
-  assertContainsAll(html, [
-    '<script src="/chat-markdown.js"></script>',
-    '<script src="/chat-composer.js"></script>',
-    'message__text message__text--markdown',
-    "window.ChatMarkdown.renderMarkdownHtml(msg.text || '', {",
-    "role: msg.role || 'assistant'",
-    'enableMentions: true'
-  ], 'missing shared markdown renderer contract');
-  assertContainsAll(server, [
-    "requestUrl.pathname === '/chat-markdown.js'",
-    "serveStatic(req, res, 'chat-markdown.js', 'application/javascript')",
-    "requestUrl.pathname === '/chat-composer.js'",
-    "serveStatic(req, res, 'chat-composer.js', 'application/javascript')"
-  ], 'missing static asset routes for shared markdown/composer scripts');
-  assert.ok(!html.includes('${highlightMentions(renderPlainText(msg.text || \'\'))}'), 'should stop rendering user messages as plain text');
-  assert.ok(!html.includes('function renderMarkdown(text) {'), 'should move markdown rendering out of index.html');
+  const fixture = await createChatServerFixture();
+
+  try {
+    const home = await fixture.request('/');
+    const markdownScript = await fixture.request('/chat-markdown.js');
+    const composerScript = await fixture.request('/chat-composer.js');
+
+    assert.equal(home.status, 200, 'should serve chat page');
+    assertContainsAll(home.text, [
+      '<script src="/chat-markdown.js"></script>',
+      '<script src="/chat-composer.js"></script>'
+    ], 'missing shared script tags in served chat page');
+
+    assert.equal(markdownScript.status, 200, 'should serve /chat-markdown.js');
+    assert.equal(composerScript.status, 200, 'should serve /chat-composer.js');
+    assert.ok(markdownScript.text.includes('window.ChatMarkdown'), 'served markdown asset should expose ChatMarkdown');
+    assert.ok(composerScript.text.includes('window.ChatComposer'), 'served composer asset should expose ChatComposer');
+
+    assert.ok(!home.text.includes('function renderMarkdown(text) {'), 'chat page should not inline legacy markdown renderer');
+    assert.ok(!home.text.includes('highlightMentions(renderPlainText('), 'chat page should not fall back to legacy plain-text renderer');
+  } finally {
+    await fixture.cleanup();
+  }
 });
 
 test('聊天输入区升级为桌面双栏预览与移动端编辑/预览切换结构', () => {
@@ -468,6 +484,118 @@ test('移动端编辑抽屉打开时会把焦点稳妥交给 textarea，并让�
   ], 'missing hidden trigger removal contract');
 });
 
+test('移动端消息列表为底部写消息触发条预留安全滚动空间，避免最后一条消息被遮挡', () => {
+  const css = readPublicFile('public', 'styles.css');
+  const mobileStart = css.indexOf('@media (max-width: 960px) {');
+  const mobileCss = css.slice(mobileStart);
+
+  assertContainsAll(mobileCss, [
+    '.messages-shell {',
+    'padding: 0 12px calc(96px + env(safe-area-inset-bottom));',
+    '.messages {',
+    'padding-bottom: calc(112px + env(safe-area-inset-bottom));'
+  ], 'missing mobile bottom safe-scroll spacing contract');
+});
+
+test('移动端底部写消息触发条压缩自身高度，进一步把首屏空间让给消息区', () => {
+  const css = readPublicFile('public', 'styles.css');
+  const triggerRuleStart = css.indexOf('.mobile-composer-triggerbar {');
+  const triggerRule = css.slice(triggerRuleStart, css.indexOf('}', triggerRuleStart) + 1);
+  const hintRuleStart = css.indexOf('.mobile-composer-triggerbar__hint {');
+  const hintRule = css.slice(hintRuleStart, css.indexOf('}', hintRuleStart) + 1);
+
+  assertContainsAll(triggerRule, [
+    '.mobile-composer-triggerbar {',
+    'bottom: calc(14px + env(safe-area-inset-bottom));',
+    'gap: 10px;',
+    'padding: 10px 14px;'
+  ], 'missing compact mobile trigger bar shell contract');
+
+  assertContainsAll(hintRule, [
+    '.mobile-composer-triggerbar__hint {',
+    'font-size: 11px;'
+  ], 'missing compact mobile trigger bar hint contract');
+});
+
+test('移动端控制中心新增日志 tab，并提供 CLI 与运维日志入口', () => {
+  const html = readPublicFile('public', 'index.html');
+  const css = readPublicFile('public', 'styles.css');
+
+  assertContainsAll(html, [
+    "window.setContextTab && window.setContextTab('logs')",
+    'data-tab="logs"',
+    '>日志</button>',
+    'className="context-section context-section--mobile" data-section="logs"',
+    'className="mobile-log-links"',
+    "window.open('/verbose-logs.html', '_blank')",
+    "window.open('/deps-monitor.html', '_blank')"
+  ], 'missing mobile logs tab contract');
+
+  assertContainsAll(css, [
+    '.mobile-log-links {',
+    '.mobile-log-links .btn-session {'
+  ], 'missing mobile logs tab styles');
+});
+
+test('移动端顶部控制栏可切换到单行极简模式，仅保留标题、状态与控制入口', () => {
+  const html = readPublicFile('public', 'index.html');
+  const css = readPublicFile('public', 'styles.css');
+  const mobileStart = css.indexOf('@media (max-width: 960px) {');
+  const mobileCss = css.slice(mobileStart);
+
+  assertContainsAll(html, [
+    'className="header-title"',
+    'className="header-session-pill header-session-pill--mobile-hidden"',
+    'className="btn-clear btn-mobile-session"',
+    'className="btn-clear btn-desktop-context"',
+    'className="btn-clear btn-header-secondary" id="loginBtnHeader"',
+    'className="btn-clear btn-header-secondary" id="logoutBtn"'
+  ], 'missing mobile minimal header structure contract');
+
+  assertContainsAll(mobileCss, [
+    '.header {',
+    'flex-direction: row;',
+    'align-items: center;',
+    'justify-content: space-between;',
+    '.header-main {',
+    'flex: 1;',
+    '.header-actions {',
+    'width: auto;',
+    '.header-kicker,',
+    '.header-subtitle,',
+    '.header-session-pill--mobile-hidden {',
+    'display: none;',
+    '.btn-header-secondary,',
+    '.btn-desktop-context {',
+    'display: none;',
+    '.btn-mobile-session {',
+    'display: inline-flex;',
+    '.header-actions .status {',
+    'display: inline-flex;'
+  ], 'missing single-line mobile header contract');
+});
+
+test('移动端顶部控制栏压缩纵向占用，优先把空间留给消息区', () => {
+  const css = readPublicFile('public', 'styles.css');
+  const mobileStart = css.indexOf('@media (max-width: 960px) {');
+  const mobileCss = css.slice(mobileStart);
+
+  assertContainsAll(mobileCss, [
+    '.header {',
+    'padding: 10px 12px 8px;',
+    '.header-main {',
+    'gap: 8px;',
+    '.header h1 {',
+    'font-size: 18px;',
+    '.header-actions {',
+    'gap: 6px;',
+    '.header-kicker,',
+    '.header-subtitle,',
+    '.header-session-pill--mobile-hidden {',
+    'display: none;'
+  ], 'missing compact mobile header contract');
+});
+
 test('聊天页顶部控制栏保持吸顶，避免被长消息列表顶出视口', () => {
   const css = readPublicFile('public', 'styles.css');
   const headerRule = css.slice(css.indexOf('.header {'), css.indexOf('}', css.indexOf('.header {')) + 1);
@@ -599,6 +727,57 @@ test('React 页面会在移动端会话面板中复用同一当前会话设置�
   assert.equal(countMatches(html, /<SessionSettingsCard\s+variant="mobile"\s*\/>/g), 1, 'mobile sessions panel should render the shared settings component once');
   assert.match(sessionSettingsCardBody, /data-session-setting-action="saveAgentChainMaxHops"/, 'shared settings component should expose a stable save marker for the hop control');
   assert.match(sessionSettingsCardBody, /data-session-setting-action="saveAgentChainMaxCallsPerAgent"/, 'shared settings component should expose a stable save marker for the same-agent control');
+});
+
+test('React 页面会在当前会话设置中暴露讨论模式控制，并从历史记录同步讨论状态', () => {
+  const html = readPublicFile('public', 'index.html');
+  const sessionSettingsCardBody = getArrowComponentBody(html, 'SessionSettingsCard');
+  const syncBody = getFunctionBody(html, 'syncSessionSettingsState');
+  const loadHistoryBody = getFunctionBody(html, 'loadHistory');
+
+  assert.match(sessionSettingsCardBody, /data-session-setting="discussionMode"/, 'shared settings component should expose a stable marker for discussion mode');
+  assertContainsAll(sessionSettingsCardBody, [
+    '经典链式',
+    '对等讨论'
+  ], 'missing discussion mode labels');
+  assertContainsAll(syncBody, [
+    "discussionMode = session && session.discussionMode === 'peer' ? 'peer' : 'classic';",
+    "discussionState = session && typeof session.discussionState === 'string' ? session.discussionState : 'active';"
+  ], 'missing discussion mode/state sync behavior');
+  assertContainsAll(loadHistoryBody, [
+    'chatSessions = data.chatSessions || [];',
+    'activeSessionId = data.activeSessionId || null;',
+    'syncSessionSettingsState(data.session || null);'
+  ], 'missing history hydration path for discussion state');
+});
+
+test('React 页面会在对等讨论暂停时渲染暂停卡片，并将摘要按钮绑定到 /api/chat-summary', () => {
+  const html = readPublicFile('public', 'index.html');
+  const renderBody = getFunctionBody(html, 'renderMessages');
+  const pauseCardBody = getFunctionBody(html, 'renderDiscussionPauseCard');
+  const summaryBody = getFunctionBody(html, 'requestDiscussionSummary');
+  const loadHistoryBody = getFunctionBody(html, 'loadHistory');
+
+  assert.ok(renderBody.includes("discussionMode === 'peer' && discussionState === 'paused'"), 'should gate pause-card rendering on peer paused sessions');
+  assert.ok(renderBody.includes("if (history.length === 0 && enabledAgents.size === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {"), 'should not early-return past the pause card for empty paused peer sessions');
+  assert.ok(renderBody.includes("if (history.length === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {"), 'should not append the generic welcome state for empty paused peer sessions');
+  assert.ok(pauseCardBody.includes('data-session-pause-card'), 'should expose a stable pause-card marker');
+  assertContainsAll(pauseCardBody, [
+    '讨论已暂停',
+    '生成摘要',
+    'window.requestDiscussionSummary && window.requestDiscussionSummary()'
+  ], 'missing paused discussion card contract');
+  assertContainsAll(summaryBody, [
+    "fetch('/api/chat-summary', {",
+    'sessionId: activeSessionId',
+    "const historyLoaded = await loadHistory();",
+    "if (!historyLoaded) {",
+    "throw new Error('刷新会话状态失败');"
+  ], 'missing discussion summary binding');
+  assertContainsAll(loadHistoryBody, [
+    'return true;',
+    'return false;'
+  ], 'missing explicit history refresh success/failure contract');
 });
 
 test('React 页面在会话设置保存失败时会回滚到服务端会话状态并弹出错误提示', () => {

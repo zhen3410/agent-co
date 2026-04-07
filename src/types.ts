@@ -38,6 +38,16 @@ export type RichBlock = CardBlock | ChecklistBlock;
 
 export type AgentExecutionMode = 'cli' | 'api';
 export type AgentCliName = 'claude' | 'codex';
+export type DiscussionMode = 'classic' | 'peer';
+export type DiscussionState = 'active' | 'paused' | 'summarizing';
+export type AgentDispatchKind = 'initial' | 'explicit_chained' | 'implicit_chained' | 'summary';
+export type DiscussionIntent = 'question' | 'challenge' | 'rebuttal' | 'evidence' | 'proposal';
+export type DiscussionTriggerReason =
+  | 'explicit_mention'
+  | 'factual_conflict'
+  | 'logical_conflict'
+  | 'role_boundary'
+  | 'strong_relevant_objection';
 
 export interface ApiConnectionConfig {
   id: string;
@@ -74,6 +84,9 @@ export interface Message {
   timestamp: number;
   mentions?: string[];  // 被 @ 的智能体名字列表
   invokeAgents?: string[];  // 显式声明需要链式调用的智能体（来自 callback invokeAgents 或 @@ 语法）
+  dispatchKind?: AgentDispatchKind;
+  discussionIntent?: DiscussionIntent;
+  triggerReason?: DiscussionTriggerReason;
 }
 
 // ============================================
@@ -162,6 +175,8 @@ export interface SessionState {
   currentAgent: string | null;  // 当前对话的智能体
   enabledAgents?: string[];
   lastActivity: number;
+  discussionMode?: DiscussionMode;
+  discussionState?: DiscussionState;
 }
 
 // ============================================
@@ -181,6 +196,8 @@ export interface ChatSessionSummary {
   createdAt: number;
   agentChainMaxHops: number;
   agentChainMaxCallsPerAgent: number | null;
+  discussionMode: DiscussionMode;
+  discussionState: DiscussionState;
 }
 
 export interface ChatSession extends ChatSessionSummary {
