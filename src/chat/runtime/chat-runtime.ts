@@ -35,7 +35,6 @@ export { normalizePositiveSessionSetting } from './chat-runtime-types';
 export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
   const {
     repository,
-    sessionStore,
     callbackMessageStore,
     persistenceStore,
     dependencyLogStore
