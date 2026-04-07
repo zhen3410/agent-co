@@ -2,12 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
 function readPublicFile(...parts) {
-  return fs.readFileSync(path.join(__dirname, '..', '..', ...parts), 'utf8');
-}
-
-function readSourceFile(...parts) {
   return fs.readFileSync(path.join(__dirname, '..', '..', ...parts), 'utf8');
 }
 
@@ -203,25 +200,31 @@ test('管理后台为专业智能体提示词提供模板预览入口', () => {
   assert.ok(!html.includes('window.alert('), 'should use an in-page modal instead of alert for preview');
 });
 
-test('React 页面会为用户与 AI 回复统一使用 Markdown 渲染模块，并引入独立 composer/markdown 脚本', () => {
+test('React 页面会为用户与 AI 回复统一使用 Markdown 渲染模块，并引入独立 composer/markdown 脚本', async () => {
   const html = readPublicFile('public', 'index.html');
-  const server = readSourceFile('src', 'server.ts');
-  assertContainsAll(html, [
-    '<script src="/chat-markdown.js"></script>',
-    '<script src="/chat-composer.js"></script>',
-    'message__text message__text--markdown',
-    "window.ChatMarkdown.renderMarkdownHtml(msg.text || '', {",
-    "role: msg.role || 'assistant'",
-    'enableMentions: true'
-  ], 'missing shared markdown renderer contract');
-  assertContainsAll(server, [
-    "requestUrl.pathname === '/chat-markdown.js'",
-    "serveStatic(req, res, 'chat-markdown.js', 'application/javascript')",
-    "requestUrl.pathname === '/chat-composer.js'",
-    "serveStatic(req, res, 'chat-composer.js', 'application/javascript')"
-  ], 'missing static asset routes for shared markdown/composer scripts');
-  assert.ok(!html.includes('${highlightMentions(renderPlainText(msg.text || \'\'))}'), 'should stop rendering user messages as plain text');
-  assert.ok(!html.includes('function renderMarkdown(text) {'), 'should move markdown rendering out of index.html');
+  const fixture = await createChatServerFixture();
+
+  try {
+    const home = await fixture.request('/');
+    const markdownScript = await fixture.request('/chat-markdown.js');
+    const composerScript = await fixture.request('/chat-composer.js');
+
+    assert.equal(home.status, 200, 'should serve chat page');
+    assertContainsAll(home.text, [
+      '<script src="/chat-markdown.js"></script>',
+      '<script src="/chat-composer.js"></script>'
+    ], 'missing shared script tags in served chat page');
+
+    assert.equal(markdownScript.status, 200, 'should serve /chat-markdown.js');
+    assert.equal(composerScript.status, 200, 'should serve /chat-composer.js');
+    assert.ok(markdownScript.text.includes('window.ChatMarkdown'), 'served markdown asset should expose ChatMarkdown');
+    assert.ok(composerScript.text.includes('window.ChatComposer'), 'served composer asset should expose ChatComposer');
+
+    assert.ok(!home.text.includes('function renderMarkdown(text) {'), 'chat page should not inline legacy markdown renderer');
+    assert.ok(!home.text.includes('highlightMentions(renderPlainText('), 'chat page should not fall back to legacy plain-text renderer');
+  } finally {
+    await fixture.cleanup();
+  }
 });
 
 test('聊天输入区升级为桌面双栏预览与移动端编辑/预览切换结构', () => {

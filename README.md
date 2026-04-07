@@ -65,9 +65,15 @@ npm install
 npm run init
 ```
 
-This script prepares local runtime directories such as `data/` and verbose log folders.
+This script prepares local runtime directories such as `data/` and verbose log folders, and creates `.env` from `.env.example` when missing. The npm start scripts do **not** load `.env` automatically, so for local development you should export it before starting services:
 
-这个脚本会准备本地运行所需目录，例如 `data/` 和详细日志目录。
+这个脚本会准备本地运行所需目录，例如 `data/` 和详细日志目录；如果 `.env` 不存在，还会基于 `.env.example` 创建它。注意 npm 启动脚本**不会自动加载** `.env`，因此本地开发前建议先导出环境变量：
+
+```bash
+set -a
+source .env
+set +a
+```
 
 ### 3. Build / 构建
 
@@ -116,8 +122,11 @@ By default, the services are available at:
 
 Default dev credentials / 默认开发账号：
 
-- Username / 用户名: `admin`
-- Password / 密码: `admin123!`
+- If you rely on runtime fallback defaults, the initial credentials are `admin` / `admin123!`.
+- If you `source .env` generated from `.env.example`, the initial credentials are `admin` / `admin123!`.
+
+- 如果使用运行时代码内置默认值，初始化账号为 `admin` / `admin123!`。
+- 如果使用 `npm run init` 生成并 `source .env` 的开发配置，初始化账号同样为 `admin` / `admin123!`。
 
 ## Useful Scripts / 常用脚本
 
@@ -133,45 +142,57 @@ npm run deploy:one-click  # 一键部署（安装 Redis + systemd）
 
 ## Project Structure / 目录结构
 
+Key structure snapshot (not an exhaustive file list) / 关键结构快照（非完整清单）：
+
 ```text
 src/
-  server.ts                Main chat service (HTTP server, routes, session management)
-  auth-admin-server.ts     Auth and admin service (users, agents, groups, API connections)
+  server.ts                Chat service composition root
+  auth-admin-server.ts     Auth/admin service composition root
   agent-manager.ts         Agent definitions, @ mention parsing, @@ chain invocation parsing
+  agent-invoker.ts         Shared agent invocation orchestration
   agent-config-store.ts    Agent persistence, apply modes (immediate / after_chat)
-  agent-invoker.ts         Agent invocation dispatcher (CLI or API mode)
   api-connection-store.ts  OpenAI-compatible API connection CRUD and validation
   group-store.ts           Agent group storage and validation
-  bot-room-mcp-server.ts   MCP server for agent callbacks (post_message, thread_context)
+  claude-cli.ts            Claude CLI adapter and verbose logging integration
+  block-buffer.ts          Rich block buffering for callback-based flows
+  rich-extract.ts          Extract cc_rich blocks from model output
+  rich-digest.ts           Rich block digest helpers for prompts
+  rate-limiter.ts          In-memory rate limiting helpers
+  bot-room-mcp-server.ts   MCP server for agent callbacks
   types.ts                 Shared TypeScript type definitions
-  claude-cli.ts            Mock reply generation fallback
-  rich-extract.ts          Rich block extraction from AI text
-  rich-digest.ts           Rich text digest for prompts
-  block-buffer.ts          Block buffer (Route A for pre-stored blocks)
-  rate-limiter.ts          In-memory rate limiter
-  professional-agent-prompts.ts  Built-in professional agent prompt templates
-  providers/
-    cli-provider.ts              CLI-based agent invocation (Claude/Codex CLI)
-    openai-compatible-provider.ts API-based agent invocation (OpenAI-compatible)
-public/
-  index.html               Main chat UI
-  styles.css               Frontend styles
-  chat-markdown.js         Markdown rendering
-  chat-composer.js         Chat input composer
-  verbose-logs.html        CLI verbose logs page
-  deps-monitor.html        Dependency status page
-  manifest.json            PWA manifest
-  service-worker.js        PWA service worker
-public-auth/
-  admin.html               Admin UI
-data/                      Runtime data directory (agents.json, users.json, groups.json, api-connections.json)
-scripts/
-  init-dev.sh              Development environment initialization
-  install-systemd.sh       Systemd service installation
-  one-click-deploy.sh      One-click deployment script
-tests/integration/
-  *.integration.test.js    End-to-end oriented integration coverage
+  chat/
+    bootstrap/             Chat server bootstrap and startup wiring
+    http/                  Chat/auth/callback/ops route adapters
+    application/           Chat, session, auth use cases
+    infrastructure/        Auth-admin client, persistence helpers, dependency log store
+    runtime/               Chat runtime state and agent-store runtime
+  admin/
+    bootstrap/             Auth-admin bootstrap and startup wiring
+    http/                  Admin routes and auth helpers
+    application/           User/agent/group/model/system admin use cases
+    infrastructure/        User persistence store
+    runtime/               Admin runtime config and startup/security logic
+  providers/               CLI / OpenAI-compatible agent providers
+public/                    Main chat UI and static assets
+public-auth/               Admin UI static assets
+data/                      Runtime data directory
+logs/                      Runtime logs (including ai-cli-verbose/)
+scripts/                   Bootstrap and deployment scripts
+systemd/                   Example service unit files
+tests/integration/         End-to-end oriented integration coverage
+dist/                      Compiled build output
 ```
+
+### Module responsibilities / 模块职责
+
+- **Chat routes** live under `src/chat/http/`
+- **Auth/admin routes** live under `src/admin/http/`
+- **Shared HTTP helpers** live under `src/shared/http/`
+- **New use cases / 业务编排** should usually be added under `src/chat/application/` or `src/admin/application/`
+- **New infrastructure integrations** (filesystem, Redis, upstream HTTP, persistence helpers) should usually be added under `src/chat/infrastructure/`, `src/chat/runtime/`, `src/admin/infrastructure/`, or `src/admin/runtime/`
+
+This keeps `src/server.ts` and `src/auth-admin-server.ts` as thin startup files instead of feature containers.
+这样可以让 `src/server.ts` 与 `src/auth-admin-server.ts` 保持为精简的启动入口，而不是再次膨胀成业务容器。
 
 ## Environment Variables / 环境变量配置
 
@@ -200,7 +221,7 @@ tests/integration/
 | `MODEL_CONNECTION_DATA_FILE` | `data/api-connections.json` | API connections file path |
 | `GROUP_DATA_FILE` | `data/groups.json` | Agent groups file path |
 | `BOT_ROOM_DEFAULT_USER` | `admin` | Default username |
-| `BOT_ROOM_DEFAULT_PASSWORD` | - | Default password (required in production, >= 12 chars) |
+| `BOT_ROOM_DEFAULT_PASSWORD` | `admin123!` | Default password fallback (override in production with a strong secret) |
 
 ### Redis / Redis 配置
 
@@ -523,7 +544,7 @@ AI responses support `cc_rich` code blocks:
 
 ## Verbose Logging / Verbose 日志
 
-When `BOT_ROOM_VERBOSE_LOG_DIR` is set, CLI agent verbose output is recorded:
+CLI agent verbose output is recorded under `BOT_ROOM_VERBOSE_LOG_DIR` (default: `logs/ai-cli-verbose`):
 
 - File naming: `{timestamp}-{cliName}-{agentName}.log`
 - Includes stdout, stderr, and meta information

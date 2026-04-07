@@ -474,3 +474,67 @@ git commit -m "docs: record modular server architecture"
 - Full integration suite passes
 - New code has a stable place for future chat routes, admin routes, application logic, and infrastructure integrations
 - Operational behavior for Redis, callback auth, verbose logs, and admin token checks is preserved
+
+## Architecture Acceptance Notes
+
+### Actual files created
+
+#### Shared HTTP
+- `src/shared/http/body.ts`
+- `src/shared/http/json.ts`
+- `src/shared/http/cors.ts`
+- `src/shared/http/static-files.ts`
+- `src/shared/http/errors.ts`
+
+#### Chat server
+- `src/chat/bootstrap/create-chat-server.ts`
+- `src/chat/bootstrap/chat-server-startup.ts`
+- `src/chat/http/auth-routes.ts`
+- `src/chat/http/callback-routes.ts`
+- `src/chat/http/chat-routes.ts`
+- `src/chat/http/chat-sse.ts`
+- `src/chat/http/ops-routes.ts`
+- `src/chat/http/request-context.ts`
+- `src/chat/http/workdir-path.ts`
+- `src/chat/application/auth-service.ts`
+- `src/chat/application/chat-service.ts`
+- `src/chat/application/session-service.ts`
+- `src/chat/infrastructure/auth-admin-client.ts`
+- `src/chat/infrastructure/chat-session-repository.ts`
+- `src/chat/infrastructure/dependency-log-store.ts`
+- `src/chat/runtime/chat-agent-store-runtime.ts`
+- `src/chat/runtime/chat-runtime.ts`
+
+#### Auth/admin server
+- `src/admin/bootstrap/create-auth-admin-server.ts`
+- `src/admin/http/admin-auth.ts`
+- `src/admin/http/auth-admin-routes.ts`
+- `src/admin/http/auth-admin-support-routes.ts`
+- `src/admin/application/agent-admin-service.ts`
+- `src/admin/application/group-admin-service.ts`
+- `src/admin/application/model-connection-admin-service.ts`
+- `src/admin/application/system-admin-service.ts`
+- `src/admin/application/user-admin-service.ts`
+- `src/admin/infrastructure/user-store.ts`
+- `src/admin/runtime/auth-admin-runtime.ts`
+
+### Deviations from the original target module list
+
+- Chat startup/security/banner logic was split further into `src/chat/bootstrap/chat-server-startup.ts`
+- Chat request-context/SSE/workdir helpers were split into dedicated HTTP-support modules:
+  - `src/chat/http/request-context.ts`
+  - `src/chat/http/chat-sse.ts`
+  - `src/chat/http/workdir-path.ts`
+- Chat agent-store runtime was separated from the main runtime into `src/chat/runtime/chat-agent-store-runtime.ts`
+- Auth/admin modularization needed extra service/route modules beyond the initial plan to keep bootstrap thin:
+  - `src/admin/http/admin-auth.ts`
+  - `src/admin/http/auth-admin-support-routes.ts`
+  - `src/admin/application/group-admin-service.ts`
+  - `src/admin/application/model-connection-admin-service.ts`
+  - `src/admin/application/system-admin-service.ts`
+
+### Follow-up items intentionally deferred
+
+- Further split `src/chat/runtime/chat-runtime.ts` if future changes keep increasing its scope
+- Further trim minor duplication around dependency-log filtering in chat ops routes
+- Tighten admin system-dir path validation semantics if product requirements decide to enforce absolute-path checks more strictly

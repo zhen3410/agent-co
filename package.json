@@ -13,6 +13,8 @@
     "systemd:install": "bash scripts/install-systemd.sh",
     "deploy:one-click": "bash scripts/one-click-deploy.sh",
     "test": "npm run test:integration",
+    "test:unit": "npm run build && node --test tests/unit/*.unit.test.js",
+    "test:fast": "npm run build && node --test tests/unit/*.unit.test.js tests/integration/chat-server-runtime-contract.integration.test.js tests/integration/chat-server-service-boundaries.integration.test.js tests/integration/chat-server-session-service-boundaries.integration.test.js tests/integration/chat-server-ops-boundaries.integration.test.js",
     "test:integration": "npm run build && node --test tests/integration/*.integration.test.js"
   },
   "keywords": [],

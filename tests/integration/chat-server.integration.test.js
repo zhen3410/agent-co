@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { spawn, spawnSync } = require('node:child_process');
-const { mkdtempSync, writeFileSync, chmodSync, rmSync } = require('node:fs');
+const { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
@@ -16,6 +16,35 @@ async function enableAgents(fixture, agentNames) {
     });
     assert.equal(response.status, 200);
   }
+}
+
+async function requestRawJson(url, body) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body
+  });
+
+  const text = await response.text();
+  let json = null;
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+  }
+
+  return { status: response.status, body: json, text };
+}
+
+async function requestRaw(url, options = {}) {
+  const response = await fetch(url, options);
+  return {
+    status: response.status,
+    headers: response.headers,
+    text: await response.text()
+  };
 }
 
 async function createOpenAICompatibleStub(handler) {
@@ -56,6 +85,62 @@ async function createOpenAICompatibleStub(handler) {
 function getRandomPort() {
   return Math.floor(Math.random() * 10000) + 30000;
 }
+
+test('server.ts 保持为组合根，不再承载 agent store 可变逻辑', () => {
+  const serverSource = readFileSync(join(__dirname, '..', '..', 'src', 'server.ts'), 'utf8');
+
+  assert.equal(serverSource.includes('let agentStore ='), false);
+  assert.equal(serverSource.includes('let agentStoreMtimeMs ='), false);
+  assert.equal(serverSource.includes('function syncAgentsFromStore'), false);
+  assert.equal(serverSource.includes('applyPendingAgents('), false);
+  assert.equal(serverSource.includes('saveAgentStore('), false);
+});
+
+test('server.ts 保持为精简组合根，不再承载安全检查和启动横幅逻辑', () => {
+  const serverSource = readFileSync(join(__dirname, '..', '..', 'src', 'server.ts'), 'utf8');
+
+  assert.equal(serverSource.includes('function performSecurityChecks'), false);
+  assert.equal(serverSource.includes('performSecurityChecks();'), false);
+  assert.equal(serverSource.includes('🚀 多 AI 智能体聊天室已启动'), false);
+  assert.equal(serverSource.includes('API 端点:'), false);
+});
+
+test('chat 应用服务对外接口不再直接耦合 IncomingMessage', () => {
+  const authServiceSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'application', 'auth-service.ts'), 'utf8');
+  const sessionServiceSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'application', 'session-service.ts'), 'utf8');
+  const chatServiceSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'application', 'chat-service.ts'), 'utf8');
+
+  assert.equal(authServiceSource.includes('http.IncomingMessage'), false);
+  assert.equal(sessionServiceSource.includes('http.IncomingMessage'), false);
+  assert.equal(chatServiceSource.includes('http.IncomingMessage'), false);
+});
+
+test('agent store runtime 从 chat-runtime.ts 中分离为独立模块', () => {
+  const chatRuntimeSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'runtime', 'chat-runtime.ts'), 'utf8');
+  const agentStoreRuntimeSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'runtime', 'chat-agent-store-runtime.ts'), 'utf8');
+
+  assert.equal(chatRuntimeSource.includes('createChatAgentStoreRuntime'), false);
+  assert.equal(agentStoreRuntimeSource.includes('createChatAgentStoreRuntime'), true);
+});
+
+test('chat service 不再直接改写 session 内部字段', () => {
+  const chatServiceSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'application', 'chat-service.ts'), 'utf8');
+
+  assert.equal(chatServiceSource.includes('session.history.push('), false);
+  assert.equal(chatServiceSource.includes('session.pendingAgentTasks ='), false);
+  assert.equal(chatServiceSource.includes('session.pendingVisibleMessages ='), false);
+  assert.equal(/session\.discussionState\s*=\s*[^=]/.test(chatServiceSource), false);
+});
+
+test('chat routes 将 SSE 传输细节抽离到独立 helper', () => {
+  const chatRoutesSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'http', 'chat-routes.ts'), 'utf8');
+  const sseHelperSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'http', 'chat-sse.ts'), 'utf8');
+
+  assert.equal(chatRoutesSource.includes('text/event-stream'), false);
+  assert.equal(chatRoutesSource.includes('X-Accel-Buffering'), false);
+  assert.equal(chatRoutesSource.includes('event: ${event}'), false);
+  assert.equal(sseHelperSource.includes('text/event-stream'), true);
+});
 
 async function waitForChatServer(port, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
@@ -1197,6 +1282,22 @@ test('聊天主链在 API 模式下会通过统一 invoker 调用 OpenAI-compati
   }
 });
 
+test('依赖状态接口继续返回可解析的 JSON 结构', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const response = await fixture.request('/api/dependencies/status');
+    assert.equal(response.status === 200 || response.status === 503, true);
+    assert.equal(typeof response.body.healthy, 'boolean');
+    assert.equal(typeof response.body.checkedAt, 'number');
+    assert.equal(Array.isArray(response.body.dependencies), true);
+    assert.equal(Array.isArray(response.body.logs), true);
+    assert.equal(response.body.dependencies.some(item => item.name === 'redis'), true);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('chat-stream 在 API 模式下会先推送 agent_delta，再推送最终 agent_message', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-stream-api-agent-'));
   const connectionStub = await createOpenAICompatibleStub((req, res) => {
@@ -1305,6 +1406,31 @@ test('未登录时聊天相关接口会返回 401，登录后可正常聊天', a
     assert.equal(chatResponse.body.success, true);
     assert.ok(Array.isArray(chatResponse.body.aiMessages));
     assert.ok(chatResponse.body.aiMessages.length >= 1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('聊天服务对非法 JSON 登录请求返回 500 和错误信息', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const response = await requestRawJson(`http://127.0.0.1:${fixture.port}/api/login`, '{');
+    assert.equal(response.status, 500);
+    assert.equal(response.body.error, 'Invalid JSON');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('聊天服务保持原始的 404 兜底响应', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const response = await requestRaw(`http://127.0.0.1:${fixture.port}/missing-route`);
+    assert.equal(response.status, 404);
+    assert.equal(response.text, 'Not Found');
+    assert.equal(response.headers.get('content-type'), null);
   } finally {
     await fixture.cleanup();
   }

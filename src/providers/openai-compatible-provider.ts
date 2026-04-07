@@ -1,5 +1,5 @@
 import type { ApiConnectionConfig, AgentInvokeResult, Message } from '../types';
-import type { InvokeAgentParams } from '../agent-invoker';
+import type { InvokeAgentParams } from '../agent-invocation/agent-invoker-types';
 import { extractRichBlocks } from '../rich-extract';
 
 const API_REQUEST_TIMEOUT_MS = 15 * 60_000;

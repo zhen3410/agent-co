@@ -1,7 +1,7 @@
-const { mkdtempSync, rmSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 async function waitForHealth(port, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
@@ -27,6 +27,27 @@ function getRandomPort() {
   return Math.floor(Math.random() * 10000) + 20000;
 }
 
+let didEnsureBuild = false;
+
+function ensureBuildArtifacts() {
+  if (didEnsureBuild) {
+    return;
+  }
+
+  if (!existsSync(join(process.cwd(), 'dist', 'auth-admin-server.js'))) {
+    const result = spawnSync('npm', ['run', 'build'], {
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: 'utf8'
+    });
+    if (result.status !== 0) {
+      throw new Error(`failed to build integration fixtures:\n${result.stdout || ''}\n${result.stderr || ''}`);
+    }
+  }
+
+  didEnsureBuild = true;
+}
+
 async function createAuthAdminFixture(options = {}) {
   const maxAttempts = options.maxAttempts || 5;
   const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-auth-it-'));
@@ -43,6 +64,7 @@ async function createAuthAdminFixture(options = {}) {
   let child = null;
   let stderr = '';
   let lastStartupError = null;
+  ensureBuildArtifacts();
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     port = getRandomPort();

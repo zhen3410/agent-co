@@ -8,22 +8,41 @@
 
 ## 核心模块
 
-| 文件 | 功能 |
+| 路径 | 功能 |
 |------|------|
-| `server.ts` | HTTP 服务器和路由处理 |
-| `agent-manager.ts` | 智能体管理和 @ 提及提取 |
-| `agent-config-store.ts` | 智能体配置持久化存储 |
-| `claude-cli.ts` | Claude CLI 调用（支持 stream-json 输出） |
-| `types.ts` | 类型定义 |
-| `rich-extract.ts` | 富文本块提取 |
-| `rich-digest.ts` | 富文本摘要（用于 prompt） |
-| `block-buffer.ts` | Block 缓冲区（Route A） |
-| `rate-limiter.ts` | 内存速率限制器 |
-| `auth-admin-server.ts` | 独立鉴权管理服务 |
+| `src/server.ts` | 聊天服务组合根：配置、依赖装配、启动 |
+| `src/auth-admin-server.ts` | 鉴权/管理服务组合根：配置、依赖装配、启动 |
+| `src/shared/http/*` | 共享 HTTP 工具：body/json/cors/static/errors |
+| `src/chat/http/*` | 聊天服务路由适配层（chat/auth/callback/ops） |
+| `src/chat/application/*` | 聊天领域用例（chat/session/auth） |
+| `src/chat/infrastructure/*` | 聊天侧基础设施（auth-admin client、持久化 helper、依赖日志等） |
+| `src/chat/runtime/*` | 聊天运行时状态（session/runtime/agent store） |
+| `src/admin/http/*` | 管理端路由与 admin 鉴权 helper |
+| `src/admin/application/*` | 管理端用例（user/agent/group/model/system） |
+| `src/admin/infrastructure/*` | 管理端基础设施（user store） |
+| `src/admin/runtime/*` | 管理端运行时与启动/安全检查 |
+| `src/agent-manager.ts` | 智能体管理和 @ / @@ 提及提取 |
+| `src/agent-config-store.ts` | 智能体配置持久化存储 |
+| `src/claude-cli.ts` | Claude CLI 调用（支持 stream-json 输出） |
+| `src/types.ts` | 类型定义 |
+| `src/rich-extract.ts` | 富文本块提取 |
+| `src/rich-digest.ts` | 富文本摘要（用于 prompt） |
+| `src/block-buffer.ts` | Block 缓冲区（Route A） |
+| `src/rate-limiter.ts` | 内存速率限制器 |
+
+## 模块放置约定
+
+- **新增聊天 HTTP 端点**：优先放到 `src/chat/http/`
+- **新增管理端 HTTP 端点**：优先放到 `src/admin/http/`
+- **新增业务编排 / 用例逻辑**：优先放到 `src/chat/application/` 或 `src/admin/application/`
+- **新增 Redis / 文件系统 / 上游 HTTP / 运行时状态逻辑**：优先放到 `src/chat/infrastructure/`、`src/chat/runtime/`、`src/admin/infrastructure/` 或 `src/admin/runtime/`
+- **除非只是组合装配，否则不要把新业务逻辑继续塞回 `src/server.ts` / `src/auth-admin-server.ts`**
 
 ## 运行项目
 
 ```bash
+npm run init         # 初始化 data/、logs/ 与 .env（若不存在）
+set -a && source .env && set +a  # 本地开发时导出 .env；npm 脚本不会自动加载
 npm run build        # 编译 TypeScript
 npm start            # 启动聊天服务器 (端口 3002)
 npm run dev          # 开发模式运行
@@ -41,9 +60,9 @@ npm run deploy:one-click  # 一键部署（安装 Redis + systemd）
 | `BOT_ROOM_AUTH_ENABLED` | true | 是否启用鉴权 |
 | `AUTH_ADMIN_BASE_URL` | http://127.0.0.1:3003 | 鉴权服务地址 |
 | `AGENT_DATA_FILE` | data/agents.json | 智能体配置文件 |
-| `BOT_ROOM_VERBOSE_LOG_DIR` | logs/claude-verbose | verbose 日志目录 |
+| `BOT_ROOM_VERBOSE_LOG_DIR` | logs/ai-cli-verbose | verbose 日志目录 |
 | `AUTH_ADMIN_TOKEN` | - | 管理员令牌（生产环境必须） |
-| `BOT_ROOM_DEFAULT_PASSWORD` | - | 默认用户密码（生产环境必须） |
+| `BOT_ROOM_DEFAULT_PASSWORD` | - | 聊天服务仅在生产环境用它做安全检查；真正的默认兜底值见下方鉴权服务表 |
 
 ### Redis 配置来源（聊天服务）
 
@@ -64,29 +83,37 @@ redis-cli HSET bot-room:config chat_sessions_key bot-room:chat:sessions:v1
 | `AUTH_DATA_FILE` | data/users.json | 用户数据文件 |
 | `AGENT_DATA_FILE` | data/agents.json | 智能体配置文件 |
 | `BOT_ROOM_DEFAULT_USER` | admin | 默认用户名 |
-| `BOT_ROOM_DEFAULT_PASSWORD` | - | 默认密码 |
+| `BOT_ROOM_DEFAULT_PASSWORD` | admin123! | 默认密码兜底值（生产环境请显式覆盖为强密码） |
 
-## 聊天服务 API 端点
+## 聊天服务主要 API 端点
 
 | 端点 | 方法 | 描述 |
 |------|------|------|
 | `/api/agents` | GET | 获取智能体列表 |
 | `/api/chat` | POST | 发送消息（同步响应） |
 | `/api/chat-stream` | POST | 发送消息（SSE 流式响应） |
+| `/api/chat-resume` | POST | 继续执行中断的链式对话 |
+| `/api/chat-summary` | POST | 为会话生成总结 |
 | `/api/history` | GET | 获取历史记录 |
 | `/api/clear` | POST | 清空历史 |
-| `/api/switch-agent` | POST | 切换当前智能体 |
+| `/api/sessions` | POST | 创建会话 |
+| `/api/sessions/select` | POST | 切换当前会话 |
+| `/api/sessions/update` | POST | 更新会话元数据 |
+| `/api/sessions/rename` | POST | 重命名会话 |
+| `/api/sessions/delete` | POST | 删除会话 |
+| `/api/session-agents` | POST | 按会话启用/停用智能体 |
 | `/api/login` | POST | 用户名+密码登录 |
 | `/api/logout` | POST | 登出并清除 Cookie |
 | `/api/auth-status` | GET | 查看鉴权状态 |
 | `/api/create-block` | POST | Route A: 创建 block |
 | `/api/block-status` | GET | 查看 BlockBuffer 状态 |
 | `/api/dependencies/status` | GET | 查看依赖服务运行状态（Redis） |
+| `/api/workdirs/select` | POST | 为当前会话设置工作目录 |
 | `/api/verbose/agents` | GET | 查看 verbose 日志智能体列表 |
 | `/api/verbose/logs` | GET | 查看智能体日志文件列表 |
 | `/api/verbose/log-content` | GET | 查看日志文件内容 |
 
-## 鉴权管理服务 API 端点
+## 鉴权管理服务主要 API 端点
 
 | 端点 | 方法 | 描述 |
 |------|------|------|
@@ -101,8 +128,16 @@ redis-cli HSET bot-room:config chat_sessions_key bot-room:chat:sessions:v1
 | `/api/agents` | POST | 创建智能体（需 x-admin-token） |
 | `/api/agents/:name` | PUT | 更新智能体（需 x-admin-token） |
 | `/api/agents/:name/prompt` | PUT | 更新智能体提示词（需 x-admin-token） |
+| `/api/agents/:name/prompt/template` | GET | 获取模板提示词（需 x-admin-token） |
+| `/api/agents/:name/prompt/restore-template` | POST | 恢复模板提示词（需 x-admin-token） |
 | `/api/agents/:name` | DELETE | 删除智能体（需 x-admin-token） |
 | `/api/agents/apply-pending` | POST | 应用待生效配置（需 x-admin-token） |
+| `/api/groups` | GET/POST | 查询/创建分组（需 x-admin-token） |
+| `/api/groups/:id` | PUT/DELETE | 更新/删除分组（需 x-admin-token） |
+| `/api/model-connections` | GET/POST | 查询/创建模型连接（需 x-admin-token） |
+| `/api/model-connections/:id` | PUT/DELETE | 更新/删除模型连接（需 x-admin-token） |
+| `/api/model-connections/:id/test` | POST | 测试模型连接（需 x-admin-token） |
+| `/api/system/dirs` | GET | 列出可选工作目录（需 x-admin-token） |
 
 ## 智能体配置
 
@@ -247,8 +282,8 @@ AI 回复支持 `cc_rich` 代码块：
 
 ## Verbose 日志
 
-当设置 `BOT_ROOM_VERBOSE_LOG_DIR` 时，Claude CLI 的详细输出会记录到日志文件：
+Claude CLI / Codex CLI 的详细输出会记录到 `BOT_ROOM_VERBOSE_LOG_DIR`（默认 `logs/ai-cli-verbose`）：
 
-- 文件命名格式：`{timestamp}-{agentName}.log`
+- 文件命名格式：`{timestamp}-{cli}-{agentName}.log`
 - 包含 stdout、stderr、meta 信息
 - 可通过 `/api/verbose/*` 端点查询
