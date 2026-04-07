@@ -1,12 +1,10 @@
 import Redis from 'ioredis';
 import { Message } from '../../types';
 import {
-  createChatSessionRepository,
   UserChatSession,
   PendingAgentDispatchTask
 } from '../infrastructure/chat-session-repository';
 import {
-  createDependencyLogStore,
   DependencyStatusItem,
   DependencyStatusLogEntry
 } from '../infrastructure/dependency-log-store';
@@ -22,6 +20,7 @@ import { createChatSessionState } from './chat-session-state';
 import { createChatDiscussionState } from './chat-discussion-state';
 import { createChatRuntimePersistence } from './chat-runtime-persistence';
 import { createChatRuntimeDependencies } from './chat-runtime-dependencies';
+import { createChatRuntimeStores } from './chat-runtime-stores';
 
 export type { UserChatSession, PendingAgentDispatchTask } from '../infrastructure/chat-session-repository';
 export type { DependencyStatusItem, DependencyStatusLogEntry } from '../infrastructure/dependency-log-store';
@@ -34,8 +33,12 @@ export type {
 export { normalizePositiveSessionSetting } from './chat-runtime-types';
 
 export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
-  const repository = createChatSessionRepository();
-  const dependencyLogs = createDependencyLogStore(config.dependencyStatusLogLimit ?? 80);
+  const {
+    repository,
+    callbackMessageStore,
+    persistenceStore,
+    dependencyLogStore
+  } = createChatRuntimeStores(config);
   const redisClient = new Redis(config.redisUrl, { lazyConnect: true });
 
   let persistence!: ReturnType<typeof createChatRuntimePersistence>;
@@ -64,7 +67,7 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
   persistence = createChatRuntimePersistence({
     config,
     redisClient,
-    repository,
+    store: persistenceStore,
     createDefaultSession: sessionState.createDefaultSession,
     normalizeSessionName: sessionState.normalizeSessionName,
     sanitizeEnabledAgents: sessionState.sanitizeEnabledAgents,
@@ -76,7 +79,7 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
   const runtimeDependencies = createChatRuntimeDependencies({
     config,
     redisClient,
-    dependencyLogs
+    dependencyLogs: dependencyLogStore
   });
 
   function addCallbackMessage(sessionId: string, agentName: string, content: string, invokeAgents?: string[]) {
@@ -88,12 +91,12 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
       timestamp: Date.now(),
       invokeAgents: invokeAgents && invokeAgents.length > 0 ? invokeAgents : undefined
     };
-    repository.appendCallbackMessage(sessionId, agentName, msg);
+    callbackMessageStore.appendCallbackMessage(sessionId, agentName, msg);
     return msg;
   }
 
   function consumeCallbackMessages(sessionId: string, agentName: string): Message[] {
-    return repository.consumeCallbackMessages(sessionId, agentName);
+    return callbackMessageStore.consumeCallbackMessages(sessionId, agentName);
   }
 
   return {
