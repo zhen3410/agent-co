@@ -1,11 +1,12 @@
 import Redis from 'ioredis';
-import { ChatSessionRepository, PendingAgentDispatchTask, RedisPersistedState, UserChatSession } from '../infrastructure/chat-session-repository';
+import { PendingAgentDispatchTask, RedisPersistedState, UserChatSession } from '../infrastructure/chat-session-repository';
 import { ChatRuntimeConfig, SessionChainPatch } from './chat-runtime-types';
+import { ChatRuntimePersistenceStore } from './chat-runtime-stores';
 
 interface ChatRuntimePersistenceDependencies {
   config: Pick<ChatRuntimeConfig, 'redisConfigKey' | 'defaultRedisChatSessionsKey' | 'redisPersistDebounceMs' | 'redisRequired' | 'redisDisabled' | 'envRedisChatSessionsKey'>;
   redisClient: Redis;
-  repository: ChatSessionRepository;
+  store: ChatRuntimePersistenceStore;
   createDefaultSession(): UserChatSession;
   normalizeSessionName(name: string | undefined): string;
   sanitizeEnabledAgents(...candidateLists: Array<string[] | undefined>): string[];
@@ -68,7 +69,7 @@ export function createChatRuntimePersistence(deps: ChatRuntimePersistenceDepende
     if (deps.config.redisDisabled || !redisReady) return;
 
     try {
-      const payload = JSON.stringify(deps.repository.serializeState());
+      const payload = JSON.stringify(deps.store.serializeState());
       await deps.redisClient.set(redisChatSessionsKey, payload);
     } catch (error) {
       console.error('[Redis] 持久化聊天会话失败:', error);
@@ -110,7 +111,7 @@ export function createChatRuntimePersistence(deps: ChatRuntimePersistenceDepende
         return;
       }
 
-      deps.repository.clearUserSessions();
+      deps.store.clearUserSessions();
       for (const [userKey, sessions] of Object.entries(parsed.userChatSessions)) {
         const sessionMap = new Map<string, UserChatSession>();
         for (const session of sessions) {
@@ -156,12 +157,12 @@ export function createChatRuntimePersistence(deps: ChatRuntimePersistenceDepende
           sessionMap.set(fallback.id, fallback);
         }
 
-        deps.repository.setUserSessions(userKey, sessionMap);
+        deps.store.setUserSessions(userKey, sessionMap);
       }
 
-      deps.repository.clearActiveSessionIds();
+      deps.store.clearActiveSessionIds();
       for (const [userKey, sessionId] of Object.entries(parsed.userActiveChatSession)) {
-        deps.repository.setActiveSessionId(userKey, sessionId);
+        deps.store.setActiveSessionId(userKey, sessionId);
       }
 
       console.log(`[Redis] 已恢复聊天会话数据: users=${Object.keys(parsed.userChatSessions).length}`);
