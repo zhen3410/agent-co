@@ -72,7 +72,6 @@ const authService = createAuthService({
 }, authAdminClient, runtime);
 const sessionService = createSessionService({
   runtime,
-  getAgentNames: () => agentManager.getAgentConfigs().map(agent => agent.name),
   hasAgent: (agentName) => agentManager.hasAgent(agentName)
 });
 const chatService = createChatService({
