@@ -1,4 +1,7 @@
 import * as http from 'http';
+import { AppError } from '../../../shared/errors/app-error';
+import { APP_ERROR_CODES } from '../../../shared/errors/app-error-codes';
+import { sendHttpError } from '../../../shared/http/errors';
 import { sendJson } from '../../../shared/http/json';
 import { parseDependencyLogQuery } from '../../infrastructure/dependency-log-store';
 import { ChatRuntime } from '../../runtime/chat-runtime';
@@ -26,7 +29,7 @@ export async function handleDependencyRoutes(
         logs: deps.runtime.listDependencyStatusLogs()
       });
     } catch (error) {
-      sendJson(res, 500, { error: (error as Error).message });
+      sendHttpError(res, error);
     }
     return true;
   }
@@ -34,7 +37,9 @@ export async function handleDependencyRoutes(
   if (requestUrl.pathname === '/api/dependencies/logs' && method === 'GET') {
     const query = parseDependencyLogQuery(requestUrl);
     if (query.startAt !== null && query.endAt !== null && query.startAt > query.endAt) {
-      sendJson(res, 400, { error: 'startDate 不能晚于 endDate' });
+      sendHttpError(res, new AppError('startDate 不能晚于 endDate', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      }));
       return true;
     }
 

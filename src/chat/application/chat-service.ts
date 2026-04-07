@@ -1,5 +1,8 @@
 import { Message, RichBlock } from '../../types';
 import { addBlock, getStatus as getBlockBufferStatus } from '../../block-buffer';
+import { AppErrorOptions } from '../../shared/errors/app-error';
+import { AppError } from '../../shared/errors/app-error';
+import { APP_ERROR_CODES, AppErrorCode } from '../../shared/errors/app-error-codes';
 import { createChatAgentExecution } from './chat-agent-execution';
 import { createChatDispatchOrchestrator } from './chat-dispatch-orchestrator';
 import { createChatResumeService } from './chat-resume-service';
@@ -13,12 +16,9 @@ import type {
 
 export type { ChatService, ChatServiceDependencies, StreamMessageCallbacks } from './chat-service-types';
 
-export class ChatServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly statusCode: number
-  ) {
-    super(message);
+export class ChatServiceError extends AppError {
+  constructor(message: string, code: AppErrorCode, statusCode?: number) {
+    super(message, { code, statusCode });
     this.name = 'ChatServiceError';
   }
 }
@@ -27,8 +27,8 @@ function buildMessageId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-function createChatServiceError(message: string, statusCode: number): ChatServiceError {
-  return new ChatServiceError(message, statusCode);
+function createChatServiceError(message: string, error: Pick<AppErrorOptions, 'code' | 'statusCode'>): ChatServiceError {
+  return new ChatServiceError(message, error.code, error.statusCode);
 }
 
 function buildSendContext(runtime: ChatRuntime, userKey: string, sessionId: string): string {
@@ -74,12 +74,12 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     const { message, sender: bodySender } = body;
     const sender = bodySender || deps.defaultUserName;
     if (!message) {
-      throw new ChatServiceError('缺少 message 字段', 400);
+      throw new ChatServiceError('缺少 message 字段', APP_ERROR_CODES.VALIDATION_FAILED);
     }
 
     const { userKey, session } = sessionService.resolveChatSession(context);
     if (sessionService.isSessionSummaryInProgress(userKey, session)) {
-      throw new ChatServiceError('当前会话正在生成总结，暂时不能发送新消息，请稍后再试。', 409);
+      throw new ChatServiceError('当前会话正在生成总结，暂时不能发送新消息，请稍后再试。', APP_ERROR_CODES.CONFLICT);
     }
     const sessionId = buildSendContext(runtime, userKey, session.id);
     const currentAgent = sessionService.expireInvalidCurrentAgent(userKey, session);
@@ -149,12 +149,12 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     const { message, sender: bodySender } = body;
     const sender = bodySender || deps.defaultUserName;
     if (!message) {
-      throw new ChatServiceError('缺少 message 字段', 400);
+      throw new ChatServiceError('缺少 message 字段', APP_ERROR_CODES.VALIDATION_FAILED);
     }
 
     const { userKey, session } = sessionService.resolveChatSession(context);
     if (sessionService.isSessionSummaryInProgress(userKey, session)) {
-      throw new ChatServiceError('当前会话正在生成总结，暂时不能发送新消息，请稍后再试。', 409);
+      throw new ChatServiceError('当前会话正在生成总结，暂时不能发送新消息，请稍后再试。', APP_ERROR_CODES.CONFLICT);
     }
     const sessionId = buildSendContext(runtime, userKey, session.id);
     const currentAgent = sessionService.expireInvalidCurrentAgent(userKey, session);
@@ -228,7 +228,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
   function createBlock(payload: { sessionId?: string; block: RichBlock }) {
     const { sessionId = 'default', block } = payload;
     if (!block) {
-      throw new ChatServiceError('缺少 block 字段', 400);
+      throw new ChatServiceError('缺少 block 字段', APP_ERROR_CODES.VALIDATION_FAILED);
     }
 
     const sid = sessionId || 'default';
@@ -250,7 +250,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
   function getThreadContext(sessionId: string) {
     const session = runtime.getSessionById(sessionId);
     if (!session) {
-      throw new ChatServiceError('会话不存在', 404);
+      throw new ChatServiceError('会话不存在', APP_ERROR_CODES.NOT_FOUND);
     }
 
     return { sessionId, messages: session.history };

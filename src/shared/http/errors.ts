@@ -1,37 +1,14 @@
 import * as http from 'http';
-import { isHttpBodyParseError } from './body';
+import { MapHttpErrorOptions, mapHttpError } from './error-mapper';
 import { sendJson } from './json';
 
-interface SendHttpErrorOptions<TBody> {
-  invalidJsonStatus?: number;
-  fallbackStatus?: number;
-  mapBody?: (message: string, error: unknown) => TBody;
-}
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === 'string') {
-    return error;
-  }
-
-  return 'Internal Server Error';
-}
+type SendHttpErrorOptions<TBody> = MapHttpErrorOptions<TBody>;
 
 export function sendHttpError<TBody = { error: string }>(
   res: http.ServerResponse,
   error: unknown,
   options: SendHttpErrorOptions<TBody> = {}
 ): void {
-  const message = getErrorMessage(error);
-  const statusCode = isHttpBodyParseError(error)
-    ? (options.invalidJsonStatus ?? 400)
-    : (options.fallbackStatus ?? 500);
-  const body = options.mapBody
-    ? options.mapBody(message, error)
-    : ({ error: message } as unknown as TBody);
-
+  const { statusCode, body } = mapHttpError(error, options);
   sendJson(res, statusCode, body);
 }

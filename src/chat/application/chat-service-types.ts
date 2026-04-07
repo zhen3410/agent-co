@@ -1,6 +1,7 @@
 import { AIAgentConfig, Message, RichBlock } from '../../types';
 import { AgentManager } from '../../agent-manager';
 import { getStatus as getBlockBufferStatus } from '../../block-buffer';
+import { AppErrorCode } from '../../shared/errors/app-error-codes';
 import { SessionService, SessionUserContext } from './session-service';
 import { ChatRuntime, PendingAgentDispatchTask, UserChatSession } from '../runtime/chat-runtime';
 
@@ -86,4 +87,9 @@ export interface ChatResumeService {
   resumePendingChat(context: SessionUserContext): Promise<{ success: true; resumed: boolean; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
 }
 
-export type ChatServiceErrorFactory = (message: string, statusCode: number) => Error;
+export interface ChatServiceErrorDescriptor {
+  code: AppErrorCode;
+  statusCode?: number;
+}
+
+export type ChatServiceErrorFactory = (message: string, error: ChatServiceErrorDescriptor) => Error;

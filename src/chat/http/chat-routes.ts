@@ -1,9 +1,12 @@
 import * as http from 'http';
 import { parseBody } from '../../shared/http/body';
+import { AppError } from '../../shared/errors/app-error';
+import { APP_ERROR_CODES } from '../../shared/errors/app-error-codes';
+import { sendHttpError } from '../../shared/http/errors';
 import { sendJson } from '../../shared/http/json';
 import { checkRateLimit, getClientIP } from '../../rate-limiter';
-import { ChatService, ChatServiceError } from '../application/chat-service';
-import { SessionService, SessionServiceError } from '../application/session-service';
+import { ChatService } from '../application/chat-service';
+import { SessionService } from '../application/session-service';
 import { loadGroupStore } from '../../group-store';
 import { AgentManager } from '../../agent-manager';
 import { RichBlock } from '../../types';
@@ -22,12 +25,7 @@ export interface ChatRoutesDependencies {
 }
 
 function sendServiceError(res: http.ServerResponse, error: unknown): void {
-  if (error instanceof ChatServiceError || error instanceof SessionServiceError) {
-    sendJson(res, error.statusCode, { error: error.message });
-    return;
-  }
-
-  sendJson(res, 500, { error: (error as Error).message });
+  sendHttpError(res, error);
 }
 
 export async function handleChatRoutes(
@@ -87,8 +85,9 @@ export async function handleChatRoutes(
     try {
       const body = await parseBody<{ message: string; sender?: string }>(req);
       if (!body.message) {
-        sendJson(res, 400, { error: '缺少 message 字段' });
-        return true;
+        throw new AppError('缺少 message 字段', {
+          code: APP_ERROR_CODES.VALIDATION_FAILED
+        });
       }
 
       const streamSession = deps.sessionService.resolveChatSession({ userKey: deps.userKey }).session;
@@ -226,8 +225,9 @@ export async function handleChatRoutes(
         return true;
       }
       if (!isExistingAbsoluteDirectory(workdir)) {
-        sendJson(res, 400, { error: 'workdir 必须是存在的绝对目录' });
-        return true;
+        throw new AppError('workdir 必须是存在的绝对目录', {
+          code: APP_ERROR_CODES.VALIDATION_FAILED
+        });
       }
       sendJson(res, 200, deps.sessionService.setWorkdir({ userKey: deps.userKey }, body.agentName || '', workdir));
     } catch (error) {

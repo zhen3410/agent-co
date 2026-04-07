@@ -1,6 +1,9 @@
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
+import { AppError } from '../../../shared/errors/app-error';
+import { APP_ERROR_CODES } from '../../../shared/errors/app-error-codes';
+import { sendHttpError } from '../../../shared/http/errors';
 import { sendJson } from '../../../shared/http/json';
 
 interface VerboseLogMeta {
@@ -87,7 +90,9 @@ export async function handleVerboseLogRoutes(
   if (requestUrl.pathname === '/api/verbose/logs' && method === 'GET') {
     const agent = (requestUrl.searchParams.get('agent') || '').trim();
     if (!agent) {
-      sendJson(res, 400, { error: '缺少 agent 参数' });
+      sendHttpError(res, new AppError('缺少 agent 参数', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      }));
       return true;
     }
 
@@ -98,17 +103,23 @@ export async function handleVerboseLogRoutes(
   if (requestUrl.pathname === '/api/verbose/log-content' && method === 'GET') {
     const fileName = (requestUrl.searchParams.get('file') || '').trim();
     if (!fileName) {
-      sendJson(res, 400, { error: '缺少 file 参数' });
+      sendHttpError(res, new AppError('缺少 file 参数', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      }));
       return true;
     }
     if (fileName.includes('/') || fileName.includes('\\') || !fileName.endsWith('.log')) {
-      sendJson(res, 400, { error: '非法 file 参数' });
+      sendHttpError(res, new AppError('非法 file 参数', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      }));
       return true;
     }
 
     const fullPath = path.join(deps.verboseLogDir, fileName);
     if (!fs.existsSync(fullPath)) {
-      sendJson(res, 404, { error: '日志文件不存在' });
+      sendHttpError(res, new AppError('日志文件不存在', {
+        code: APP_ERROR_CODES.NOT_FOUND
+      }));
       return true;
     }
 

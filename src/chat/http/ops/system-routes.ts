@@ -1,15 +1,22 @@
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
+import { AppError } from '../../../shared/errors/app-error';
+import { APP_ERROR_CODES } from '../../../shared/errors/app-error-codes';
+import { sendHttpError } from '../../../shared/http/errors';
 import { sendJson } from '../../../shared/http/json';
 
 function listDirectories(targetPath: string): Array<{ name: string; path: string }> {
   const normalizedPath = path.resolve(targetPath || '/');
   if (!path.isAbsolute(normalizedPath)) {
-    throw new Error('path 必须是绝对路径');
+    throw new AppError('path 必须是绝对路径', {
+      code: APP_ERROR_CODES.VALIDATION_FAILED
+    });
   }
   if (!fs.existsSync(normalizedPath) || !fs.statSync(normalizedPath).isDirectory()) {
-    throw new Error('目录不存在');
+    throw new AppError('目录不存在', {
+      code: APP_ERROR_CODES.VALIDATION_FAILED
+    });
   }
   return fs.readdirSync(normalizedPath, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
@@ -52,7 +59,7 @@ export async function handleSystemRoutes(
       const targetPath = requestUrl.searchParams.get('path') || '/';
       sendJson(res, 200, { directories: listDirectories(targetPath) });
     } catch (error) {
-      sendJson(res, 400, { error: (error as Error).message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return true;
   }
@@ -61,7 +68,7 @@ export async function handleSystemRoutes(
     try {
       sendJson(res, 200, { options: collectWorkdirOptions() });
     } catch (error) {
-      sendJson(res, 500, { error: (error as Error).message });
+      sendHttpError(res, error);
     }
     return true;
   }

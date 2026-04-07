@@ -1,3 +1,4 @@
+import { APP_ERROR_CODES } from '../../shared/errors/app-error-codes';
 import { ChatRuntime, UserChatSession } from '../runtime/chat-runtime';
 import {
   SessionAgentToggleResponse,
@@ -36,16 +37,22 @@ export function createSessionAgentService(deps: SessionAgentServiceDependencies)
     const agentName = (payload.agentName || '').trim();
 
     if (!agentName || !deps.hasAgent(agentName)) {
-      throw deps.createError('智能体不存在', 400);
+      throw deps.createError('智能体不存在', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
 
     if (typeof payload.enabled !== 'boolean') {
-      throw deps.createError('enabled 必须是布尔值', 400);
+      throw deps.createError('enabled 必须是布尔值', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
 
     const result = runtime.setSessionEnabledAgent(userKey, sessionId, agentName, payload.enabled);
     if (!result) {
-      throw deps.createError('会话不存在', 400);
+      throw deps.createError('会话不存在', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
 
     return {
@@ -61,20 +68,26 @@ export function createSessionAgentService(deps: SessionAgentServiceDependencies)
       return { success: true, currentAgent: agentName };
     }
     if (agentName && deps.hasAgent(agentName)) {
-      throw deps.createError(`智能体未在当前会话启用: ${agentName}`, 400);
+      throw deps.createError(`智能体未在当前会话启用: ${agentName}`, {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
     if (!agentName) {
       runtime.setUserCurrentAgent(userKey, session.id, null);
       return { success: true, currentAgent: null };
     }
-    throw deps.createError(`未知的智能体: ${agentName}`, 400);
+    throw deps.createError(`未知的智能体: ${agentName}`, {
+      code: APP_ERROR_CODES.VALIDATION_FAILED
+    });
   }
 
   function setWorkdir(context: SessionUserContext, agentName: string, workdir: string | null): SessionWorkdirResponse {
     const { userKey, session } = deps.queryService.resolveChatSession(context);
     const normalizedAgentName = (agentName || '').trim();
     if (!normalizedAgentName || !deps.hasAgent(normalizedAgentName)) {
-      throw deps.createError('智能体不存在', 400);
+      throw deps.createError('智能体不存在', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
     if (!workdir) {
       runtime.setUserAgentWorkdir(userKey, session.id, normalizedAgentName, null);

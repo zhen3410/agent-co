@@ -1,4 +1,5 @@
 import { DiscussionState, Message } from '../../types';
+import { AppErrorCode } from '../../shared/errors/app-error-codes';
 import { ChatRuntime, PendingAgentDispatchTask, UserChatSession } from '../runtime/chat-runtime';
 
 export interface SessionServiceDependencies {
@@ -109,4 +110,9 @@ export interface SessionService {
   buildNoEnabledAgentsNotice(session: UserChatSession, ignoredMentions?: string[]): string;
 }
 
-export type SessionServiceErrorFactory = (message: string, statusCode: number) => Error;
+export interface SessionServiceErrorDescriptor {
+  code: AppErrorCode;
+  statusCode?: number;
+}
+
+export type SessionServiceErrorFactory = (message: string, error: SessionServiceErrorDescriptor) => Error;

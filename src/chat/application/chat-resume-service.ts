@@ -1,12 +1,13 @@
+import { APP_ERROR_CODES } from '../../shared/errors/app-error-codes';
 import { SessionService, SessionUserContext } from './session-service';
-import { ChatResumeService, ExecuteAgentTurnResult } from './chat-service-types';
+import { ChatResumeService, ChatServiceErrorFactory, ExecuteAgentTurnResult } from './chat-service-types';
 import { ExecuteAgentTurnParams } from './chat-service-types';
 
 export interface ChatResumeServiceDependencies {
   syncAgentsFromStore(): void;
   sessionService: SessionService;
   executeAgentTurn(params: ExecuteAgentTurnParams): Promise<ExecuteAgentTurnResult>;
-  createError(message: string, statusCode: number): Error;
+  createError: ChatServiceErrorFactory;
 }
 
 export function createChatResumeService(deps: ChatResumeServiceDependencies): ChatResumeService {
@@ -15,7 +16,9 @@ export function createChatResumeService(deps: ChatResumeServiceDependencies): Ch
       deps.syncAgentsFromStore();
       const { userKey, session } = deps.sessionService.resolveChatSession(context);
       if (deps.sessionService.isSessionSummaryInProgress(userKey, session)) {
-        throw deps.createError('当前会话正在生成总结，暂时不能继续执行剩余链路，请稍后再试。', 409);
+        throw deps.createError('当前会话正在生成总结，暂时不能继续执行剩余链路，请稍后再试。', {
+          code: APP_ERROR_CODES.CONFLICT
+        });
       }
       const { pendingVisibleMessages, pendingTasks } = deps.sessionService.takePendingExecution(session);
 

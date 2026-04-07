@@ -6,6 +6,9 @@ const path = require('node:path');
 const repoRoot = path.resolve(__dirname, '..', '..');
 const applicationDir = path.join(repoRoot, 'src', 'chat', 'application');
 const chatServicePath = path.join(applicationDir, 'chat-service.ts');
+const chatServiceTypesPath = path.join(applicationDir, 'chat-service-types.ts');
+const chatResumeServicePath = path.join(applicationDir, 'chat-resume-service.ts');
+const chatSummaryServicePath = path.join(applicationDir, 'chat-summary-service.ts');
 
 function read(filePath) {
   return fs.readFileSync(filePath, 'utf8');
@@ -38,4 +41,18 @@ test('chat-service façade 保持稳定的 value exports', () => {
     ['ChatServiceError', 'createChatService'],
     'chat-service.ts 应只暴露稳定的 chat service value exports'
   );
+});
+
+test('chat application helpers 使用语义化 AppErrorCode 而不是 statusCode 工厂契约', () => {
+  const chatServiceTypesSource = read(chatServiceTypesPath);
+  const chatResumeServiceSource = read(chatResumeServicePath);
+  const chatSummaryServiceSource = read(chatSummaryServicePath);
+
+  assert.match(chatServiceTypesSource, /AppErrorCode/);
+  assert.doesNotMatch(chatServiceTypesSource, /ChatServiceErrorFactory = \(message: string, statusCode: number\)/);
+  assert.match(chatServiceTypesSource, /interface ChatServiceErrorDescriptor \{\s*code: AppErrorCode;/s);
+  assert.match(chatServiceTypesSource, /ChatServiceErrorFactory = \(message: string, error: ChatServiceErrorDescriptor\)/);
+  assert.doesNotMatch(chatResumeServiceSource, /createError\(message: string, statusCode: number\)/);
+  assert.doesNotMatch(chatSummaryServiceSource, /createError\(message: string, statusCode: number\)/);
+  assert.doesNotMatch(chatSummaryServiceSource, /code:\s*APP_ERROR_CODES\.NOT_FOUND[\s\S]{0,80}statusCode:\s*400/);
 });

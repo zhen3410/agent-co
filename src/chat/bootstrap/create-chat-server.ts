@@ -1,5 +1,8 @@
 import * as http from 'http';
+import { AppError } from '../../shared/errors/app-error';
+import { APP_ERROR_CODES } from '../../shared/errors/app-error-codes';
 import { applyChatCorsHeaders } from '../../shared/http/cors';
+import { sendHttpError } from '../../shared/http/errors';
 import { sendJson, sendNotFound } from '../../shared/http/json';
 import { handleAuthRoutes } from '../http/auth-routes';
 import { handleChatRoutes } from '../http/chat-routes';
@@ -64,7 +67,9 @@ export function createChatServer(deps: CreateChatServerDependencies): { server: 
     applySetCookies(res, deps.authService.ensureVisitorIdentity(authContext).setCookies);
 
     if (deps.authService.requiresAuthentication(requestUrl.pathname) && !deps.authService.isAuthenticated(authContext)) {
-      sendJson(res, 401, { error: '未授权，请先登录' });
+      sendHttpError(res, new AppError('未授权，请先登录', {
+        code: APP_ERROR_CODES.UNAUTHORIZED
+      }));
       return;
     }
 

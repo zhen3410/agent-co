@@ -1,3 +1,4 @@
+import { APP_ERROR_CODES } from '../../shared/errors/app-error-codes';
 import { ChatRuntime, SessionChainPatch } from '../runtime/chat-runtime';
 import {
   SessionDeleteResponse,
@@ -40,7 +41,9 @@ export function createSessionCommandService(deps: SessionCommandServiceDependenc
   function selectChatSession(context: SessionUserContext, sessionId: string) {
     const { userKey } = context;
     if (!sessionId || !runtime.setActiveChatSession(userKey, sessionId)) {
-      throw deps.createError('会话不存在', 400);
+      throw deps.createError('会话不存在', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
 
     return queryService.buildSelectionResponse(userKey, runtime.ensureUserSessions(userKey).get(sessionId)!);
@@ -50,7 +53,9 @@ export function createSessionCommandService(deps: SessionCommandServiceDependenc
     const { userKey } = context;
     const renamed = runtime.renameChatSessionForUser(userKey, sessionId, name);
     if (!renamed) {
-      throw deps.createError('会话不存在', 400);
+      throw deps.createError('会话不存在', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
 
     return queryService.buildRenameResponse(userKey, renamed);
@@ -60,7 +65,9 @@ export function createSessionCommandService(deps: SessionCommandServiceDependenc
     const { userKey } = context;
     const result = runtime.deleteChatSessionForUser(userKey, sessionId);
     if (!result.success) {
-      throw deps.createError('无法删除该会话（至少需要保留一个会话）', 400);
+      throw deps.createError('无法删除该会话（至少需要保留一个会话）', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
 
     return queryService.buildDeleteResponse(userKey, runtime.ensureUserSessions(userKey).get(result.activeSessionId)!);
@@ -69,19 +76,25 @@ export function createSessionCommandService(deps: SessionCommandServiceDependenc
   function updateChatSession(context: SessionUserContext, sessionId: string, patch: unknown): SessionMutationResponse {
     const { userKey } = context;
     if (!sessionId) {
-      throw deps.createError('sessionId 不能为空', 400);
+      throw deps.createError('sessionId 不能为空', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
 
     const session = runtime.ensureUserSessions(userKey).get(sessionId);
     if (!session) {
-      throw deps.createError('会话不存在', 400);
+      throw deps.createError('会话不存在', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
 
     let parsedPatch: SessionChainPatch;
     try {
       parsedPatch = runtime.parseSessionChainPatch(patch);
     } catch (error) {
-      throw deps.createError((error as Error).message, 400);
+      throw deps.createError((error as Error).message, {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      });
     }
 
     Object.assign(session, parsedPatch);

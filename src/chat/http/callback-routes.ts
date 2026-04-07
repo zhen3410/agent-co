@@ -1,7 +1,10 @@
 import * as http from 'http';
 import { parseBody } from '../../shared/http/body';
+import { AppError } from '../../shared/errors/app-error';
+import { APP_ERROR_CODES } from '../../shared/errors/app-error-codes';
+import { sendHttpError } from '../../shared/http/errors';
 import { sendJson } from '../../shared/http/json';
-import { ChatService, ChatServiceError } from '../application/chat-service';
+import { ChatService } from '../application/chat-service';
 
 export interface CallbackRoutesDependencies {
   chatService: ChatService;
@@ -32,7 +35,9 @@ export async function handleCallbackRoutes(
 
   if (requestUrl.pathname === '/api/callbacks/post-message' && method === 'POST') {
     if (!isCallbackAuthorized(req, deps)) {
-      sendJson(res, 401, { error: 'Unauthorized' });
+      sendHttpError(res, new AppError('Unauthorized', {
+        code: APP_ERROR_CODES.UNAUTHORIZED
+      }));
       return true;
     }
 
@@ -40,8 +45,9 @@ export async function handleCallbackRoutes(
       const body = await parseBody<{ content?: string; invokeAgents?: string[] }>(req);
       const content = (body.content || '').trim();
       if (!content) {
-        sendJson(res, 400, { error: '缺少 content 字段' });
-        return true;
+        throw new AppError('缺少 content 字段', {
+          code: APP_ERROR_CODES.VALIDATION_FAILED
+        });
       }
 
       const sessionId = String(req.headers['x-bot-room-session-id'] || '').trim();
@@ -54,8 +60,9 @@ export async function handleCallbackRoutes(
       }
 
       if (!sessionId) {
-        sendJson(res, 400, { error: '缺少 x-bot-room-session-id 头' });
-        return true;
+        throw new AppError('缺少 x-bot-room-session-id 头', {
+          code: APP_ERROR_CODES.VALIDATION_FAILED
+        });
       }
 
       const invokeAgents = Array.isArray(body.invokeAgents)
@@ -64,31 +71,31 @@ export async function handleCallbackRoutes(
       const result = deps.chatService.postCallbackMessage(sessionId, agentName, content, invokeAgents);
       sendJson(res, 200, result);
     } catch (error) {
-      sendJson(res, 400, { error: (error as Error).message });
+      sendHttpError(res, error, { fallbackStatus: 400 });
     }
     return true;
   }
 
   if (requestUrl.pathname === '/api/callbacks/thread-context' && method === 'GET') {
     if (!isCallbackAuthorized(req, deps)) {
-      sendJson(res, 401, { error: 'Unauthorized' });
+      sendHttpError(res, new AppError('Unauthorized', {
+        code: APP_ERROR_CODES.UNAUTHORIZED
+      }));
       return true;
     }
 
     const sessionId = (requestUrl.searchParams.get('sessionid') || '').trim();
     if (!sessionId) {
-      sendJson(res, 400, { error: '缺少 sessionid 参数' });
+      sendHttpError(res, new AppError('缺少 sessionid 参数', {
+        code: APP_ERROR_CODES.VALIDATION_FAILED
+      }));
       return true;
     }
 
     try {
       sendJson(res, 200, deps.chatService.getThreadContext(sessionId));
     } catch (error) {
-      if (error instanceof ChatServiceError) {
-        sendJson(res, error.statusCode, { error: error.message });
-      } else {
-        sendJson(res, 500, { error: (error as Error).message });
-      }
+      sendHttpError(res, error);
     }
     return true;
   }

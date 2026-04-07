@@ -5,7 +5,11 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
-const sessionServicePath = path.join(repoRoot, 'src', 'chat', 'application', 'session-service.ts');
+const applicationDir = path.join(repoRoot, 'src', 'chat', 'application');
+const sessionServicePath = path.join(applicationDir, 'session-service.ts');
+const sessionServiceTypesPath = path.join(applicationDir, 'session-service-types.ts');
+const sessionAgentServicePath = path.join(applicationDir, 'session-agent-service.ts');
+const sessionCommandServicePath = path.join(applicationDir, 'session-command-service.ts');
 
 function read(filePath) {
   return fs.readFileSync(filePath, 'utf8');
@@ -112,4 +116,19 @@ test('session-service façade 不再直接内联低层 session 状态改写', ()
   visit(sourceFile);
 
   assert.deepEqual(directMutationNodes, []);
+});
+
+test('session application helpers 使用语义化 AppErrorCode 而不是 statusCode 工厂契约', () => {
+  const sessionServiceTypesSource = read(sessionServiceTypesPath);
+  const sessionAgentServiceSource = read(sessionAgentServicePath);
+  const sessionCommandServiceSource = read(sessionCommandServicePath);
+
+  assert.match(sessionServiceTypesSource, /AppErrorCode/);
+  assert.doesNotMatch(sessionServiceTypesSource, /SessionServiceErrorFactory = \(message: string, statusCode: number\)/);
+  assert.match(sessionServiceTypesSource, /interface SessionServiceErrorDescriptor \{\s*code: AppErrorCode;/s);
+  assert.match(sessionServiceTypesSource, /SessionServiceErrorFactory = \(message: string, error: SessionServiceErrorDescriptor\)/);
+  assert.doesNotMatch(sessionAgentServiceSource, /createError\([^)]*statusCode: number/);
+  assert.doesNotMatch(sessionCommandServiceSource, /createError\([^)]*statusCode: number/);
+  assert.doesNotMatch(sessionAgentServiceSource, /code:\s*APP_ERROR_CODES\.NOT_FOUND[\s\S]{0,80}statusCode:\s*400/);
+  assert.doesNotMatch(sessionCommandServiceSource, /code:\s*APP_ERROR_CODES\.NOT_FOUND[\s\S]{0,80}statusCode:\s*400/);
 });

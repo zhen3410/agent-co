@@ -35,16 +35,17 @@ export async function handleAuthRoutes(
       applySetCookies(res, result.setCookies);
       sendJson(res, 200, { success: true, authEnabled: result.authEnabled });
     } catch (error) {
-      if (error instanceof AuthServiceError) {
-        sendJson(res, error.statusCode, error.retryAfterSeconds
-          ? { error: error.message, retryAfter: error.retryAfterSeconds }
-          : { error: error.message });
-      } else {
-        sendHttpError(res, error, {
-          invalidJsonStatus: 500,
-          fallbackStatus: 500
-        });
-      }
+      sendHttpError(res, error, {
+        invalidJsonStatus: 500,
+        fallbackStatus: 500,
+        mapBody: (message, currentError) => {
+          if (currentError instanceof AuthServiceError && currentError.retryAfterSeconds !== undefined) {
+            return { error: message, retryAfter: currentError.retryAfterSeconds };
+          }
+
+          return { error: message };
+        }
+      });
     }
     return true;
   }

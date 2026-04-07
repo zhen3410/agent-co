@@ -1,4 +1,7 @@
 import { Message } from '../../types';
+import { AppErrorOptions } from '../../shared/errors/app-error';
+import { AppError } from '../../shared/errors/app-error';
+import { AppErrorCode } from '../../shared/errors/app-error-codes';
 import { createSessionAgentService } from './session-agent-service';
 import { createSessionCommandService } from './session-command-service';
 import { createSessionDiscussionService } from './session-discussion-service';
@@ -19,18 +22,15 @@ export type {
   SummaryContinuationState
 } from './session-service-types';
 
-export class SessionServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly statusCode: number
-  ) {
-    super(message);
+export class SessionServiceError extends AppError {
+  constructor(message: string, code: AppErrorCode, statusCode?: number) {
+    super(message, { code, statusCode });
     this.name = 'SessionServiceError';
   }
 }
 
-function createSessionServiceError(message: string, statusCode: number): SessionServiceError {
-  return new SessionServiceError(message, statusCode);
+function createSessionServiceError(message: string, error: Pick<AppErrorOptions, 'code' | 'statusCode'>): SessionServiceError {
+  return new SessionServiceError(message, error.code, error.statusCode);
 }
 
 export function createSessionService(deps: SessionServiceDependencies): SessionService {

@@ -1,5 +1,7 @@
 import * as crypto from 'crypto';
 import { checkRateLimit } from '../../rate-limiter';
+import { AppError } from '../../shared/errors/app-error';
+import { APP_ERROR_CODES, AppErrorCode } from '../../shared/errors/app-error-codes';
 import { AuthAdminClient } from '../infrastructure/auth-admin-client';
 import { ChatRuntime } from '../runtime/chat-runtime';
 
@@ -8,13 +10,17 @@ interface AuthSession {
   expiresAt: number;
 }
 
-export class AuthServiceError extends Error {
+export class AuthServiceError extends AppError {
   constructor(
     message: string,
-    public readonly statusCode: number,
+    code: AppErrorCode,
+    statusCode?: number,
     public readonly retryAfterSeconds?: number
   ) {
-    super(message);
+    super(message, {
+      code,
+      statusCode
+    });
     this.name = 'AuthServiceError';
   }
 }
@@ -190,17 +196,22 @@ export function createAuthService(
     const clientIP = context.clientIp;
     const loginLimit = checkRateLimit(`login:${clientIP}`, config.loginRateLimitMax);
     if (!loginLimit.allowed) {
-      throw new AuthServiceError('登录尝试过于频繁，请稍后再试', 429, Math.ceil((loginLimit.resetAt - Date.now()) / 1000));
+      throw new AuthServiceError(
+        '登录尝试过于频繁，请稍后再试',
+        APP_ERROR_CODES.RATE_LIMITED,
+        429,
+        Math.ceil((loginLimit.resetAt - Date.now()) / 1000)
+      );
     }
 
     const username = (usernameValue || '').trim().toLowerCase();
     if (!username || !password) {
-      throw new AuthServiceError('缺少用户名或密码', 400);
+      throw new AuthServiceError('缺少用户名或密码', APP_ERROR_CODES.VALIDATION_FAILED);
     }
 
     const verifyResult = await authAdminClient.verifyCredentials(username, password);
     if (!verifyResult.success) {
-      throw new AuthServiceError(verifyResult.error || '用户名或密码错误', 401);
+      throw new AuthServiceError(verifyResult.error || '用户名或密码错误', APP_ERROR_CODES.UNAUTHORIZED);
     }
 
     const existingToken = context.cookies[config.sessionCookieName];
