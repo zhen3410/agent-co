@@ -12,6 +12,12 @@ import { AgentManager } from '../../agent-manager';
 import { RichBlock } from '../../types';
 import { ChatRuntime } from '../runtime/chat-runtime';
 import { runChatSse } from './chat-sse';
+import {
+  buildChatRateLimitBody,
+  normalizeBodyText,
+  normalizeSessionId,
+  normalizeWorkdirSelection
+} from './chat-route-helpers';
 import { isExistingAbsoluteDirectory } from './workdir-path';
 
 export interface ChatRoutesDependencies {
@@ -26,6 +32,10 @@ export interface ChatRoutesDependencies {
 
 function sendServiceError(res: http.ServerResponse, error: unknown): void {
   sendHttpError(res, error);
+}
+
+function sendRateLimitError(res: http.ServerResponse, resetAt: number): void {
+  sendJson(res, 429, buildChatRateLimitBody(resetAt));
 }
 
 export async function handleChatRoutes(
@@ -55,10 +65,7 @@ export async function handleChatRoutes(
     const clientIP = getClientIP(req);
     const rateLimit = checkRateLimit(clientIP, deps.rateLimitMaxRequests);
     if (!rateLimit.allowed) {
-      sendJson(res, 429, {
-        error: '请求过于频繁，请稍后再试',
-        retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000)
-      });
+      sendRateLimitError(res, rateLimit.resetAt);
       return true;
     }
 
@@ -75,10 +82,7 @@ export async function handleChatRoutes(
     const clientIP = getClientIP(req);
     const rateLimit = checkRateLimit(clientIP, deps.rateLimitMaxRequests);
     if (!rateLimit.allowed) {
-      sendJson(res, 429, {
-        error: '请求过于频繁，请稍后再试',
-        retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000)
-      });
+      sendRateLimitError(res, rateLimit.resetAt);
       return true;
     }
 
@@ -150,7 +154,7 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/sessions/select' && method === 'POST') {
     try {
       const body = await parseBody<{ sessionId?: string }>(req);
-      sendJson(res, 200, deps.sessionService.selectChatSession({ userKey: deps.userKey }, (body.sessionId || '').trim()));
+      sendJson(res, 200, deps.sessionService.selectChatSession({ userKey: deps.userKey }, normalizeSessionId(body.sessionId)));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -160,7 +164,7 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/sessions/update' && method === 'POST') {
     try {
       const body = await parseBody<{ sessionId?: string; patch?: unknown }>(req);
-      sendJson(res, 200, deps.sessionService.updateChatSession({ userKey: deps.userKey }, (body.sessionId || '').trim(), body.patch));
+      sendJson(res, 200, deps.sessionService.updateChatSession({ userKey: deps.userKey }, normalizeSessionId(body.sessionId), body.patch));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -170,7 +174,7 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/sessions/rename' && method === 'POST') {
     try {
       const body = await parseBody<{ sessionId?: string; name?: string }>(req);
-      sendJson(res, 200, deps.sessionService.renameChatSession({ userKey: deps.userKey }, (body.sessionId || '').trim(), body.name || ''));
+      sendJson(res, 200, deps.sessionService.renameChatSession({ userKey: deps.userKey }, normalizeSessionId(body.sessionId), normalizeBodyText(body.name)));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -180,7 +184,7 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/sessions/delete' && method === 'POST') {
     try {
       const body = await parseBody<{ sessionId?: string }>(req);
-      sendJson(res, 200, deps.sessionService.deleteChatSession({ userKey: deps.userKey }, (body.sessionId || '').trim()));
+      sendJson(res, 200, deps.sessionService.deleteChatSession({ userKey: deps.userKey }, normalizeSessionId(body.sessionId)));
     } catch (error) {
       sendServiceError(res, error);
     }
@@ -207,7 +211,7 @@ export async function handleChatRoutes(
       const body = await parseBody<{ sessionId?: string; agentName?: string; enabled?: boolean }>(req);
       sendJson(res, 200, deps.sessionService.setSessionAgent({ userKey: deps.userKey }, {
         sessionId: body.sessionId,
-        agentName: body.agentName || '',
+        agentName: normalizeBodyText(body.agentName),
         enabled: body.enabled as boolean
       }));
     } catch (error) {
@@ -219,9 +223,9 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/workdirs/select' && method === 'POST') {
     try {
       const body = await parseBody<{ agentName?: string; workdir?: string }>(req);
-      const workdir = (body.workdir || '').trim();
+      const { agentName, workdir } = normalizeWorkdirSelection(body);
       if (!workdir) {
-        sendJson(res, 200, deps.sessionService.setWorkdir({ userKey: deps.userKey }, body.agentName || '', null));
+        sendJson(res, 200, deps.sessionService.setWorkdir({ userKey: deps.userKey }, agentName, null));
         return true;
       }
       if (!isExistingAbsoluteDirectory(workdir)) {
@@ -229,7 +233,7 @@ export async function handleChatRoutes(
           code: APP_ERROR_CODES.VALIDATION_FAILED
         });
       }
-      sendJson(res, 200, deps.sessionService.setWorkdir({ userKey: deps.userKey }, body.agentName || '', workdir));
+      sendJson(res, 200, deps.sessionService.setWorkdir({ userKey: deps.userKey }, agentName, workdir));
     } catch (error) {
       sendServiceError(res, error);
     }

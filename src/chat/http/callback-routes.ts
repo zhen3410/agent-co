@@ -5,6 +5,12 @@ import { APP_ERROR_CODES } from '../../shared/errors/app-error-codes';
 import { sendHttpError } from '../../shared/http/errors';
 import { sendJson } from '../../shared/http/json';
 import { ChatService } from '../application/chat-service';
+import {
+  isCallbackAuthorized,
+  normalizeCallbackAgentName,
+  normalizeCallbackPostMessageBody,
+  normalizeCallbackSessionId
+} from './callback-route-helpers';
 
 export interface CallbackRoutesDependencies {
   chatService: ChatService;
@@ -12,17 +18,10 @@ export interface CallbackRoutesDependencies {
   callbackAuthHeader: string;
 }
 
-function getCallbackToken(req: http.IncomingMessage, headerName: string): string {
-  const authHeader = (req.headers.authorization || '').trim();
-  if (authHeader.toLowerCase().startsWith('bearer ')) {
-    return authHeader.slice(7).trim();
-  }
-
-  return String(req.headers[headerName] || '').trim();
-}
-
-function isCallbackAuthorized(req: http.IncomingMessage, deps: CallbackRoutesDependencies): boolean {
-  return getCallbackToken(req, deps.callbackAuthHeader) === deps.callbackAuthToken;
+function sendUnauthorized(res: http.ServerResponse): void {
+  sendHttpError(res, new AppError('Unauthorized', {
+    code: APP_ERROR_CODES.UNAUTHORIZED
+  }));
 }
 
 export async function handleCallbackRoutes(
@@ -34,40 +33,28 @@ export async function handleCallbackRoutes(
   const method = req.method || 'GET';
 
   if (requestUrl.pathname === '/api/callbacks/post-message' && method === 'POST') {
-    if (!isCallbackAuthorized(req, deps)) {
-      sendHttpError(res, new AppError('Unauthorized', {
-        code: APP_ERROR_CODES.UNAUTHORIZED
-      }));
+    if (!isCallbackAuthorized(req.headers, deps.callbackAuthHeader, deps.callbackAuthToken)) {
+      sendUnauthorized(res);
       return true;
     }
 
     try {
       const body = await parseBody<{ content?: string; invokeAgents?: string[] }>(req);
-      const content = (body.content || '').trim();
+      const { content, invokeAgents } = normalizeCallbackPostMessageBody(body);
       if (!content) {
         throw new AppError('缺少 content 字段', {
           code: APP_ERROR_CODES.VALIDATION_FAILED
         });
       }
 
-      const sessionId = String(req.headers['x-bot-room-session-id'] || '').trim();
-      const rawAgentName = String(req.headers['x-bot-room-agent'] || 'AI').trim() || 'AI';
-      let agentName = rawAgentName;
-      try {
-        agentName = decodeURIComponent(rawAgentName);
-      } catch {
-        agentName = rawAgentName;
-      }
-
+      const sessionId = normalizeCallbackSessionId(req.headers['x-bot-room-session-id']);
+      const agentName = normalizeCallbackAgentName(req.headers['x-bot-room-agent']);
       if (!sessionId) {
         throw new AppError('缺少 x-bot-room-session-id 头', {
           code: APP_ERROR_CODES.VALIDATION_FAILED
         });
       }
 
-      const invokeAgents = Array.isArray(body.invokeAgents)
-        ? body.invokeAgents.filter((name): name is string => typeof name === 'string' && !!name.trim())
-        : undefined;
       const result = deps.chatService.postCallbackMessage(sessionId, agentName, content, invokeAgents);
       sendJson(res, 200, result);
     } catch (error) {
@@ -77,14 +64,12 @@ export async function handleCallbackRoutes(
   }
 
   if (requestUrl.pathname === '/api/callbacks/thread-context' && method === 'GET') {
-    if (!isCallbackAuthorized(req, deps)) {
-      sendHttpError(res, new AppError('Unauthorized', {
-        code: APP_ERROR_CODES.UNAUTHORIZED
-      }));
+    if (!isCallbackAuthorized(req.headers, deps.callbackAuthHeader, deps.callbackAuthToken)) {
+      sendUnauthorized(res);
       return true;
     }
 
-    const sessionId = (requestUrl.searchParams.get('sessionid') || '').trim();
+    const sessionId = normalizeCallbackSessionId(requestUrl.searchParams.get('sessionid'));
     if (!sessionId) {
       sendHttpError(res, new AppError('缺少 sessionid 参数', {
         code: APP_ERROR_CODES.VALIDATION_FAILED
