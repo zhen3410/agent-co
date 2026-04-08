@@ -147,3 +147,82 @@ test('agent-chain-policy resolves peer discussion pause decisions after a visibl
     null
   );
 });
+
+test('agent-chain-policy exposes timeout, retry, and follow_up helpers with explicit caps', () => {
+  const {
+    isInvocationTaskOverdue,
+    canRetryInvocationTask,
+    canFollowUpInvocationTask
+  } = requireBuiltModule('chat', 'domain', 'agent-chain-policy.js');
+
+  assert.equal(
+    isInvocationTaskOverdue({
+      status: 'pending_reply',
+      deadlineAt: 100,
+      now: 100
+    }),
+    true
+  );
+  assert.equal(
+    isInvocationTaskOverdue({
+      status: 'awaiting_caller_review',
+      deadlineAt: 100,
+      now: 101
+    }),
+    false
+  );
+  assert.equal(
+    isInvocationTaskOverdue({
+      status: 'pending_reply',
+      deadlineAt: 120,
+      now: 101
+    }),
+    false
+  );
+  assert.equal(
+    isInvocationTaskOverdue({
+      status: 'pending_reply',
+      deadlineAt: undefined,
+      now: 101
+    }),
+    false
+  );
+  assert.equal(
+    isInvocationTaskOverdue({
+      status: 'failed',
+      deadlineAt: 100,
+      now: 101
+    }),
+    false
+  );
+
+  assert.equal(
+    canRetryInvocationTask({
+      retryCount: 0,
+      maxRetries: 1
+    }),
+    true
+  );
+  assert.equal(
+    canRetryInvocationTask({
+      retryCount: 1,
+      maxRetries: 1
+    }),
+    false
+  );
+
+  assert.equal(
+    canFollowUpInvocationTask({
+      followupCount: 1,
+      maxFollowUps: 2
+    }),
+    true
+  );
+  assert.equal(
+    canFollowUpInvocationTask({
+      followupCount: 2,
+      maxFollowUps: 2
+    }),
+    false
+  );
+});

@@ -100,6 +100,7 @@ export async function handleChatRoutes(
         sessionId: streamSession.id,
         execute: (callbacks) => deps.chatService.streamMessage({ userKey: deps.userKey }, body, {
           shouldContinue: callbacks.shouldContinue,
+          signal: callbacks.signal,
           onUserMessage: callbacks.onUserMessage,
           onThinking: callbacks.onThinking,
           onTextDelta: callbacks.onTextDelta,

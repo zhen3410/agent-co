@@ -52,6 +52,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
   });
   const resumeService = createChatResumeService({
     syncAgentsFromStore: deps.syncAgentsFromStore,
+    runtime,
     sessionService,
     executeAgentTurn: dispatchOrchestrator.executeAgentTurn,
     createError: createChatServiceError
@@ -204,6 +205,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       })),
       stream: true,
       shouldContinue: callbacks.shouldContinue,
+      signal: callbacks.signal,
       onThinking: callbacks.onThinking,
       onTextDelta: callbacks.onTextDelta,
       onMessage: (visibleMessage) => {

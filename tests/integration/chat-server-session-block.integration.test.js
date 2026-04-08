@@ -1,11 +1,132 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const path = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 const { withIsolatedChatSessionState, isRedisSessionStateAvailable } = require('./helpers/redis-session-state-fixture');
+
+const repoRoot = path.resolve(__dirname, '..', '..');
+const distDir = path.join(repoRoot, 'dist');
+
+function requireBuiltModule(...segments) {
+  const modulePath = path.join(distDir, ...segments);
+  delete require.cache[require.resolve(modulePath)];
+  return require(modulePath);
+}
 
 function parseSetCookiePair(setCookieHeader) {
   if (!setCookieHeader) return '';
   return String(setCookieHeader).split(/,(?=\s*[^;]+=)/)[0].split(';')[0];
+}
+
+function createReviewLoopClaudeScript(tempDir, mode) {
+  const fakeClaude = path.join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env node
+const fs = require('node:fs');
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
+const prompt = process.argv.slice(2).join(' ');
+const mode = ${JSON.stringify(mode)};
+const stateFile = ${JSON.stringify(path.join(tempDir, 'review-loop-state.json'))};
+
+function loadState() {
+  if (!fs.existsSync(stateFile)) {
+    return { alicePrompts: [] };
+  }
+  return JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+}
+
+function saveState(state) {
+  fs.writeFileSync(stateFile, JSON.stringify(state), 'utf8');
+}
+
+(async () => {
+  if (agentName === 'Alice') {
+    const state = loadState();
+    state.alicePrompts.push(prompt);
+    saveState(state);
+    if (mode === 'accept') {
+      process.stdout.write('{"output_text":"accept: Bob 已给出可执行结果。"}\\n');
+      return;
+    }
+  }
+
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
+function createPendingReplyCorrectionClaudeScript(tempDir) {
+  const fakeClaude = path.join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env node
+const fs = require('node:fs');
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
+const prompt = process.argv.slice(2).join(' ');
+const stateFile = ${JSON.stringify(path.join(tempDir, 'pending-reply-correction-state.json'))};
+
+function readState() {
+  if (!fs.existsSync(stateFile)) {
+    return { prompts: {} };
+  }
+  return JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+}
+
+function writeState(state) {
+  fs.writeFileSync(stateFile, JSON.stringify(state), 'utf8');
+}
+
+async function post(content) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+(async () => {
+  const state = readState();
+  state.prompts[agentName] = state.prompts[agentName] || [];
+  state.prompts[agentName].push(prompt);
+  writeState(state);
+
+  if (agentName === 'Bob') {
+    await post(\`Bob reply for: \${prompt}\`);
+    process.stdout.write('{"output_text":"callback sent"}\\n');
+    return;
+  }
+
+  if (agentName === 'Alice' && prompt.includes('accept / follow_up / retry')) {
+    process.stdout.write('{"output_text":"accept: Bob 已按纠正后的 prompt 回复。"}\\n');
+    return;
+  }
+
+  process.stdout.write('{"output_text":"unexpected"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
 }
 
 test('会话接口支持创建、切换、重命名与删除（需先登录）', async () => {
@@ -513,6 +634,921 @@ test('旧会话数据缺少链路字段时会自动回填默认值', { skip: !is
       assert.equal(legacySession.discussionState, 'active');
       assert.equal(historyResponse.body.session.discussionMode, 'classic');
       assert.equal(historyResponse.body.session.discussionState, 'active');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+test('会话状态可持久化待复核的 agent 调用任务', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const now = Date.now();
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      'user:admin': [{
+        id: 'review-session',
+        name: 'review session',
+        history: [{
+          id: 'm-user',
+          role: 'user',
+          sender: '用户',
+          text: '@Alice 帮我检查 Bob 的回答',
+          timestamp: now - 2000
+        }, {
+          id: 'm-assistant',
+          role: 'assistant',
+          sender: 'Alice',
+          text: '我将先调用 Bob，然后复核结果。',
+          timestamp: now - 1500,
+          taskId: 'task-1',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }, {
+          id: 'm-review',
+          role: 'assistant',
+          sender: 'Alice',
+          text: 'follow_up: 需要 Bob 给出具体步骤。',
+          timestamp: now - 1000,
+          taskId: 'task-1',
+          parentTaskId: 'task-1',
+          reviewAction: 'follow_up',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }],
+        currentAgent: 'Alice',
+        enabledAgents: ['Alice', 'Bob'],
+        agentWorkdirs: {},
+        invocationTasks: [{
+          id: 'task-1',
+          status: 'pending_reply',
+          sessionId: 'review-session',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          prompt: '请给出具体步骤',
+          createdAt: now - 1500,
+          updatedAt: now - 1000,
+          deadlineAt: now + 5 * 60 * 1000,
+          retryCount: 0,
+          followupCount: 1
+        }],
+        createdAt: now - 3000,
+        updatedAt: now - 500
+      }]
+    },
+    userActiveChatSession: {
+      'user:admin': 'review-session'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        AGENT_CO_DISABLE_REDIS: 'false',
+        AGENT_CO_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.login();
+      assert.equal(loginResponse.status, 200);
+
+      const historyResponse = await fixture.request('/api/history');
+      assert.equal(historyResponse.status, 200);
+      assert.equal(historyResponse.body.session.id, 'review-session');
+      assert.equal(Array.isArray(historyResponse.body.messages), true);
+      assert.equal(historyResponse.body.messages.length, 3);
+      assert.equal(historyResponse.body.messages[1].taskId, 'task-1');
+      assert.equal(historyResponse.body.messages[2].reviewAction, 'follow_up');
+      assert.equal(Array.isArray(historyResponse.body.session.invocationTasks), true);
+      assert.equal(historyResponse.body.session.invocationTasks.length, 1);
+      assert.equal(historyResponse.body.session.invocationTasks[0].id, 'task-1');
+      assert.equal(historyResponse.body.session.invocationTasks[0].status, 'pending_reply');
+      assert.equal(historyResponse.body.session.invocationTasks[0].callerAgentName, 'Alice');
+      assert.equal(historyResponse.body.session.invocationTasks[0].calleeAgentName, 'Bob');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+test('旧会话缺少 invocationTasks 字段时仍可正常恢复', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const now = Date.now();
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      'user:admin': [{
+        id: 'legacy-no-invocation-tasks',
+        name: 'legacy no invocation tasks',
+        history: [{
+          id: 'legacy-message',
+          role: 'assistant',
+          sender: 'Alice',
+          text: '旧会话消息',
+          timestamp: now - 1000
+        }],
+        currentAgent: 'Alice',
+        enabledAgents: ['Alice'],
+        agentWorkdirs: {},
+        createdAt: now - 2000,
+        updatedAt: now - 500
+      }]
+    },
+    userActiveChatSession: {
+      'user:admin': 'legacy-no-invocation-tasks'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        AGENT_CO_DISABLE_REDIS: 'false',
+        AGENT_CO_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.login();
+      assert.equal(loginResponse.status, 200);
+
+      const historyResponse = await fixture.request('/api/history');
+      assert.equal(historyResponse.status, 200);
+      assert.equal(historyResponse.body.session.id, 'legacy-no-invocation-tasks');
+      assert.equal(historyResponse.body.messages.length, 1);
+      assert.equal(Array.isArray(historyResponse.body.session.invocationTasks), true);
+      assert.equal(historyResponse.body.session.invocationTasks.length, 0);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+test('会话状态序列化会写出 invocationTasks 字段', () => {
+  const { createChatSessionRepository } = requireBuiltModule('chat', 'infrastructure', 'chat-session-repository.js');
+  const repository = createChatSessionRepository();
+  const now = Date.now();
+  const session = {
+    id: 'serialize-session',
+    name: 'serialize session',
+    history: [],
+    currentAgent: null,
+    enabledAgents: ['Alice', 'Bob'],
+    agentWorkdirs: {},
+    invocationTasks: [{
+      id: 'task-write-1',
+      sessionId: 'serialize-session',
+      status: 'pending_reply',
+      callerAgentName: 'Alice',
+      calleeAgentName: 'Bob',
+      prompt: '请继续完善输出',
+      createdAt: now - 1000,
+      updatedAt: now - 500,
+      deadlineAt: now + 60000,
+      retryCount: 0,
+      followupCount: 1
+    }],
+    createdAt: now - 2000,
+    updatedAt: now
+  };
+
+  repository.setUserSessions('user:admin', new Map([[session.id, session]]));
+  repository.setActiveSessionId('user:admin', session.id);
+
+  const serialized = repository.serializeState();
+  assert.equal(Array.isArray(serialized.userChatSessions['user:admin']), true);
+  assert.equal(serialized.userChatSessions['user:admin'].length, 1);
+  assert.equal(Array.isArray(serialized.userChatSessions['user:admin'][0].invocationTasks), true);
+  assert.equal(serialized.userChatSessions['user:admin'][0].invocationTasks.length, 1);
+  assert.equal(serialized.userChatSessions['user:admin'][0].invocationTasks[0].id, 'task-write-1');
+  assert.equal(serialized.userChatSessions['user:admin'][0].invocationTasks[0].status, 'pending_reply');
+});
+
+test('runtime invocationTasks 归一化遵循会话上下文语义', () => {
+  const { createChatSessionRepository } = requireBuiltModule('chat', 'infrastructure', 'chat-session-repository.js');
+  const { createChatSessionState } = requireBuiltModule('chat', 'runtime', 'chat-session-state.js');
+  const repository = createChatSessionRepository();
+  const sessionState = createChatSessionState({
+    config: {
+      defaultChatSessionId: 'default',
+      defaultChatSessionName: '默认会话',
+      getValidAgentNames: () => ['Alice', 'Bob']
+    },
+    repository,
+    schedulePersistChatSessions: () => {},
+    touchSession: (session) => {
+      session.updatedAt = Date.now();
+    },
+    normalizeSessionChainSettings: () => ({
+      agentChainMaxHops: 8,
+      agentChainMaxCallsPerAgent: null
+    }),
+    normalizeSessionDiscussionSettings: () => ({
+      discussionMode: 'classic',
+      discussionState: 'active'
+    }),
+    applyNormalizedSessionChainSettings: (session) => {
+      session.agentChainMaxHops = 8;
+      session.agentChainMaxCallsPerAgent = null;
+      return session;
+    },
+    applyNormalizedSessionDiscussionSettings: (session) => {
+      session.discussionMode = 'classic';
+      session.discussionState = 'active';
+      return session;
+    }
+  });
+
+  sessionState.ensureUserSessions('user:admin');
+  const now = Date.now();
+
+  const created = sessionState.createInvocationTask('user:admin', 'default', {
+    id: 'task-semantics-1',
+    sessionId: 'other-session',
+    status: 'awaiting_caller_review',
+    callerAgentName: 'Alice',
+    calleeAgentName: 'Bob',
+    prompt: '请继续',
+    createdAt: now - 1000,
+    updatedAt: now - 900,
+    deadlineAt: now - 10,
+    retryCount: 0,
+    followupCount: 0
+  });
+
+  assert.ok(created);
+  assert.equal(created.sessionId, 'default');
+  const activeTasks = sessionState.listActiveInvocationTasks('user:admin', 'default');
+  assert.equal(activeTasks.length, 1);
+  assert.equal(activeTasks[0].status, 'awaiting_caller_review');
+
+  const timedOut = sessionState.resolveOverdueInvocationTasks('user:admin', 'default', now);
+  assert.equal(timedOut.length, 0);
+});
+
+test('会话 pause/resume 后待处理 invocationTasks 仍会保留', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const now = Date.now();
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      'user:admin': [{
+        id: 'paused-review-session',
+        name: 'paused review session',
+        history: [{
+          id: 'origin',
+          role: 'assistant',
+          sender: 'Alice',
+          text: '@@Bob 请补充实现步骤',
+          timestamp: now - 5000,
+          taskId: 'task-resume-1',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }],
+        currentAgent: 'Alice',
+        enabledAgents: ['Alice', 'Bob'],
+        agentWorkdirs: {},
+        discussionMode: 'peer',
+        discussionState: 'paused',
+        pendingAgentTasks: [],
+        pendingVisibleMessages: [{
+          id: 'buffered-visible-1',
+          role: 'assistant',
+          sender: 'Bob',
+          text: '这是暂停期间缓冲的可见消息',
+          timestamp: now - 1000,
+          taskId: 'task-resume-1',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }],
+        invocationTasks: [{
+          id: 'task-resume-1',
+          sessionId: 'paused-review-session',
+          status: 'pending_reply',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          prompt: '请补充实现步骤',
+          createdAt: now - 4000,
+          updatedAt: now - 1200,
+          deadlineAt: now + 60 * 1000,
+          retryCount: 0,
+          followupCount: 0
+        }],
+        createdAt: now - 6000,
+        updatedAt: now - 800
+      }]
+    },
+    userActiveChatSession: {
+      'user:admin': 'paused-review-session'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        AGENT_CO_DISABLE_REDIS: 'false',
+        AGENT_CO_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.login();
+      assert.equal(loginResponse.status, 200);
+
+      const beforeResume = await fixture.request('/api/history');
+      assert.equal(beforeResume.status, 200);
+      assert.equal(beforeResume.body.session.discussionState, 'paused');
+      assert.equal(Array.isArray(beforeResume.body.session.invocationTasks), true);
+      assert.equal(beforeResume.body.session.invocationTasks.length, 1);
+      assert.equal(beforeResume.body.session.invocationTasks[0].id, 'task-resume-1');
+
+      const resumeResponse = await fixture.request('/api/chat-resume', {
+        method: 'POST'
+      });
+      assert.equal(resumeResponse.status, 200);
+      assert.equal(resumeResponse.body.success, true);
+      assert.equal(resumeResponse.body.resumed, true);
+      assert.equal(Array.isArray(resumeResponse.body.aiMessages), true);
+      assert.equal(resumeResponse.body.aiMessages.length, 1);
+      assert.equal(resumeResponse.body.aiMessages[0].id, 'buffered-visible-1');
+
+      const afterResume = await fixture.request('/api/history');
+      assert.equal(afterResume.status, 200);
+      assert.equal(Array.isArray(afterResume.body.session.invocationTasks), true);
+      assert.equal(afterResume.body.session.invocationTasks.length, 1);
+      assert.equal(afterResume.body.session.invocationTasks[0].id, 'task-resume-1');
+      assert.equal(afterResume.body.session.invocationTasks[0].status, 'awaiting_caller_review');
+      assert.equal(afterResume.body.session.invocationTasks[0].lastReplyMessageId, 'buffered-visible-1');
+      assert.equal(Array.isArray(afterResume.body.session.pendingAgentTasks), true);
+      assert.equal(afterResume.body.session.pendingAgentTasks.length, 1);
+      assert.equal(afterResume.body.session.pendingAgentTasks[0].dispatchKind, 'internal_review');
+      assert.equal(afterResume.body.session.pendingAgentTasks[0].taskId, 'task-resume-1');
+      assert.equal(afterResume.body.session.pendingAgentTasks[0].agentName, 'Alice');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
+test('中断后仅存于 invocationTasks 的 caller review 任务仍可恢复，且不会重复已完成任务', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'agent-co-review-resume-regression-'));
+  createReviewLoopClaudeScript(tempDir, 'accept');
+  const now = Date.now();
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      'user:admin': [{
+        id: 'resume-review-only-session',
+        name: 'resume review only session',
+        history: [{
+          id: 'm-user',
+          role: 'user',
+          sender: '用户',
+          text: '@Alice 发起复核',
+          timestamp: now - 5000
+        }, {
+          id: 'm-alice',
+          role: 'assistant',
+          sender: 'Alice',
+          text: '请 @@Bob 给出结果',
+          timestamp: now - 4500,
+          taskId: 'task-pending-review',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }, {
+          id: 'm-bob-pending',
+          role: 'assistant',
+          sender: 'Bob',
+          text: 'Bob 已给出待复核结果',
+          timestamp: now - 4200,
+          taskId: 'task-pending-review',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }, {
+          id: 'm-alice-completed',
+          role: 'assistant',
+          sender: 'Alice',
+          text: '请 @@Bob 给出历史结果',
+          timestamp: now - 4000,
+          taskId: 'task-completed-review',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }, {
+          id: 'm-bob-completed',
+          role: 'assistant',
+          sender: 'Bob',
+          text: 'Bob 已给出已完成结果',
+          timestamp: now - 3800,
+          taskId: 'task-completed-review',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }],
+        currentAgent: 'Alice',
+        enabledAgents: ['Alice', 'Bob'],
+        agentWorkdirs: {},
+        pendingVisibleMessages: [],
+        invocationTasks: [{
+          id: 'task-pending-review',
+          sessionId: 'resume-review-only-session',
+          status: 'awaiting_caller_review',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          prompt: '请 @@Bob 给出结果',
+          originalPrompt: '请 @@Bob 给出结果',
+          createdAt: now - 4500,
+          updatedAt: now - 4200,
+          deadlineAt: now + 60 * 1000,
+          retryCount: 0,
+          followupCount: 0,
+          lastReplyMessageId: 'm-bob-pending'
+        }, {
+          id: 'task-completed-review',
+          sessionId: 'resume-review-only-session',
+          status: 'completed',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          prompt: '请 @@Bob 给出历史结果',
+          originalPrompt: '请 @@Bob 给出历史结果',
+          createdAt: now - 4000,
+          updatedAt: now - 3600,
+          deadlineAt: now + 60 * 1000,
+          retryCount: 0,
+          followupCount: 0,
+          reviewAction: 'accept',
+          completedAt: now - 3600,
+          lastReplyMessageId: 'm-bob-completed'
+        }],
+        discussionMode: 'classic',
+        discussionState: 'active',
+        createdAt: now - 6000,
+        updatedAt: now - 3000
+      }]
+    },
+    userActiveChatSession: {
+      'user:admin': 'resume-review-only-session'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        PATH: `${tempDir}:${process.env.PATH || ''}`,
+        AGENT_CO_DISABLE_REDIS: 'false',
+        AGENT_CO_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.login();
+      assert.equal(loginResponse.status, 200);
+
+      const resumeResponse = await fixture.request('/api/chat-resume', {
+        method: 'POST'
+      });
+      assert.equal(resumeResponse.status, 200);
+      assert.equal(resumeResponse.body.success, true);
+      assert.equal(resumeResponse.body.resumed, true);
+      assert.deepEqual(resumeResponse.body.aiMessages, []);
+
+      const historyResponse = await fixture.request('/api/history');
+      assert.equal(historyResponse.status, 200);
+      assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), false);
+      const pendingTask = historyResponse.body.session.invocationTasks.find(item => item.id === 'task-pending-review');
+      assert.ok(pendingTask);
+      assert.equal(pendingTask.status, 'completed');
+      assert.equal(pendingTask.reviewAction, 'accept');
+      const completedTask = historyResponse.body.session.invocationTasks.find(item => item.id === 'task-completed-review');
+      assert.ok(completedTask);
+      assert.equal(completedTask.status, 'completed');
+      assert.equal(completedTask.reviewAction, 'accept');
+
+      const promptState = JSON.parse(readFileSync(path.join(tempDir, 'review-loop-state.json'), 'utf8'));
+      assert.equal(promptState.alicePrompts.length, 1);
+      assert.match(promptState.alicePrompts[0], /你正在复核 Bob 对委派任务的回复/);
+      assert.match(promptState.alicePrompts[0], /原始委派请求：请 @@Bob 给出结果/);
+      assert.match(promptState.alicePrompts[0], /Bob 的回复：Bob 已给出待复核结果/);
+    } finally {
+      await fixture.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('中断后仅存于 invocationTasks 的 timeout caller review 任务仍可恢复', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'agent-co-timeout-review-resume-'));
+  createReviewLoopClaudeScript(tempDir, 'accept');
+  const now = Date.now();
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      'user:admin': [{
+        id: 'resume-timeout-review-session',
+        name: 'resume timeout review session',
+        history: [{
+          id: 'm-user',
+          role: 'user',
+          sender: '用户',
+          text: '@Alice 发起超时复核',
+          timestamp: now - 5000
+        }, {
+          id: 'm-alice',
+          role: 'assistant',
+          sender: 'Alice',
+          text: '请 @@Bob 给出结果',
+          timestamp: now - 4500,
+          taskId: 'task-timeout-review',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }],
+        currentAgent: 'Alice',
+        enabledAgents: ['Alice', 'Bob'],
+        agentWorkdirs: {},
+        pendingAgentTasks: [{
+          agentName: 'Alice',
+          prompt: '过期的 caller review prompt，应由 invocationTasks 重建',
+          includeHistory: true,
+          dispatchKind: 'internal_review',
+          taskId: 'task-timeout-review',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          reviewMode: 'caller_review',
+          deadlineAt: now + 60 * 1000
+        }],
+        pendingVisibleMessages: [],
+        invocationTasks: [{
+          id: 'task-timeout-review',
+          sessionId: 'resume-timeout-review-session',
+          status: 'awaiting_caller_review',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          prompt: '请 @@Bob 给出结果',
+          originalPrompt: '请 @@Bob 给出结果',
+          createdAt: now - 4500,
+          updatedAt: now - 4200,
+          deadlineAt: now + 60 * 1000,
+          retryCount: 0,
+          followupCount: 0,
+          timedOutAt: now - 4100
+        }],
+        discussionMode: 'classic',
+        discussionState: 'active',
+        createdAt: now - 6000,
+        updatedAt: now - 3000
+      }]
+    },
+    userActiveChatSession: {
+      'user:admin': 'resume-timeout-review-session'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        PATH: `${tempDir}:${process.env.PATH || ''}`,
+        AGENT_CO_DISABLE_REDIS: 'false',
+        AGENT_CO_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.login();
+      assert.equal(loginResponse.status, 200);
+
+      const resumeResponse = await fixture.request('/api/chat-resume', {
+        method: 'POST'
+      });
+      assert.equal(resumeResponse.status, 200);
+      assert.equal(resumeResponse.body.success, true);
+      assert.equal(resumeResponse.body.resumed, true);
+      assert.deepEqual(resumeResponse.body.aiMessages, []);
+
+      const historyResponse = await fixture.request('/api/history');
+      assert.equal(historyResponse.status, 200);
+      assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), false);
+      const task = historyResponse.body.session.invocationTasks.find(item => item.id === 'task-timeout-review');
+      assert.ok(task);
+      assert.equal(task.status, 'completed');
+      assert.equal(task.reviewAction, 'accept');
+      assert.equal(typeof task.timedOutAt, 'number');
+
+      const promptState = JSON.parse(readFileSync(path.join(tempDir, 'review-loop-state.json'), 'utf8'));
+      assert.equal(promptState.alicePrompts.length, 1);
+      assert.match(promptState.alicePrompts[0], /Bob 未在截止时间前回复/);
+      assert.match(promptState.alicePrompts[0], /原始委派请求：请 @@Bob 给出结果/);
+    } finally {
+      await fixture.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('中断后 stale pending_reply caller review payload 会按 invocationTasks 纠正后再恢复', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'agent-co-pending-reply-correction-'));
+  createPendingReplyCorrectionClaudeScript(tempDir);
+  const now = Date.now();
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      'user:admin': [{
+        id: 'resume-pending-reply-correction-session',
+        name: 'resume pending reply correction session',
+        history: [{
+          id: 'm-user',
+          role: 'user',
+          sender: '用户',
+          text: '@Alice 发起追问',
+          timestamp: now - 5000
+        }, {
+          id: 'm-alice',
+          role: 'assistant',
+          sender: 'Alice',
+          text: '请 @@Bob 回答纠正后的问题',
+          timestamp: now - 4500,
+          taskId: 'task-pending-reply-correction',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }],
+        currentAgent: 'Alice',
+        enabledAgents: ['Alice', 'Bob'],
+        agentWorkdirs: {},
+        pendingAgentTasks: [{
+          agentName: 'Alice',
+          prompt: 'stale internal review payload',
+          includeHistory: true,
+          dispatchKind: 'internal_review',
+          taskId: 'task-pending-reply-correction',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          reviewMode: 'caller_review',
+          deadlineAt: now + 60 * 1000
+        }],
+        pendingVisibleMessages: [],
+        invocationTasks: [{
+          id: 'task-pending-reply-correction',
+          sessionId: 'resume-pending-reply-correction-session',
+          status: 'pending_reply',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          prompt: 'canonical pending prompt',
+          originalPrompt: '请 @@Bob 回答纠正后的问题',
+          createdAt: now - 4500,
+          updatedAt: now - 4200,
+          deadlineAt: now + 60 * 1000,
+          retryCount: 0,
+          followupCount: 1
+        }],
+        discussionMode: 'classic',
+        discussionState: 'active',
+        createdAt: now - 6000,
+        updatedAt: now - 3000
+      }]
+    },
+    userActiveChatSession: {
+      'user:admin': 'resume-pending-reply-correction-session'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        PATH: `${tempDir}:${process.env.PATH || ''}`,
+        AGENT_CO_DISABLE_REDIS: 'false',
+        AGENT_CO_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.login();
+      assert.equal(loginResponse.status, 200);
+
+      const resumeResponse = await fixture.request('/api/chat-resume', {
+        method: 'POST'
+      });
+      assert.equal(resumeResponse.status, 200);
+      assert.equal(resumeResponse.body.success, true);
+      assert.equal(resumeResponse.body.resumed, true);
+      assert.equal(resumeResponse.body.aiMessages.length, 1);
+      assert.equal(resumeResponse.body.aiMessages[0].sender, 'Bob');
+      assert.match(resumeResponse.body.aiMessages[0].text, /canonical pending prompt/);
+
+      const historyResponse = await fixture.request('/api/history');
+      assert.equal(historyResponse.status, 200);
+      assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), false);
+      const task = historyResponse.body.session.invocationTasks.find(item => item.id === 'task-pending-reply-correction');
+      assert.ok(task);
+      assert.equal(task.status, 'completed');
+      assert.equal(task.reviewAction, 'accept');
+
+      const state = JSON.parse(readFileSync(path.join(tempDir, 'pending-reply-correction-state.json'), 'utf8'));
+      assert.equal(state.prompts.Bob.length, 1);
+      assert.match(state.prompts.Bob[0], /canonical pending prompt/);
+      assert.equal(Array.isArray(state.prompts.Alice), true);
+      assert.equal(state.prompts.Alice.some(item => item.includes('stale internal review payload')), false);
+    } finally {
+      await fixture.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('中断后若 pending_reply 已有缓冲可见回复，则 resume 不会重复执行被调用者', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'agent-co-buffered-reply-no-rerun-'));
+  createPendingReplyCorrectionClaudeScript(tempDir);
+  const now = Date.now();
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      'user:admin': [{
+        id: 'resume-buffered-reply-session',
+        name: 'resume buffered reply session',
+        history: [{
+          id: 'm-user',
+          role: 'user',
+          sender: '用户',
+          text: '@Alice 发起追问',
+          timestamp: now - 5000
+        }, {
+          id: 'm-alice',
+          role: 'assistant',
+          sender: 'Alice',
+          text: '请 @@Bob 回答缓冲中的问题',
+          timestamp: now - 4500,
+          taskId: 'task-buffered-reply',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }],
+        currentAgent: 'Alice',
+        enabledAgents: ['Alice', 'Bob'],
+        agentWorkdirs: {},
+        pendingAgentTasks: [{
+          agentName: 'Bob',
+          prompt: 'stale rerun payload',
+          includeHistory: true,
+          dispatchKind: 'explicit_chained',
+          taskId: 'task-buffered-reply',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          reviewMode: 'caller_review',
+          deadlineAt: now + 60 * 1000
+        }],
+        pendingVisibleMessages: [{
+          id: 'm-bob-buffered',
+          role: 'assistant',
+          sender: 'Bob',
+          text: 'buffered visible reply',
+          timestamp: now - 4200,
+          taskId: 'task-buffered-reply',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob'
+        }],
+        invocationTasks: [{
+          id: 'task-buffered-reply',
+          sessionId: 'resume-buffered-reply-session',
+          status: 'pending_reply',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          prompt: 'canonical buffered prompt',
+          originalPrompt: '请 @@Bob 回答缓冲中的问题',
+          createdAt: now - 4500,
+          updatedAt: now - 4200,
+          deadlineAt: now + 60 * 1000,
+          retryCount: 0,
+          followupCount: 1
+        }],
+        discussionMode: 'classic',
+        discussionState: 'active',
+        createdAt: now - 6000,
+        updatedAt: now - 3000
+      }]
+    },
+    userActiveChatSession: {
+      'user:admin': 'resume-buffered-reply-session'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        PATH: `${tempDir}:${process.env.PATH || ''}`,
+        AGENT_CO_DISABLE_REDIS: 'false',
+        AGENT_CO_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.login();
+      assert.equal(loginResponse.status, 200);
+
+      const resumeResponse = await fixture.request('/api/chat-resume', {
+        method: 'POST'
+      });
+      assert.equal(resumeResponse.status, 200);
+      assert.equal(resumeResponse.body.success, true);
+      assert.equal(resumeResponse.body.resumed, true);
+      assert.deepEqual(
+        resumeResponse.body.aiMessages.map(item => [item.sender, item.text]),
+        [
+          ['Bob', 'buffered visible reply']
+        ]
+      );
+
+      const historyResponse = await fixture.request('/api/history');
+      assert.equal(historyResponse.status, 200);
+      assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), false);
+      assert.equal(
+        historyResponse.body.messages.filter(item => item.sender === 'Bob' && item.taskId === 'task-buffered-reply').length,
+        0
+      );
+      const task = historyResponse.body.session.invocationTasks.find(item => item.id === 'task-buffered-reply');
+      assert.ok(task);
+      assert.equal(task.status, 'completed');
+      assert.equal(task.reviewAction, 'accept');
+      assert.equal(task.lastReplyMessageId, 'm-bob-buffered');
+
+      const state = JSON.parse(readFileSync(path.join(tempDir, 'pending-reply-correction-state.json'), 'utf8'));
+      assert.equal(state.prompts.Bob, undefined);
+      assert.equal(state.prompts.Alice.length, 1);
+      assert.match(state.prompts.Alice[0], /buffered visible reply/);
+    } finally {
+      await fixture.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('pendingAgentTasks 的调用复核元数据可持久化恢复', { skip: !isRedisSessionStateAvailable() }, async () => {
+  const now = Date.now();
+  const legacyState = {
+    version: 1,
+    userChatSessions: {
+      'user:admin': [{
+        id: 'pending-task-metadata-session',
+        name: 'pending task metadata session',
+        history: [{
+          id: 'seed-user',
+          role: 'user',
+          sender: '用户',
+          text: '@Alice 发起链式调用',
+          timestamp: now - 2000
+        }],
+        currentAgent: 'Alice',
+        enabledAgents: ['Alice', 'Bob'],
+        agentWorkdirs: {},
+        discussionMode: 'peer',
+        discussionState: 'active',
+        pendingAgentTasks: [{
+          agentName: 'Bob',
+          prompt: '@@Bob 请继续补充结论',
+          includeHistory: true,
+          dispatchKind: 'explicit_chained',
+          taskId: 'task-persist-1',
+          callerAgentName: 'Alice',
+          reviewMode: 'caller_review',
+          deadlineAt: now + 60 * 1000
+        }],
+        pendingVisibleMessages: [],
+        invocationTasks: [{
+          id: 'task-persist-1',
+          sessionId: 'pending-task-metadata-session',
+          status: 'pending_reply',
+          callerAgentName: 'Alice',
+          calleeAgentName: 'Bob',
+          prompt: '@@Bob 请继续补充结论',
+          createdAt: now - 1500,
+          updatedAt: now - 800,
+          deadlineAt: now + 60 * 1000,
+          retryCount: 0,
+          followupCount: 0
+        }],
+        createdAt: now - 4000,
+        updatedAt: now - 500
+      }]
+    },
+    userActiveChatSession: {
+      'user:admin': 'pending-task-metadata-session'
+    }
+  };
+
+  await withIsolatedChatSessionState(legacyState, async () => {
+    const fixture = await createChatServerFixture({
+      env: {
+        AGENT_CO_DISABLE_REDIS: 'false',
+        AGENT_CO_REDIS_REQUIRED: 'false'
+      }
+    });
+
+    try {
+      const loginResponse = await fixture.login();
+      assert.equal(loginResponse.status, 200);
+
+      const historyResponse = await fixture.request('/api/history');
+      assert.equal(historyResponse.status, 200);
+      assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), true);
+      assert.equal(historyResponse.body.session.pendingAgentTasks.length, 1);
+      const [pendingTask] = historyResponse.body.session.pendingAgentTasks;
+      assert.equal(pendingTask.agentName, 'Bob');
+      assert.equal(pendingTask.taskId, 'task-persist-1');
+      assert.equal(pendingTask.callerAgentName, 'Alice');
+      assert.equal(pendingTask.reviewMode, 'caller_review');
+      assert.equal(typeof pendingTask.deadlineAt, 'number');
+      assert.equal(Number.isFinite(pendingTask.deadlineAt), true);
     } finally {
       await fixture.cleanup();
     }

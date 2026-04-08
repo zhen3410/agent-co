@@ -1,5 +1,5 @@
 import Redis from 'ioredis';
-import { Message } from '../../types';
+import { InvocationTask, Message } from '../../types';
 import {
   UserChatSession,
   PendingAgentDispatchTask
@@ -11,6 +11,7 @@ import {
 import {
   ChatRuntime,
   ChatRuntimeConfig,
+  InvocationTaskUpdatePatch,
   NormalizedUserChatSession,
   SessionChainPatch,
   generateId,
@@ -27,6 +28,7 @@ export type { DependencyStatusItem, DependencyStatusLogEntry } from '../infrastr
 export type {
   ChatRuntime,
   ChatRuntimeConfig,
+  InvocationTaskUpdatePatch,
   NormalizedUserChatSession,
   SessionChainPatch
 } from './chat-runtime-types';
@@ -99,6 +101,34 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     return callbackMessageStore.consumeCallbackMessages(sessionId, agentName);
   }
 
+  function createInvocationTask(userKey: string, sessionId: string, task: InvocationTask): InvocationTask | null {
+    return sessionState.createInvocationTask(userKey, sessionId, task);
+  }
+
+  function updateInvocationTask(userKey: string, sessionId: string, taskId: string, patch: InvocationTaskUpdatePatch): InvocationTask | null {
+    return sessionState.updateInvocationTask(userKey, sessionId, taskId, patch);
+  }
+
+  function listInvocationTasks(userKey: string, sessionId: string): InvocationTask[] {
+    return sessionState.listInvocationTasks(userKey, sessionId);
+  }
+
+  function listActiveInvocationTasks(userKey: string, sessionId: string): InvocationTask[] {
+    return sessionState.listActiveInvocationTasks(userKey, sessionId);
+  }
+
+  function resolveOverdueInvocationTasks(userKey: string, sessionId: string, now?: number): InvocationTask[] {
+    return sessionState.resolveOverdueInvocationTasks(userKey, sessionId, now);
+  }
+
+  function markInvocationTaskCompleted(userKey: string, sessionId: string, taskId: string): InvocationTask | null {
+    return sessionState.markInvocationTaskCompleted(userKey, sessionId, taskId);
+  }
+
+  function markInvocationTaskFailed(userKey: string, sessionId: string, taskId: string, reason?: string): InvocationTask | null {
+    return sessionState.markInvocationTaskFailed(userKey, sessionId, taskId, reason);
+  }
+
   return {
     hydrate: persistence.hydrate,
     shutdown: persistence.shutdown,
@@ -130,6 +160,13 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     isAgentEnabledForSession: sessionState.isAgentEnabledForSession,
     setSessionEnabledAgent: sessionState.setSessionEnabledAgent,
     expireDisabledCurrentAgent: sessionState.expireDisabledCurrentAgent,
+    createInvocationTask,
+    updateInvocationTask,
+    listInvocationTasks,
+    listActiveInvocationTasks,
+    resolveOverdueInvocationTasks,
+    markInvocationTaskCompleted,
+    markInvocationTaskFailed,
     buildSessionResponse: sessionState.buildSessionResponse,
     buildDetailedSessionResponse: sessionState.buildDetailedSessionResponse,
     parseSessionChainPatch: sessionState.parseSessionChainPatch,

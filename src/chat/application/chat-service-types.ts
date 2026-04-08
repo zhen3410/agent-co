@@ -3,13 +3,28 @@ import { AgentManager } from '../../agent-manager';
 import { getStatus as getBlockBufferStatus } from '../../block-buffer';
 import { AppErrorCode } from '../../shared/errors/app-error-codes';
 import { SessionService, SessionUserContext } from './session-service';
-import { ChatRuntime, PendingAgentDispatchTask, UserChatSession } from '../runtime/chat-runtime';
+import { ChatRuntime, PendingAgentDispatchTask as RuntimePendingAgentDispatchTask, UserChatSession } from '../runtime/chat-runtime';
+
+export type AgentDispatchReviewMode = 'none' | 'caller_review';
 
 export interface AgentDispatchTask {
   agentName: string;
   prompt: string;
   includeHistory: boolean;
   dispatchKind?: Message['dispatchKind'];
+  taskId?: string;
+  callerAgentName?: string;
+  calleeAgentName?: string;
+  reviewMode?: AgentDispatchReviewMode;
+  deadlineAt?: number;
+}
+
+export interface PendingAgentDispatchTask extends RuntimePendingAgentDispatchTask {
+  taskId?: string;
+  callerAgentName?: string;
+  calleeAgentName?: string;
+  reviewMode?: AgentDispatchReviewMode;
+  deadlineAt?: number;
 }
 
 export interface ChatServiceDependencies {
@@ -24,6 +39,7 @@ export interface ChatServiceDependencies {
 
 export interface StreamMessageCallbacks {
   shouldContinue(): boolean;
+  signal?: AbortSignal;
   onUserMessage(message: Message): void;
   onThinking(agentName: string): void;
   onTextDelta(agentName: string, delta: string): void;
@@ -53,6 +69,7 @@ export interface RunAgentTaskParams {
   task: AgentDispatchTask;
   stream: boolean;
   onTextDelta?: (delta: string) => void;
+  signal?: AbortSignal;
 }
 
 export type RunAgentTask = (params: RunAgentTaskParams) => Promise<Message[]>;
@@ -66,6 +83,7 @@ export interface ExecuteAgentTurnParams {
   onTextDelta?: (agentName: string, delta: string) => void;
   onMessage?: (message: Message) => void;
   shouldContinue?: () => boolean;
+  signal?: AbortSignal;
   pendingTasks?: PendingAgentDispatchTask[];
 }
 
