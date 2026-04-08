@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="200" viewBox="0 0 760 200" role="img" aria-label="agent-co logo">
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#eef2f5"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#d7dde3"/>
+      <stop offset="100%" stop-color="#aab4bd"/>
+    </linearGradient>
+    <linearGradient id="node" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#cfd6dc"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#9aa4ae" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <rect x="22" y="24" width="156" height="156" rx="40" fill="url(#panel)" stroke="#d7dde3"/>
+  </g>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M66 108C72 76 96 54 124 54C145 54 162 65 171 82" stroke="url(#ring)" stroke-width="10" opacity="0.9"/>
+    <path d="M67 109C76 139 99 156 126 156C146 156 163 145 172 128" stroke="#c5cdd4" stroke-width="10" opacity="0.95"/>
+    <path d="M84 123L112 78L142 126" stroke="#9da8b2" stroke-width="8" opacity="0.95"/>
+  </g>
+
+  <g>
+    <circle cx="82" cy="124" r="21" fill="url(#node)" stroke="#aeb7bf" stroke-width="3"/>
+    <circle cx="112" cy="78" r="21" fill="url(#node)" stroke="#aeb7bf" stroke-width="3"/>
+    <circle cx="142" cy="126" r="21" fill="url(#node)" stroke="#aeb7bf" stroke-width="3"/>
+
+    <circle cx="82" cy="124" r="6" fill="#8f9aa4"/>
+    <circle cx="112" cy="78" r="6" fill="#8f9aa4"/>
+    <circle cx="142" cy="126" r="6" fill="#8f9aa4"/>
+  </g>
+
+  <g font-family="'SF Pro Display', 'Segoe UI', system-ui, -apple-system, sans-serif">
+    <text x="212" y="98" font-size="64" font-weight="800" fill="#232a31" letter-spacing="-1.6">agent-co</text>
+    <text x="214" y="132" font-size="16" font-weight="600" fill="#8b949e" letter-spacing="4">MULTI-AGENT COLLABORATION</text>
+  </g>
+
+  <g opacity="0.9">
+    <circle cx="216" cy="158" r="3" fill="#b6bfc7"/>
+    <circle cx="230" cy="158" r="3" fill="#c8d0d6"/>
+    <circle cx="244" cy="158" r="3" fill="#dde3e8"/>
+  </g>
+</svg>

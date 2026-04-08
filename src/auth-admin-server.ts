@@ -16,8 +16,8 @@ import { createAuthAdminRuntime, startAuthAdminServer } from './admin/runtime/au
 
 const PORT = Number(process.env.AUTH_ADMIN_PORT || 3003);
 const DATA_FILE = process.env.AUTH_DATA_FILE || path.join(process.cwd(), 'data', 'users.json');
-const DEFAULT_USER = process.env.BOT_ROOM_DEFAULT_USER || 'admin';
-const DEFAULT_PASSWORD = process.env.BOT_ROOM_DEFAULT_PASSWORD || 'admin123!';
+const DEFAULT_USER = process.env.AGENT_CO_DEFAULT_USER || 'admin';
+const DEFAULT_PASSWORD = process.env.AGENT_CO_DEFAULT_PASSWORD || 'admin123!';
 const AGENT_DATA_FILE = process.env.AGENT_DATA_FILE || path.join(process.cwd(), 'data', 'agents.json');
 const MODEL_CONNECTION_DATA_FILE = process.env.MODEL_CONNECTION_DATA_FILE
   || path.join(path.dirname(AGENT_DATA_FILE), 'api-connections.json');

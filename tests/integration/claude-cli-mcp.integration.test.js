@@ -5,9 +5,9 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const claudeCliModulePath = require.resolve('../../dist/claude-cli.js');
 
-test('Claude CLI 在具备 callback 环境时会挂载 bot-room MCP 配置并允许工具调用', { concurrency: false }, async () => {
+test('Claude CLI 在具备 callback 环境时会挂载 agent-co MCP 配置并允许工具调用', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-claude-mcp-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-claude-mcp-'));
   const argsFile = join(tempDir, 'claude-args.txt');
   const fakeClaude = join(tempDir, 'claude');
 
@@ -32,10 +32,10 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}
     const response = await callClaudeCLI('请处理任务', agent, [], {
       includeHistory: false,
       extraEnv: {
-        BOT_ROOM_API_URL: 'http://127.0.0.1:3002',
-        BOT_ROOM_SESSION_ID: 's_test',
-        BOT_ROOM_AGENT_NAME: 'Claude',
-        BOT_ROOM_CALLBACK_TOKEN: 'token123'
+        AGENT_CO_API_URL: 'http://127.0.0.1:3002',
+        AGENT_CO_SESSION_ID: 's_test',
+        AGENT_CO_AGENT_NAME: 'Claude',
+        AGENT_CO_CALLBACK_TOKEN: 'token123'
       }
     });
 
@@ -43,28 +43,28 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}
 
     const args = readFileSync(argsFile, 'utf8').trim().split('\n');
     assert.ok(args.includes('--mcp-config'));
-    assert.ok(args.includes('--allowedTools'));
+    assert.ok(args.includes('--permission-mode'), 'must include --permission-mode');
+    assert.ok(!args.includes('--allowedTools'), 'must NOT include --allowedTools with bypassPermissions');
 
     const configIndex = args.indexOf('--mcp-config');
     const configJson = JSON.parse(args[configIndex + 1]);
-    const serverConfig = configJson.mcpServers['bot-room'];
+    const serverConfig = configJson.mcpServers['agent-co'];
     assert.equal(serverConfig.command, 'node');
-    assert.ok(serverConfig.args[0].endsWith('/dist/bot-room-mcp-server.js'));
-    assert.equal(serverConfig.env.BOT_ROOM_SESSION_ID, 's_test');
-    assert.equal(serverConfig.env.BOT_ROOM_API_URL, 'http://127.0.0.1:3002');
+    assert.ok(serverConfig.args[0].endsWith('/dist/agent-co-mcp-server.js'));
+    assert.equal(serverConfig.env.AGENT_CO_SESSION_ID, 's_test');
+    assert.equal(serverConfig.env.AGENT_CO_API_URL, 'http://127.0.0.1:3002');
 
-    const toolsIndex = args.indexOf('--allowedTools');
-    const tools = args[toolsIndex + 1];
-    assert.equal(tools, 'mcp__bot-room__bot_room_post_message,mcp__bot-room__bot_room_get_context');
+    const permIndex = args.indexOf('--permission-mode');
+    assert.equal(args[permIndex + 1], 'bypassPermissions');
   } finally {
     process.env.PATH = originalPath;
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
-test('Codex CLI 在具备 callback 环境时会挂载 bot-room MCP 配置并允许工具调用', { concurrency: false }, async () => {
+test('Codex CLI 在具备 callback 环境时会挂载 agent-co MCP 配置并允许工具调用', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-mcp-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-codex-mcp-'));
   const argsFile = join(tempDir, 'codex-args.txt');
   const fakeCodex = join(tempDir, 'codex');
 
@@ -89,10 +89,10 @@ printf '{"output_text":"ok"}\\n'
     const response = await callClaudeCLI('请处理任务', agent, [], {
       includeHistory: false,
       extraEnv: {
-        BOT_ROOM_API_URL: 'http://127.0.0.1:3002',
-        BOT_ROOM_SESSION_ID: 's_test',
-        BOT_ROOM_AGENT_NAME: 'Codex架构师',
-        BOT_ROOM_CALLBACK_TOKEN: 'token123'
+        AGENT_CO_API_URL: 'http://127.0.0.1:3002',
+        AGENT_CO_SESSION_ID: 's_test',
+        AGENT_CO_AGENT_NAME: 'Codex架构师',
+        AGENT_CO_CALLBACK_TOKEN: 'token123'
       }
     });
 
@@ -101,17 +101,17 @@ printf '{"output_text":"ok"}\\n'
     const args = readFileSync(argsFile, 'utf8').trim().split('\n');
     assert.equal(args[0], 'exec');
     assert.ok(args.includes('--json'));
-    assert.ok(args.includes('mcp_servers.botroom.command="node"'));
-    assert.ok(args.includes('tools.allowed=["mcp__botroom__bot_room_post_message","mcp__botroom__bot_room_get_context"]'));
+    assert.ok(args.includes('mcp_servers.agentco.command="node"'));
+    assert.ok(args.includes('tools.allowed=["mcp__agentco__agent_co_post_message","mcp__agentco__agent_co_get_context"]'));
 
-    const mcpArgsEntry = args.find(item => item.startsWith('mcp_servers.botroom.args='));
-    assert.ok(mcpArgsEntry, 'should include bot-room mcp server args');
-    assert.ok(mcpArgsEntry.includes('/dist/bot-room-mcp-server.js'));
+    const mcpArgsEntry = args.find(item => item.startsWith('mcp_servers.agentco.args='));
+    assert.ok(mcpArgsEntry, 'should include agent-co mcp server args');
+    assert.ok(mcpArgsEntry.includes('/dist/agent-co-mcp-server.js'));
 
-    const mcpEnvEntry = args.find(item => item.startsWith('mcp_servers.botroom.env='));
-    assert.ok(mcpEnvEntry, 'should include bot-room mcp server env');
-    assert.ok(mcpEnvEntry.includes('BOT_ROOM_SESSION_ID="s_test"'));
-    assert.ok(mcpEnvEntry.includes('BOT_ROOM_API_URL="http://127.0.0.1:3002"'));
+    const mcpEnvEntry = args.find(item => item.startsWith('mcp_servers.agentco.env='));
+    assert.ok(mcpEnvEntry, 'should include agent-co mcp server env');
+    assert.ok(mcpEnvEntry.includes('AGENT_CO_SESSION_ID="s_test"'));
+    assert.ok(mcpEnvEntry.includes('AGENT_CO_API_URL="http://127.0.0.1:3002"'));
   } finally {
     process.env.PATH = originalPath;
     rmSync(tempDir, { recursive: true, force: true });
@@ -121,7 +121,7 @@ printf '{"output_text":"ok"}\\n'
 
 test('Codex CLI 即使未配置 workdir 也会禁用审批请求，避免 MCP 工具调用被取消', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-no-workdir-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-codex-no-workdir-'));
   const argsFile = join(tempDir, 'codex-args.txt');
   const fakeCodex = join(tempDir, 'codex');
 
@@ -156,7 +156,7 @@ printf '{"output_text":"ok"}\n'
 
 test('Codex CLI 配置 workdir 时会在目标目录执行并禁用审批请求', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-workdir-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-codex-workdir-'));
   const targetWorkdir = join(tempDir, 'project');
   const argsFile = join(tempDir, 'codex-args.txt');
   const pwdFile = join(tempDir, 'codex-pwd.txt');
@@ -197,7 +197,7 @@ printf '{"output_text":"ok"}\\n'
 
 test('Codex CLI 能解析 response_item.message.content 里的 output_text 事件', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-json-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-codex-json-'));
   const fakeCodex = join(tempDir, 'codex');
 
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
@@ -227,7 +227,7 @@ printf '{"type":"response_item","payload":{"type":"message","role":"assistant","
 
 test('Codex CLI 能解析 item.completed 里的 agent_message 文本', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-agent-message-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-codex-agent-message-'));
   const fakeCodex = join(tempDir, 'codex');
 
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
@@ -257,7 +257,7 @@ printf '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","t
 
 test('Codex CLI 不会把 response_item 中的用户 input_text 拼接到最终回复', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-codex-filter-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-codex-filter-'));
   const fakeCodex = join(tempDir, 'codex');
 
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
@@ -287,7 +287,7 @@ printf '{"type":"response_item","payload":{"type":"message","role":"assistant","
 });
 
 test('Claude CLI 在测试场景可通过环境变量缩短心跳超时，避免集成测试长时间挂起', { concurrency: false }, async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-claude-timeout-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-claude-timeout-'));
   const fakeClaude = join(tempDir, 'claude');
 
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
@@ -296,13 +296,13 @@ sleep 5
   chmodSync(fakeClaude, 0o755);
 
   const originalPath = process.env.PATH;
-  const originalHeartbeat = process.env.BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS;
-  const originalTimeout = process.env.BOT_ROOM_CLI_TIMEOUT_MS;
-  const originalKillGrace = process.env.BOT_ROOM_CLI_KILL_GRACE_MS;
+  const originalHeartbeat = process.env.AGENT_CO_CLI_HEARTBEAT_TIMEOUT_MS;
+  const originalTimeout = process.env.AGENT_CO_CLI_TIMEOUT_MS;
+  const originalKillGrace = process.env.AGENT_CO_CLI_KILL_GRACE_MS;
   process.env.PATH = `${tempDir}:${originalPath || ''}`;
-  process.env.BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS = '200';
-  process.env.BOT_ROOM_CLI_TIMEOUT_MS = '800';
-  process.env.BOT_ROOM_CLI_KILL_GRACE_MS = '50';
+  process.env.AGENT_CO_CLI_HEARTBEAT_TIMEOUT_MS = '200';
+  process.env.AGENT_CO_CLI_TIMEOUT_MS = '800';
+  process.env.AGENT_CO_CLI_KILL_GRACE_MS = '50';
   delete require.cache[claudeCliModulePath];
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
 
@@ -322,19 +322,19 @@ sleep 5
   } finally {
     process.env.PATH = originalPath;
     if (originalHeartbeat === undefined) {
-      delete process.env.BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS;
+      delete process.env.AGENT_CO_CLI_HEARTBEAT_TIMEOUT_MS;
     } else {
-      process.env.BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS = originalHeartbeat;
+      process.env.AGENT_CO_CLI_HEARTBEAT_TIMEOUT_MS = originalHeartbeat;
     }
     if (originalTimeout === undefined) {
-      delete process.env.BOT_ROOM_CLI_TIMEOUT_MS;
+      delete process.env.AGENT_CO_CLI_TIMEOUT_MS;
     } else {
-      process.env.BOT_ROOM_CLI_TIMEOUT_MS = originalTimeout;
+      process.env.AGENT_CO_CLI_TIMEOUT_MS = originalTimeout;
     }
     if (originalKillGrace === undefined) {
-      delete process.env.BOT_ROOM_CLI_KILL_GRACE_MS;
+      delete process.env.AGENT_CO_CLI_KILL_GRACE_MS;
     } else {
-      process.env.BOT_ROOM_CLI_KILL_GRACE_MS = originalKillGrace;
+      process.env.AGENT_CO_CLI_KILL_GRACE_MS = originalKillGrace;
     }
     delete require.cache[claudeCliModulePath];
     rmSync(tempDir, { recursive: true, force: true });

@@ -1,12 +1,12 @@
 {
-  "name": "Bot Room 多 AI 聊天室",
-  "short_name": "Bot Room",
+  "name": "agent-co 多 AI 聊天室",
+  "short_name": "agent-co",
   "description": "支持多智能体会话的聊天室，可作为 iOS PWA 安装到主屏幕。",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#faf8f5",
-  "theme_color": "#ff8c42",
+  "background_color": "#f4f6f8",
+  "theme_color": "#f4f6f8",
   "icons": [
     {
       "src": "/icon.svg",

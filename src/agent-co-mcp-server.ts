@@ -2,10 +2,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-const API_URL = process.env.BOT_ROOM_API_URL;
-const CALLBACK_TOKEN = process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
-const SESSION_ID = process.env.BOT_ROOM_SESSION_ID;
-const AGENT_NAME = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const API_URL = process.env.AGENT_CO_API_URL;
+const CALLBACK_TOKEN = process.env.AGENT_CO_CALLBACK_TOKEN || 'agent-co-callback-token';
+const SESSION_ID = process.env.AGENT_CO_SESSION_ID;
+const AGENT_NAME = process.env.AGENT_CO_AGENT_NAME || 'AI';
 
 function encodeHeaderValue(value: string): string {
   return encodeURIComponent(value);
@@ -14,25 +14,25 @@ function encodeHeaderValue(value: string): string {
 function authHeaders(): Record<string, string> {
   return {
     Authorization: `Bearer ${CALLBACK_TOKEN}`,
-    'x-bot-room-callback-token': CALLBACK_TOKEN,
-    'x-bot-room-session-id': SESSION_ID || '',
-    'x-bot-room-agent': encodeHeaderValue(AGENT_NAME)
+    'x-agent-co-callback-token': CALLBACK_TOKEN,
+    'x-agent-co-session-id': SESSION_ID || '',
+    'x-agent-co-agent': encodeHeaderValue(AGENT_NAME)
   };
 }
 
 function ensureConfig(): string | null {
-  if (!API_URL) return '缺少 BOT_ROOM_API_URL 环境变量';
-  if (!SESSION_ID) return '缺少 BOT_ROOM_SESSION_ID 环境变量';
+  if (!API_URL) return '缺少 AGENT_CO_API_URL 环境变量';
+  if (!SESSION_ID) return '缺少 AGENT_CO_SESSION_ID 环境变量';
   return null;
 }
 
 const server = new McpServer({
-  name: 'bot-room-callbacks',
+  name: 'agent-co-callbacks',
   version: '1.0.0'
 });
 
 server.tool(
-  'bot_room_post_message',
+  'agent_co_post_message',
   '将消息主动发送到聊天室。仅发送希望用户看到的最终输出。',
   {
     content: z.string().min(1).describe('要发送到聊天室的文本内容')
@@ -67,7 +67,7 @@ server.tool(
 );
 
 server.tool(
-  'bot_room_get_context',
+  'agent_co_get_context',
   '获取当前 session 的会话历史。',
   {},
   async () => {

@@ -38,14 +38,14 @@ export function logChatStartupBanner(config: ChatStartupBannerConfig): void {
   console.log('  - 输入 @Alice 可以召唤 Alice');
   console.log('  - 输入 @Bob 可以召唤 Bob');
   console.log('');
-  console.log('💡 提示: 如果 Claude/Codex CLI 不可用,会自动使用模拟回复');
+  console.log('💡 提示: CLI 调用失败时将透传真实错误信息');
   if (config.authEnabled) {
     console.log(`🔐 鉴权已启用: 依赖独立鉴权服务 ${config.authAdminBaseUrl}`);
   } else {
-    console.log('🔓 鉴权未启用: 设置 BOT_ROOM_AUTH_ENABLED=false');
+    console.log('🔓 鉴权未启用: 设置 AGENT_CO_AUTH_ENABLED=false');
   }
   if (config.redisDisabled) {
-    console.log('🧠 Redis 会话持久化已禁用: BOT_ROOM_DISABLE_REDIS=true');
+    console.log('🧠 Redis 会话持久化已禁用: AGENT_CO_DISABLE_REDIS=true');
   } else {
     console.log(`🧠 Redis 会话持久化已启用: url=${config.redisUrl}, key=${config.redisChatSessionsKey}`);
   }

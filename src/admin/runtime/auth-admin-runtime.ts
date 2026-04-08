@@ -46,7 +46,7 @@ function performSecurityChecks(runtime: AuthAdminRuntime): void {
     }
 
     if (runtime.defaultPassword.length < 12) {
-      console.error('❌ 生产环境 BOT_ROOM_DEFAULT_PASSWORD 长度不能少于 12 字符');
+      console.error('❌ 生产环境 AGENT_CO_DEFAULT_PASSWORD 长度不能少于 12 字符');
       process.exit(1);
     }
     const hasLower = /[a-z]/.test(runtime.defaultPassword);
@@ -54,7 +54,7 @@ function performSecurityChecks(runtime: AuthAdminRuntime): void {
     const hasNumber = /[0-9]/.test(runtime.defaultPassword);
     const hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(runtime.defaultPassword);
     if (!(hasLower && hasUpper && hasNumber && hasSpecial)) {
-      console.error('❌ 生产环境 BOT_ROOM_DEFAULT_PASSWORD 必须包含大小写字母、数字和特殊字符');
+      console.error('❌ 生产环境 AGENT_CO_DEFAULT_PASSWORD 必须包含大小写字母、数字和特殊字符');
       process.exit(1);
     }
     return;
@@ -65,7 +65,7 @@ function performSecurityChecks(runtime: AuthAdminRuntime): void {
     warnings.push('⚠️ AUTH_ADMIN_TOKEN 未设置或使用默认值');
   }
   if (runtime.defaultPassword.length < 12) {
-    warnings.push('⚠️ BOT_ROOM_DEFAULT_PASSWORD 长度不足');
+    warnings.push('⚠️ AGENT_CO_DEFAULT_PASSWORD 长度不足');
   }
   if (warnings.length > 0) {
     console.log('\n' + '='.repeat(60));

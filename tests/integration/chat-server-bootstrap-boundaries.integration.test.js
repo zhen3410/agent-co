@@ -70,6 +70,21 @@ test('compiled startup helpers expose the bootstrap boundary API', () => {
   assert.equal(typeof envConfigModule.createChatEnvConfig, 'function');
 });
 
+test('chat env config defaults use agent-co identifiers', () => {
+  ensureBuildArtifacts();
+  const envConfigModule = require(path.join(distBootstrapDir, 'chat-env-config.js'));
+  const config = envConfigModule.createChatEnvConfig({
+    cwd: repoRoot,
+    serverDirname: path.join(repoRoot, 'dist'),
+    env: {}
+  });
+
+  assert.equal(config.redis.configKey, 'agent-co:config');
+  assert.equal(config.redis.defaultChatSessionsKey, 'agent-co:chat:sessions:v1');
+  assert.equal(config.callback.authHeader, 'x-agent-co-callback-token');
+  assert.equal(config.callback.authToken, 'agent-co-callback-token');
+});
+
 test('compiled startup security helper exposes pure analysis with stable warning/error behavior', () => {
   ensureBuildArtifacts();
   const securityModule = require(path.join(distBootstrapDir, 'chat-startup-security.js'));

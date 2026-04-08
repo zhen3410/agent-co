@@ -6,7 +6,7 @@ const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
 function createVerboseLogFixtureDir() {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-error-contracts-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-error-contracts-'));
   const verboseDir = join(tempDir, 'verbose-logs');
   mkdirSync(verboseDir, { recursive: true });
 
@@ -27,7 +27,7 @@ async function createErrorContractsFixture() {
   const verboseFixture = createVerboseLogFixtureDir();
   const fixture = await createChatServerFixture({
     env: {
-      BOT_ROOM_VERBOSE_LOG_DIR: verboseFixture.verboseDir
+      AGENT_CO_VERBOSE_LOG_DIR: verboseFixture.verboseDir
     }
   });
 
@@ -108,14 +108,14 @@ test('callback 接口的鉴权与验证错误契约保持稳定', async () => {
     const callbackMissingHeader = await setup.fixture.request('/api/callbacks/post-message', {
       method: 'POST',
       headers: {
-        Authorization: 'Bearer bot-room-callback-token',
-        'x-bot-room-callback-token': 'bot-room-callback-token',
-        'x-bot-room-agent': 'Alice'
+        Authorization: 'Bearer agent-co-callback-token',
+        'x-agent-co-callback-token': 'agent-co-callback-token',
+        'x-agent-co-agent': 'Alice'
       },
       body: { content: 'hello' }
     });
     assert.equal(callbackMissingHeader.status, 400);
-    assert.deepEqual(callbackMissingHeader.body, { error: '缺少 x-bot-room-session-id 头' });
+    assert.deepEqual(callbackMissingHeader.body, { error: '缺少 x-agent-co-session-id 头' });
   } finally {
     await setup.cleanup();
   }
@@ -130,8 +130,8 @@ test('callback thread-context 的 not-found 错误契约保持稳定', async () 
 
     const callbackMissingSession = await setup.fixture.request('/api/callbacks/thread-context?sessionid=missing', {
       headers: {
-        Authorization: 'Bearer bot-room-callback-token',
-        'x-bot-room-callback-token': 'bot-room-callback-token'
+        Authorization: 'Bearer agent-co-callback-token',
+        'x-agent-co-callback-token': 'agent-co-callback-token'
       }
     });
 
@@ -165,7 +165,7 @@ test('system dirs 接口保持原有目录不存在契约', async () => {
     const loginResponse = await setup.fixture.login();
     assert.equal(loginResponse.status, 200);
 
-    const missingDir = await setup.fixture.request('/api/system/dirs?path=/definitely-not-existing-bot-room-dir');
+    const missingDir = await setup.fixture.request('/api/system/dirs?path=/definitely-not-existing-agent-co-dir');
 
     assert.equal(missingDir.status, 400);
     assert.deepEqual(missingDir.body, { error: '目录不存在' });

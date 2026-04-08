@@ -47,10 +47,10 @@ export async function handleCallbackRoutes(
         });
       }
 
-      const sessionId = normalizeCallbackSessionId(req.headers['x-bot-room-session-id']);
-      const agentName = normalizeCallbackAgentName(req.headers['x-bot-room-agent']);
+      const sessionId = normalizeCallbackSessionId(req.headers['x-agent-co-session-id']);
+      const agentName = normalizeCallbackAgentName(req.headers['x-agent-co-agent']);
       if (!sessionId) {
-        throw new AppError('缺少 x-bot-room-session-id 头', {
+        throw new AppError('缺少 x-agent-co-session-id 头', {
           code: APP_ERROR_CODES.VALIDATION_FAILED
         });
       }

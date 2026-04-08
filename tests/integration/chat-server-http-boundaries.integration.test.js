@@ -102,11 +102,11 @@ test('callback-route-helpers 暴露 token / header / body parsing helpers', () =
 
   const headers = {
     authorization: ['  Bearer callback-token  '],
-    'x-bot-room-callback-token': ['fallback-token']
+    'x-agent-co-callback-token': ['fallback-token']
   };
 
-  assert.equal(helpers.getCallbackToken(headers, 'x-bot-room-callback-token'), 'callback-token');
-  assert.equal(helpers.isCallbackAuthorized(headers, 'x-bot-room-callback-token', 'callback-token'), true);
+  assert.equal(helpers.getCallbackToken(headers, 'x-agent-co-callback-token'), 'callback-token');
+  assert.equal(helpers.isCallbackAuthorized(headers, 'x-agent-co-callback-token', 'callback-token'), true);
   assert.equal(helpers.normalizeCallbackSessionId('  session-1  '), 'session-1');
   assert.equal(helpers.normalizeCallbackAgentName('Alice%20Bob'), 'Alice Bob');
   assert.deepEqual(helpers.normalizeCallbackPostMessageBody({
@@ -181,9 +181,9 @@ test('callback-routes 保持 bearer 优先级、agent decode 与缺少 session �
     url: '/api/callbacks/post-message',
     headers: {
       authorization: 'Bearer callback-token',
-      'x-bot-room-callback-token': 'wrong-token',
-      'x-bot-room-session-id': '  session-1  ',
-      'x-bot-room-agent': 'Alice%20Bob'
+      'x-agent-co-callback-token': 'wrong-token',
+      'x-agent-co-session-id': '  session-1  ',
+      'x-agent-co-agent': 'Alice%20Bob'
     },
     body: {
       content: '  hello  ',
@@ -198,7 +198,7 @@ test('callback-routes 保持 bearer 优先级、agent decode 与缺少 session �
     new URL('http://127.0.0.1/api/callbacks/post-message'),
     {
       callbackAuthToken: 'callback-token',
-      callbackAuthHeader: 'x-bot-room-callback-token',
+      callbackAuthHeader: 'x-agent-co-callback-token',
       chatService: {
         postCallbackMessage(sessionId, agentName, content, invokeAgents) {
           callbackCall = { sessionId, agentName, content, invokeAgents };
@@ -225,8 +225,8 @@ test('callback-routes 保持 bearer 优先级、agent decode 与缺少 session �
     url: '/api/callbacks/post-message',
     headers: {
       authorization: 'Bearer callback-token',
-      'x-bot-room-callback-token': 'callback-token',
-      'x-bot-room-agent': 'Alice'
+      'x-agent-co-callback-token': 'callback-token',
+      'x-agent-co-agent': 'Alice'
     },
     body: { content: 'hello' }
   });
@@ -237,7 +237,7 @@ test('callback-routes 保持 bearer 优先级、agent decode 与缺少 session �
     new URL('http://127.0.0.1/api/callbacks/post-message'),
     {
       callbackAuthToken: 'callback-token',
-      callbackAuthHeader: 'x-bot-room-callback-token',
+      callbackAuthHeader: 'x-agent-co-callback-token',
       chatService: {
         postCallbackMessage() {
           throw new Error('should not reach');
@@ -250,7 +250,7 @@ test('callback-routes 保持 bearer 优先级、agent decode 与缺少 session �
   assert.deepEqual(parseJsonResponse(failureRes), {
     statusCode: 400,
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: { error: '缺少 x-bot-room-session-id 头' }
+    body: { error: '缺少 x-agent-co-session-id 头' }
   });
 });
 

@@ -2,7 +2,6 @@
  * claude-cli.ts
  *
  * 功能：调用 Claude CLI / Codex CLI
- * 参考 minimal-claude.js 实现
  */
 
 import { spawn } from 'child_process';
@@ -12,6 +11,7 @@ import * as readline from 'readline';
 import { AIAgent, Message, RichBlock } from './types';
 import { digestHistory } from './rich-digest';
 import { extractRichBlocks } from './rich-extract';
+import { parseCliEventLine } from './cli-event-parser';
 
 function readDurationFromEnv(name: string, fallbackMs: number): number {
   const raw = process.env[name];
@@ -20,16 +20,16 @@ function readDurationFromEnv(name: string, fallbackMs: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackMs;
 }
 
-const CLI_TIMEOUT_MS = readDurationFromEnv('BOT_ROOM_CLI_TIMEOUT_MS', 30 * 60 * 1000);
-const CLI_HEARTBEAT_TIMEOUT_MS = readDurationFromEnv('BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS', 3 * 60 * 1000);
-const CLI_KILL_GRACE_MS = readDurationFromEnv('BOT_ROOM_CLI_KILL_GRACE_MS', 5000);
+const CLI_TIMEOUT_MS = readDurationFromEnv('AGENT_CO_CLI_TIMEOUT_MS', 30 * 60 * 1000);
+const CLI_HEARTBEAT_TIMEOUT_MS = readDurationFromEnv('AGENT_CO_CLI_HEARTBEAT_TIMEOUT_MS', 3 * 60 * 1000);
+const CLI_KILL_GRACE_MS = readDurationFromEnv('AGENT_CO_CLI_KILL_GRACE_MS', 5000);
 const MAX_LINE_LENGTH = 10 * 1024 * 1024;
-const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || 'logs/ai-cli-verbose';
+const VERBOSE_LOG_DIR = process.env.AGENT_CO_VERBOSE_LOG_DIR || 'logs/ai-cli-verbose';
 
 type CliKind = 'claude' | 'codex';
 type McpConfig = { mcpConfig: string; allowedTools: string };
-const CODEX_MCP_SERVER_NAME = 'botroom';
-const CLAUDE_MCP_SERVER_NAME = 'bot-room';
+const CODEX_MCP_SERVER_NAME = 'agentco';
+const CLAUDE_MCP_SERVER_NAME = 'agent-co';
 
 function createVerboseLogger(agentName: string, cli: CliKind): (channel: 'stdout' | 'stderr' | 'meta', content: string) => void {
   mkdirSync(VERBOSE_LOG_DIR, { recursive: true });
@@ -146,8 +146,8 @@ function buildPrompt(userMessage: string, agent: AIAgent, history: Message[], in
   }
 
   if (!includeHistory) {
-    parts.push('你当前只收到了用户最新一条消息。请先调用 bot_room_get_context 获取完整会话历史，再继续处理任务。');
-    parts.push('当你需要向聊天室展示内容时，调用 bot_room_post_message 发送最终可见消息。');
+    parts.push('你当前只收到了用户最新一条消息。请先调用 agent_co_get_context 获取完整会话历史，再继续处理任务。');
+    parts.push('当你需要向聊天室展示内容时，调用 agent_co_post_message 发送最终可见消息。');
     parts.push('不要把思考过程直接输出给用户。');
   }
 
@@ -167,15 +167,15 @@ function resolveCli(agent: AIAgent): CliKind {
 
 
 function buildMcpConfig(extraEnv: Record<string, string>): McpConfig | null {
-  const apiUrl = extraEnv.BOT_ROOM_API_URL;
-  const sessionId = extraEnv.BOT_ROOM_SESSION_ID;
+  const apiUrl = extraEnv.AGENT_CO_API_URL;
+  const sessionId = extraEnv.AGENT_CO_SESSION_ID;
   if (!apiUrl || !sessionId) {
     return null;
   }
 
-  const callbackToken = extraEnv.BOT_ROOM_CALLBACK_TOKEN || process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
-  const agentName = extraEnv.BOT_ROOM_AGENT_NAME || process.env.BOT_ROOM_AGENT_NAME || 'AI';
-  const mcpServerScript = join(process.cwd(), 'dist', 'bot-room-mcp-server.js');
+  const callbackToken = extraEnv.AGENT_CO_CALLBACK_TOKEN || process.env.AGENT_CO_CALLBACK_TOKEN || 'agent-co-callback-token';
+  const agentName = extraEnv.AGENT_CO_AGENT_NAME || process.env.AGENT_CO_AGENT_NAME || 'AI';
+  const mcpServerScript = join(process.cwd(), 'dist', 'agent-co-mcp-server.js');
 
   const mcpConfig = JSON.stringify({
     mcpServers: {
@@ -183,10 +183,10 @@ function buildMcpConfig(extraEnv: Record<string, string>): McpConfig | null {
         command: 'node',
         args: [mcpServerScript],
         env: {
-          BOT_ROOM_API_URL: apiUrl,
-          BOT_ROOM_SESSION_ID: sessionId,
-          BOT_ROOM_CALLBACK_TOKEN: callbackToken,
-          BOT_ROOM_AGENT_NAME: agentName
+          AGENT_CO_API_URL: apiUrl,
+          AGENT_CO_SESSION_ID: sessionId,
+          AGENT_CO_CALLBACK_TOKEN: callbackToken,
+          AGENT_CO_AGENT_NAME: agentName
         }
       }
     }
@@ -194,7 +194,7 @@ function buildMcpConfig(extraEnv: Record<string, string>): McpConfig | null {
 
   return {
     mcpConfig,
-    allowedTools: `mcp__${CLAUDE_MCP_SERVER_NAME}__bot_room_post_message,mcp__${CLAUDE_MCP_SERVER_NAME}__bot_room_get_context`
+    allowedTools: `mcp__${CLAUDE_MCP_SERVER_NAME}__agent_co_post_message,mcp__${CLAUDE_MCP_SERVER_NAME}__agent_co_get_context`
   };
 }
 
@@ -203,10 +203,10 @@ function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, 
   const mcp = buildMcpConfig(extraEnv);
   const codexMcpKey = `mcp_servers.${CODEX_MCP_SERVER_NAME}`;
   const codexMcpEnv = {
-    BOT_ROOM_API_URL: extraEnv.BOT_ROOM_API_URL,
-    BOT_ROOM_SESSION_ID: extraEnv.BOT_ROOM_SESSION_ID,
-    BOT_ROOM_CALLBACK_TOKEN: extraEnv.BOT_ROOM_CALLBACK_TOKEN || process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token',
-    BOT_ROOM_AGENT_NAME: extraEnv.BOT_ROOM_AGENT_NAME || process.env.BOT_ROOM_AGENT_NAME || 'AI'
+    AGENT_CO_API_URL: extraEnv.AGENT_CO_API_URL,
+    AGENT_CO_SESSION_ID: extraEnv.AGENT_CO_SESSION_ID,
+    AGENT_CO_CALLBACK_TOKEN: extraEnv.AGENT_CO_CALLBACK_TOKEN || process.env.AGENT_CO_CALLBACK_TOKEN || 'agent-co-callback-token',
+    AGENT_CO_AGENT_NAME: extraEnv.AGENT_CO_AGENT_NAME || process.env.AGENT_CO_AGENT_NAME || 'AI'
   };
   const codexMcpEnvToml = `{ ${Object.entries(codexMcpEnv)
     .map(([key, value]) => `${key}=${JSON.stringify(value ?? '')}`)
@@ -216,9 +216,14 @@ function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, 
     delete (env as Record<string, unknown>).CLAUDECODE;
     delete (env as Record<string, unknown>).CLAUDE_SESSION_ID;
 
-    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
+    const args = [
+      '-p', prompt,
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--permission-mode', 'bypassPermissions'
+    ];
     if (mcp) {
-      args.push('--mcp-config', mcp.mcpConfig, '--allowedTools', mcp.allowedTools);
+      args.push('--mcp-config', mcp.mcpConfig);
     }
 
     return {
@@ -236,13 +241,13 @@ function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, 
       '-c',
       `${codexMcpKey}.command="node"`,
       '-c',
-      `${codexMcpKey}.args=${JSON.stringify([join(process.cwd(), 'dist', 'bot-room-mcp-server.js')])}`,
+      `${codexMcpKey}.args=${JSON.stringify([join(process.cwd(), 'dist', 'agent-co-mcp-server.js')])}`,
       '-c',
       `${codexMcpKey}.env=${codexMcpEnvToml}`,
       '-c',
       `tools.allowed=${JSON.stringify([
-        `mcp__${CODEX_MCP_SERVER_NAME}__bot_room_post_message`,
-        `mcp__${CODEX_MCP_SERVER_NAME}__bot_room_get_context`
+        `mcp__${CODEX_MCP_SERVER_NAME}__agent_co_post_message`,
+        `mcp__${CODEX_MCP_SERVER_NAME}__agent_co_get_context`
       ])}`
     );
   }
@@ -258,7 +263,7 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
     const cli = resolveCli(agent);
     const prompt = buildPrompt(userMessage, agent, history, options.includeHistory !== false)
       + (cli === 'codex' && options.includeHistory === false
-        ? `\n在 Codex 环境中，这两个工具通常显示为 functions.mcp__${CODEX_MCP_SERVER_NAME}__bot_room_get_context 和 functions.mcp__${CODEX_MCP_SERVER_NAME}__bot_room_post_message。`
+        ? `\n在 Codex 环境中，这两个工具通常显示为 functions.mcp__${CODEX_MCP_SERVER_NAME}__agent_co_get_context 和 functions.mcp__${CODEX_MCP_SERVER_NAME}__agent_co_post_message。`
         : '');
     console.log(`\n[${cli.toUpperCase()} CLI] Agent: ${agent.name}, Prompt length: ${prompt.length}`);
     const logVerbose = createVerboseLogger(agent.name, cli);
@@ -330,19 +335,23 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
         return;
       }
 
-      try {
-        const event = JSON.parse(line);
-        if (typeof event.result === 'string') {
-          finalResult = event.result;
-        }
+      const parsedLine = parseCliEventLine(line);
 
-        const extractedTexts = collectTextFromValue(event);
-        if (extractedTexts.length > 0) {
-          result += extractedTexts.join('');
+      if (parsedLine.kind === 'json') {
+        if (parsedLine.event?.type === 'result_text') {
+          finalResult = parsedLine.event.text;
+        } else if (parsedLine.event?.type === 'assistant_text') {
+          result += parsedLine.event.text;
+        } else {
+          const extractedTexts = collectTextFromValue(parsedLine.raw);
+          if (extractedTexts.length > 0) {
+            result += extractedTexts.join('');
+          }
         }
-      } catch {
-        result += `${line}\n`;
+        return;
       }
+
+      result += `${line}\n`;
     });
 
     child.on('close', (code) => {
@@ -376,79 +385,4 @@ export async function callAgentCLI(
   options: CliCallOptions = {}
 ): Promise<CliCallResult> {
   return callClaudeCLI(userMessage, agent, history, options);
-}
-
-export function generateMockReply(userMessage: string, agentName: string): string {
-  const lowerMsg = userMessage.toLowerCase();
-
-  if (lowerMsg.includes('待办') || lowerMsg.includes('todo') || lowerMsg.includes('计划')) {
-    return `好的,我来帮你列一个今天的待办事项：
-
-\`\`\`cc_rich
-{
-  "kind": "checklist",
-  "title": "📋 今天的待办",
-  "items": [
-    { "text": "完成任务一", "done": false },
-    { "text": "完成任务二", "done": false },
-    { "text": "已完成事项", "done": true }
-  ]
-}
-\`\`\`
-
-记得按时完成哦！`;
-  }
-
-  if (lowerMsg.includes('总结') || lowerMsg.includes('进展') || lowerMsg.includes('摘要')) {
-    return `好的,这是进展摘要:
-
-\`\`\`cc_rich
-{
-  "kind": "card",
-  "title": "📊 进展摘要",
-  "body": "完成了多个任务,进展顺利。",
-  "tone": "info"
-}
-\`\`\`
-
-继续保持!`;
-  }
-
-  if (lowerMsg.includes('警告') || lowerMsg.includes('注意') || lowerMsg.includes('问题')) {
-    return `我注意到一个需要关注的问题:
-
-\`\`\`cc_rich
-{
-  "kind": "card",
-  "title": "⚠️ 注意事项",
-  "body": "请检查相关资源使用情况。",
-  "tone": "warning"
-}
-\`\`\`
-
-需要我帮你分析吗?`;
-  }
-
-  if (lowerMsg.includes('完成') || lowerMsg.includes('成功')) {
-    return `太棒了!
-
-\`\`\`cc_rich
-{
-  "kind": "card",
-  "title": "✅ 操作成功",
-  "body": "任务已成功完成!",
-  "tone": "success"
-}
-\`\`\`
-
-还有什么需要帮助的吗?`;
-  }
-
-  return `我是 ${agentName},我收到了你的消息: "${userMessage}"
-
-如果你想看我展示富文本功能,可以尝试说:
-- "帮我列一个今天的待办事项"
-- "总结一下进展"
-- "给我一个警告提示"
-- "显示一个成功消息"`;
 }

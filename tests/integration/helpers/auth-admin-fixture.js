@@ -50,7 +50,7 @@ function ensureBuildArtifacts() {
 
 async function createAuthAdminFixture(options = {}) {
   const maxAttempts = options.maxAttempts || 5;
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-auth-it-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-auth-it-'));
   const adminToken = options.adminToken || 'integration-test-admin-token-1234567890';
   const usersFile = join(tempDir, 'users.json');
   const agentsFile = join(tempDir, 'agents.json');
@@ -78,8 +78,8 @@ async function createAuthAdminFixture(options = {}) {
         AUTH_ADMIN_TOKEN: options.authAdminTokenEnv || adminToken,
         AUTH_DATA_FILE: usersFile,
         AGENT_DATA_FILE: agentsFile,
-        BOT_ROOM_DEFAULT_USER: 'admin',
-        BOT_ROOM_DEFAULT_PASSWORD: 'Admin1234!@#'
+        AGENT_CO_DEFAULT_USER: 'admin',
+        AGENT_CO_DEFAULT_PASSWORD: 'Admin1234!@#'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });

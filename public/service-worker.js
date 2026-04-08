@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bot-room-pwa-v2';
+const CACHE_NAME = 'agent-co-pwa-v2';
 const ASSETS = [
   '/',
   '/index.html',

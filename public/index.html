@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Bot Room">
+  <meta name="apple-mobile-web-app-title" content="agent-co">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icon.svg">
-  <title>Bot Room - 多 AI 智能体聊天室</title>
+  <title>agent-co - 多 AI 智能体聊天室</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -68,7 +68,7 @@
         <div className="welcome-orb">
           <div className="welcome-icon">💬</div>
         </div>
-        <h2>欢迎使用 Bot Room</h2>
+        <h2>欢迎使用 agent-co</h2>
         <p>把聊天内容放在中心，把控制信息收回侧边。点击下方智能体或使用 <em>@智能体名</em> 开始对话。</p>
         <div className="welcome-agents">
           {welcomeAgents.map((agent) => (
@@ -88,7 +88,7 @@
     const ChatScrollIntro = () => (
       <div className="messages-intro">
         <div className="pwa-banner" id="pwaBanner" style={{ display: 'none' }}>
-          <span id="pwaBannerText">安装 Bot Room 到主屏幕，获得更好的 iOS 全屏体验。</span>
+          <span id="pwaBannerText">安装 agent-co 到主屏幕，获得更好的 iOS 全屏体验。</span>
           <div className="pwa-banner__actions">
             <button className="btn-clear" id="pwaInstallBtn" style={{ display: 'none' }} onClick={() => window.triggerPwaInstall && window.triggerPwaInstall()}>安装</button>
             <button className="btn-clear" onClick={() => window.dismissPwaBanner && window.dismissPwaBanner()}>关闭</button>
@@ -273,7 +273,7 @@
               <header className="header">
                 <div className="header-main">
                   <div className="header-title">
-                    <span className="header-kicker">Bot Room</span>
+                    <span className="header-kicker">agent-co</span>
                     <h1>Focused Chat</h1>
                     <p className="header-subtitle">让消息成为主视图，其余上下文按需展开。</p>
                   </div>
@@ -1991,7 +1991,7 @@
       return `
         <div class="messages-intro">
           <div class="pwa-banner" id="pwaBanner" style="display: none;">
-            <span id="pwaBannerText">安装 Bot Room 到主屏幕，获得更好的 iOS 全屏体验。</span>
+            <span id="pwaBannerText">安装 agent-co 到主屏幕，获得更好的 iOS 全屏体验。</span>
             <div class="pwa-banner__actions">
               <button class="btn-clear" id="pwaInstallBtn" style="display: none;" onclick="window.triggerPwaInstall && window.triggerPwaInstall()">安装</button>
               <button class="btn-clear" onclick="window.dismissPwaBanner && window.dismissPwaBanner()">关闭</button>
@@ -2035,7 +2035,7 @@
           <div class="welcome-orb">
             <div class="welcome-icon">💬</div>
           </div>
-          <h2>欢迎使用 Bot Room</h2>
+          <h2>欢迎使用 agent-co</h2>
           <p>把聊天内容放在中心，把控制信息收回侧边。点击下方智能体或使用 <em>@智能体名</em> 开始对话。</p>
           <div class="welcome-agents">
             ${welcomeAgents.map((agent) => `

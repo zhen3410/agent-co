@@ -150,7 +150,7 @@ test('model connection file resolution honors explicit file and agent-data sibli
 
 test('API connection loading reports stable lookup failures', () => {
   const { loadApiAgentConnection } = requireBuiltModule('agent-invocation', 'model-connection-loader.js');
-  const tempDir = mkdtempSync(path.join(tmpdir(), 'bot-room-agent-invocation-unit-'));
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'agent-co-agent-invocation-unit-'));
   const connectionFile = path.join(tempDir, 'api-connections.json');
 
   try {
