@@ -69,7 +69,7 @@ function buildCliErrorVisibleText(message: string): string {
 function isInternalToolOrchestrationLeak(text: string): boolean {
   const normalized = (text || '').toLowerCase();
   if (!normalized) return false;
-  const mentionsTool = normalized.includes('bot_room_get_context') || normalized.includes('bot_room_post_message');
+  const mentionsTool = normalized.includes('agent_co_get_context') || normalized.includes('agent_co_post_message');
   const mentionsOrchestration = normalized.includes('同步到群里')
     || normalized.includes('公开聊天室')
     || normalized.includes('完整会话历史')
@@ -117,11 +117,11 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
     runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${startStage} stream=${stream}`);
 
     const callbackEnv: Record<string, string> = {
-      BOT_ROOM_API_URL: `http://127.0.0.1:${deps.port}`,
-      BOT_ROOM_SESSION_ID: session.id,
-      BOT_ROOM_AGENT_NAME: agentName,
-      BOT_ROOM_CALLBACK_TOKEN: deps.callbackAuthToken,
-      BOT_ROOM_DISPATCH_KIND: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial'
+      AGENT_CO_API_URL: `http://127.0.0.1:${deps.port}`,
+      AGENT_CO_SESSION_ID: session.id,
+      AGENT_CO_AGENT_NAME: agentName,
+      AGENT_CO_CALLBACK_TOKEN: deps.callbackAuthToken,
+      AGENT_CO_DISPATCH_KIND: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial'
     };
 
     let fallbackMessage: Message | null = null;

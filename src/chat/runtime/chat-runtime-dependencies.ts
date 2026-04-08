@@ -33,13 +33,13 @@ export function createChatRuntimeDependencies(deps: ChatRuntimeDependenciesDepen
         name: 'redis',
         required: deps.config.redisRequired,
         healthy: true,
-        detail: 'disabled by BOT_ROOM_DISABLE_REDIS=true'
+        detail: 'disabled by AGENT_CO_DISABLE_REDIS=true'
       });
       deps.dependencyLogs.append({
         timestamp: Date.now(),
         level: 'info',
         dependency: 'redis',
-        message: 'disabled by BOT_ROOM_DISABLE_REDIS=true'
+        message: 'disabled by AGENT_CO_DISABLE_REDIS=true'
       });
       return result;
     }

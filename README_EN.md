@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="public/logo.svg" alt="Bot Room" width="480" />
+  <img src="public/logo.svg" alt="agent-co" width="480" />
 </p>
 
-<h1 align="center">Bot Room</h1>
+<h1 align="center">agent-co</h1>
 
 <p align="center">
   <b>English</b> | <a href="README.md">中文</a>
@@ -92,9 +92,9 @@ Default addresses:
 
 ### Default Development Behavior
 
-- Auth is enabled by default unless `BOT_ROOM_AUTH_ENABLED=false`.
+- Auth is enabled by default unless `AGENT_CO_AUTH_ENABLED=false`.
 - The chat service expects the auth/admin service at `AUTH_ADMIN_BASE_URL`, defaulting to `http://127.0.0.1:3003`.
-- Redis-backed persistence is optional for local development. Set `BOT_ROOM_REDIS_REQUIRED=false` to continue without Redis, or `BOT_ROOM_DISABLE_REDIS=true` to fully disable it.
+- Redis-backed persistence is optional for local development. Set `AGENT_CO_REDIS_REQUIRED=false` to continue without Redis, or `AGENT_CO_DISABLE_REDIS=true` to fully disable it.
 - If the auth data file does not exist, the admin service will create a default user on first startup.
 
 Default dev credentials:
@@ -132,7 +132,7 @@ src/
   rich-extract.ts          Extract cc_rich blocks from model output
   rich-digest.ts           Rich block digest helpers for prompts
   rate-limiter.ts          In-memory rate limiting
-  bot-room-mcp-server.ts   MCP callback server
+  agent-co-mcp-server.ts   MCP callback server
   professional-agent-prompts.ts   Professional agent prompt builder
   professional-agent-prompts.json 7 professional role prompt templates
   types.ts                 Shared TypeScript type definitions
@@ -182,14 +182,14 @@ dist/                      Compiled build output
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3002` | Chat service port |
-| `BOT_ROOM_AUTH_ENABLED` | `true` | Enable/disable authentication |
+| `AGENT_CO_AUTH_ENABLED` | `true` | Enable/disable authentication |
 | `AUTH_ADMIN_BASE_URL` | `http://127.0.0.1:3003` | Auth admin service URL |
 | `AGENT_DATA_FILE` | `data/agents.json` | Agent config file path |
-| `BOT_ROOM_VERBOSE_LOG_DIR` | `logs/ai-cli-verbose` | Verbose log directory |
-| `BOT_ROOM_REDIS_REQUIRED` | `true` | Whether Redis is required |
-| `BOT_ROOM_DISABLE_REDIS` | `false` | Fully disable Redis persistence |
-| `BOT_ROOM_AGENT_CHAIN_MAX_HOPS` | `4` | Default max chain hops per session |
-| `BOT_ROOM_CALLBACK_TOKEN` | `bot-room-callback-token` | Token for callback auth |
+| `AGENT_CO_VERBOSE_LOG_DIR` | `logs/ai-cli-verbose` | Verbose log directory |
+| `AGENT_CO_REDIS_REQUIRED` | `true` | Whether Redis is required |
+| `AGENT_CO_DISABLE_REDIS` | `false` | Fully disable Redis persistence |
+| `AGENT_CO_AGENT_CHAIN_MAX_HOPS` | `4` | Default max chain hops per session |
+| `AGENT_CO_CALLBACK_TOKEN` | `agent-co-callback-token` | Token for callback auth |
 
 #### Auth/Admin Service
 
@@ -201,15 +201,15 @@ dist/                      Compiled build output
 | `AGENT_DATA_FILE` | `data/agents.json` | Agent config file path |
 | `MODEL_CONNECTION_DATA_FILE` | `data/api-connections.json` | API connections file path |
 | `GROUP_DATA_FILE` | `data/groups.json` | Agent groups file path |
-| `BOT_ROOM_DEFAULT_USER` | `admin` | Default username |
-| `BOT_ROOM_DEFAULT_PASSWORD` | `admin123!` | Default password fallback (override in production) |
+| `AGENT_CO_DEFAULT_USER` | `admin` | Default username |
+| `AGENT_CO_DEFAULT_PASSWORD` | `admin123!` | Default password fallback (override in production) |
 
 #### Redis
 
-The chat service connects to `redis://127.0.0.1:6379` by default and reads runtime config from `bot-room:config`.
+The chat service connects to `redis://127.0.0.1:6379` by default and reads runtime config from `agent-co:config`.
 
 ```bash
-redis-cli HSET bot-room:config chat_sessions_key bot-room:chat:sessions:v1
+redis-cli HSET agent-co:config chat_sessions_key agent-co:chat:sessions:v1
 ```
 
 ### Chat Service API
@@ -419,16 +419,16 @@ Sessions can operate in two discussion modes:
 
 #### MCP Callback Server
 
-The built-in MCP server (`src/bot-room-mcp-server.ts`) provides tools for CLI agents:
+The built-in MCP server (`src/agent-co-mcp-server.ts`) provides tools for CLI agents:
 
-- `bot_room_post_message` — Post a message to the chat room
-- `bot_room_thread_context` — Read current session history
+- `agent_co_post_message` — Post a message to the chat room
+- `agent_co_get_context` — Read current session history
 
 Environment variables for agent context:
-- `BOT_ROOM_API_URL` — Chat service URL
-- `BOT_ROOM_SESSION_ID` — Current session ID
-- `BOT_ROOM_AGENT_NAME` — Agent name
-- `BOT_ROOM_CALLBACK_TOKEN` — Auth token
+- `AGENT_CO_API_URL` — Chat service URL
+- `AGENT_CO_SESSION_ID` — Current session ID
+- `AGENT_CO_AGENT_NAME` — Agent name
+- `AGENT_CO_CALLBACK_TOKEN` — Auth token
 
 ### Rich Text
 
@@ -508,12 +508,12 @@ AI responses support `cc_rich` code blocks:
 #### Production Checks
 
 - `AUTH_ADMIN_TOKEN` must be >= 32 characters
-- `BOT_ROOM_DEFAULT_PASSWORD` must be >= 12 characters with uppercase, lowercase, digits, and special characters
+- `AGENT_CO_DEFAULT_PASSWORD` must be >= 12 characters with uppercase, lowercase, digits, and special characters
 
 #### Callback Auth
 
-- Callback endpoints require `x-bot-room-callback-token` or `Authorization: Bearer` header
-- Token configurable via `BOT_ROOM_CALLBACK_TOKEN`
+- Callback endpoints require `x-agent-co-callback-token` or `Authorization: Bearer` header
+- Token configurable via `AGENT_CO_CALLBACK_TOKEN`
 
 ### iOS / PWA
 
@@ -523,7 +523,7 @@ AI responses support `cc_rich` code blocks:
 
 ### Verbose Logging
 
-CLI agent verbose output is recorded under `BOT_ROOM_VERBOSE_LOG_DIR` (default: `logs/ai-cli-verbose`):
+CLI agent verbose output is recorded under `AGENT_CO_VERBOSE_LOG_DIR` (default: `logs/ai-cli-verbose`):
 
 - File naming: `{timestamp}-{cliName}-{agentName}.log`
 - Includes stdout, stderr, and meta information

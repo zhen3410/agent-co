@@ -20,16 +20,16 @@ function readDurationFromEnv(name: string, fallbackMs: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackMs;
 }
 
-const CLI_TIMEOUT_MS = readDurationFromEnv('BOT_ROOM_CLI_TIMEOUT_MS', 30 * 60 * 1000);
-const CLI_HEARTBEAT_TIMEOUT_MS = readDurationFromEnv('BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS', 3 * 60 * 1000);
-const CLI_KILL_GRACE_MS = readDurationFromEnv('BOT_ROOM_CLI_KILL_GRACE_MS', 5000);
+const CLI_TIMEOUT_MS = readDurationFromEnv('AGENT_CO_CLI_TIMEOUT_MS', 30 * 60 * 1000);
+const CLI_HEARTBEAT_TIMEOUT_MS = readDurationFromEnv('AGENT_CO_CLI_HEARTBEAT_TIMEOUT_MS', 3 * 60 * 1000);
+const CLI_KILL_GRACE_MS = readDurationFromEnv('AGENT_CO_CLI_KILL_GRACE_MS', 5000);
 const MAX_LINE_LENGTH = 10 * 1024 * 1024;
-const VERBOSE_LOG_DIR = process.env.BOT_ROOM_VERBOSE_LOG_DIR || 'logs/ai-cli-verbose';
+const VERBOSE_LOG_DIR = process.env.AGENT_CO_VERBOSE_LOG_DIR || 'logs/ai-cli-verbose';
 
 type CliKind = 'claude' | 'codex';
 type McpConfig = { mcpConfig: string; allowedTools: string };
-const CODEX_MCP_SERVER_NAME = 'botroom';
-const CLAUDE_MCP_SERVER_NAME = 'bot-room';
+const CODEX_MCP_SERVER_NAME = 'agentco';
+const CLAUDE_MCP_SERVER_NAME = 'agent-co';
 
 function createVerboseLogger(agentName: string, cli: CliKind): (channel: 'stdout' | 'stderr' | 'meta', content: string) => void {
   mkdirSync(VERBOSE_LOG_DIR, { recursive: true });
@@ -146,8 +146,8 @@ function buildPrompt(userMessage: string, agent: AIAgent, history: Message[], in
   }
 
   if (!includeHistory) {
-    parts.push('你当前只收到了用户最新一条消息。请先调用 bot_room_get_context 获取完整会话历史，再继续处理任务。');
-    parts.push('当你需要向聊天室展示内容时，调用 bot_room_post_message 发送最终可见消息。');
+    parts.push('你当前只收到了用户最新一条消息。请先调用 agent_co_get_context 获取完整会话历史，再继续处理任务。');
+    parts.push('当你需要向聊天室展示内容时，调用 agent_co_post_message 发送最终可见消息。');
     parts.push('不要把思考过程直接输出给用户。');
   }
 
@@ -167,15 +167,15 @@ function resolveCli(agent: AIAgent): CliKind {
 
 
 function buildMcpConfig(extraEnv: Record<string, string>): McpConfig | null {
-  const apiUrl = extraEnv.BOT_ROOM_API_URL;
-  const sessionId = extraEnv.BOT_ROOM_SESSION_ID;
+  const apiUrl = extraEnv.AGENT_CO_API_URL;
+  const sessionId = extraEnv.AGENT_CO_SESSION_ID;
   if (!apiUrl || !sessionId) {
     return null;
   }
 
-  const callbackToken = extraEnv.BOT_ROOM_CALLBACK_TOKEN || process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token';
-  const agentName = extraEnv.BOT_ROOM_AGENT_NAME || process.env.BOT_ROOM_AGENT_NAME || 'AI';
-  const mcpServerScript = join(process.cwd(), 'dist', 'bot-room-mcp-server.js');
+  const callbackToken = extraEnv.AGENT_CO_CALLBACK_TOKEN || process.env.AGENT_CO_CALLBACK_TOKEN || 'agent-co-callback-token';
+  const agentName = extraEnv.AGENT_CO_AGENT_NAME || process.env.AGENT_CO_AGENT_NAME || 'AI';
+  const mcpServerScript = join(process.cwd(), 'dist', 'agent-co-mcp-server.js');
 
   const mcpConfig = JSON.stringify({
     mcpServers: {
@@ -183,10 +183,10 @@ function buildMcpConfig(extraEnv: Record<string, string>): McpConfig | null {
         command: 'node',
         args: [mcpServerScript],
         env: {
-          BOT_ROOM_API_URL: apiUrl,
-          BOT_ROOM_SESSION_ID: sessionId,
-          BOT_ROOM_CALLBACK_TOKEN: callbackToken,
-          BOT_ROOM_AGENT_NAME: agentName
+          AGENT_CO_API_URL: apiUrl,
+          AGENT_CO_SESSION_ID: sessionId,
+          AGENT_CO_CALLBACK_TOKEN: callbackToken,
+          AGENT_CO_AGENT_NAME: agentName
         }
       }
     }
@@ -194,7 +194,7 @@ function buildMcpConfig(extraEnv: Record<string, string>): McpConfig | null {
 
   return {
     mcpConfig,
-    allowedTools: `mcp__${CLAUDE_MCP_SERVER_NAME}__bot_room_post_message,mcp__${CLAUDE_MCP_SERVER_NAME}__bot_room_get_context`
+    allowedTools: `mcp__${CLAUDE_MCP_SERVER_NAME}__agent_co_post_message,mcp__${CLAUDE_MCP_SERVER_NAME}__agent_co_get_context`
   };
 }
 
@@ -203,10 +203,10 @@ function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, 
   const mcp = buildMcpConfig(extraEnv);
   const codexMcpKey = `mcp_servers.${CODEX_MCP_SERVER_NAME}`;
   const codexMcpEnv = {
-    BOT_ROOM_API_URL: extraEnv.BOT_ROOM_API_URL,
-    BOT_ROOM_SESSION_ID: extraEnv.BOT_ROOM_SESSION_ID,
-    BOT_ROOM_CALLBACK_TOKEN: extraEnv.BOT_ROOM_CALLBACK_TOKEN || process.env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token',
-    BOT_ROOM_AGENT_NAME: extraEnv.BOT_ROOM_AGENT_NAME || process.env.BOT_ROOM_AGENT_NAME || 'AI'
+    AGENT_CO_API_URL: extraEnv.AGENT_CO_API_URL,
+    AGENT_CO_SESSION_ID: extraEnv.AGENT_CO_SESSION_ID,
+    AGENT_CO_CALLBACK_TOKEN: extraEnv.AGENT_CO_CALLBACK_TOKEN || process.env.AGENT_CO_CALLBACK_TOKEN || 'agent-co-callback-token',
+    AGENT_CO_AGENT_NAME: extraEnv.AGENT_CO_AGENT_NAME || process.env.AGENT_CO_AGENT_NAME || 'AI'
   };
   const codexMcpEnvToml = `{ ${Object.entries(codexMcpEnv)
     .map(([key, value]) => `${key}=${JSON.stringify(value ?? '')}`)
@@ -236,13 +236,13 @@ function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, 
       '-c',
       `${codexMcpKey}.command="node"`,
       '-c',
-      `${codexMcpKey}.args=${JSON.stringify([join(process.cwd(), 'dist', 'bot-room-mcp-server.js')])}`,
+      `${codexMcpKey}.args=${JSON.stringify([join(process.cwd(), 'dist', 'agent-co-mcp-server.js')])}`,
       '-c',
       `${codexMcpKey}.env=${codexMcpEnvToml}`,
       '-c',
       `tools.allowed=${JSON.stringify([
-        `mcp__${CODEX_MCP_SERVER_NAME}__bot_room_post_message`,
-        `mcp__${CODEX_MCP_SERVER_NAME}__bot_room_get_context`
+        `mcp__${CODEX_MCP_SERVER_NAME}__agent_co_post_message`,
+        `mcp__${CODEX_MCP_SERVER_NAME}__agent_co_get_context`
       ])}`
     );
   }
@@ -258,7 +258,7 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
     const cli = resolveCli(agent);
     const prompt = buildPrompt(userMessage, agent, history, options.includeHistory !== false)
       + (cli === 'codex' && options.includeHistory === false
-        ? `\n在 Codex 环境中，这两个工具通常显示为 functions.mcp__${CODEX_MCP_SERVER_NAME}__bot_room_get_context 和 functions.mcp__${CODEX_MCP_SERVER_NAME}__bot_room_post_message。`
+        ? `\n在 Codex 环境中，这两个工具通常显示为 functions.mcp__${CODEX_MCP_SERVER_NAME}__agent_co_get_context 和 functions.mcp__${CODEX_MCP_SERVER_NAME}__agent_co_post_message。`
         : '');
     console.log(`\n[${cli.toUpperCase()} CLI] Agent: ${agent.name}, Prompt length: ${prompt.length}`);
     const logVerbose = createVerboseLogger(agent.name, cli);

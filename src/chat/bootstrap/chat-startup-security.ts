@@ -31,7 +31,7 @@ export function analyzeChatStartupSecurity(config: ChatServerSecurityConfig): Ch
   const defaultPassword = config.defaultPassword;
   if (isProduction && defaultPassword) {
     if (defaultPassword.length < 12) {
-      errors.push('❌ 生产环境 BOT_ROOM_DEFAULT_PASSWORD 长度不能少于 12 字符');
+      errors.push('❌ 生产环境 AGENT_CO_DEFAULT_PASSWORD 长度不能少于 12 字符');
       return { errors, warnings };
     }
     const hasLower = /[a-z]/.test(defaultPassword);
@@ -39,7 +39,7 @@ export function analyzeChatStartupSecurity(config: ChatServerSecurityConfig): Ch
     const hasNumber = /[0-9]/.test(defaultPassword);
     const hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(defaultPassword);
     if (!(hasLower && hasUpper && hasNumber && hasSpecial)) {
-      errors.push('❌ 生产环境 BOT_ROOM_DEFAULT_PASSWORD 必须包含大小写字母、数字和特殊字符');
+      errors.push('❌ 生产环境 AGENT_CO_DEFAULT_PASSWORD 必须包含大小写字母、数字和特殊字符');
       return { errors, warnings };
     }
   }

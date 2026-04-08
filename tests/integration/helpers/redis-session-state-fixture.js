@@ -3,9 +3,9 @@ const { openSync, closeSync, unlinkSync, writeFileSync, readFileSync } = require
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 
-const REDIS_CONFIG_KEY = 'bot-room:config';
-const TEST_KEY_PREFIX = 'bot-room:test:session-chain-settings';
-const LOCK_FILE = join(tmpdir(), 'bot-room-session-chain-settings-lock');
+const REDIS_CONFIG_KEY = 'agent-co:config';
+const TEST_KEY_PREFIX = 'agent-co:test:session-chain-settings';
+const LOCK_FILE = join(tmpdir(), 'agent-co-session-chain-settings-lock');
 const LOCK_WAIT_MS = 100;
 const LOCK_TIMEOUT_MS = 10000;
 

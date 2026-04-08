@@ -33,7 +33,7 @@ if ! redis-cli ping | grep -q PONG; then
 fi
 
 # 初始化运行配置（可按需调整）
-redis-cli HSET bot-room:config chat_sessions_key bot-room:chat:sessions:v1 >/dev/null
+redis-cli HSET agent-co:config chat_sessions_key agent-co:chat:sessions:v1 >/dev/null
 
 echo "[4/6] 安装依赖并构建..."
 cd "$APP_DIR"
@@ -45,7 +45,7 @@ bash "$APP_DIR/scripts/install-systemd.sh"
 
 echo "[6/6] 完成，服务状态："
 systemctl --no-pager --full status redis-server || true
-systemctl --no-pager --full status bot-room-auth-admin.service || true
-systemctl --no-pager --full status bot-room-chat.service || true
+systemctl --no-pager --full status agent-co-auth-admin.service || true
+systemctl --no-pager --full status agent-co-chat.service || true
 
 echo "一键部署完成。"

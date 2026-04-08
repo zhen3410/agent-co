@@ -1,6 +1,6 @@
 {
-  "name": "Bot Room 多 AI 聊天室",
-  "short_name": "Bot Room",
+  "name": "agent-co 多 AI 聊天室",
+  "short_name": "agent-co",
   "description": "支持多智能体会话的聊天室，可作为 iOS PWA 安装到主屏幕。",
   "start_url": "/",
   "scope": "/",

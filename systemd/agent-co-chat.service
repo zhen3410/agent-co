@@ -1,7 +1,7 @@
 [Unit]
-Description=Bot Room Chat Service
-After=network.target redis-server.service bot-room-auth-admin.service
-Requires=redis-server.service bot-room-auth-admin.service
+Description=agent-co Chat Service
+After=network.target redis-server.service agent-co-auth-admin.service
+Requires=redis-server.service agent-co-auth-admin.service
 
 [Service]
 Type=simple

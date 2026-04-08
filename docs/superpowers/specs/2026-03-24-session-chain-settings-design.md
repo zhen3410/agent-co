@@ -27,7 +27,7 @@
 
 当前系统中：
 
-- `src/server.ts` 通过全局常量 `AGENT_CHAIN_MAX_HOPS` 控制链式传播总跳数，默认来自 `BOT_ROOM_AGENT_CHAIN_MAX_HOPS || 4`
+- `src/server.ts` 通过全局常量 `AGENT_CHAIN_MAX_HOPS` 控制链式传播总跳数，默认来自 `AGENT_CO_AGENT_CHAIN_MAX_HOPS || 4`
 - `src/server.ts` 通过全局常量 `AGENT_CHAIN_MAX_CALLS_PER_TURN` 限制同一 agent 在一轮中最多调用 2 次
 - `UserChatSession` 已经支持 session 级状态（如 `enabledAgents`、`agentWorkdirs`）
 - `public/index.html` 的控制栏已有“会话”面板与 session 管理区，但尚无 session 级链路配置入口
@@ -126,8 +126,8 @@
 
 全局环境变量保留，但职责变化为：
 
-- `BOT_ROOM_AGENT_CHAIN_MAX_HOPS`：仅用于新 session 默认值与旧数据兼容补值
-- `BOT_ROOM_AGENT_CHAIN_MAX_CALLS_PER_TURN`：不再作为默认运行限制，保留兼容常量或迁移期辅助逻辑即可；最终运行时默认行为应是 session 级 `null = 不限制`
+- `AGENT_CO_AGENT_CHAIN_MAX_HOPS`：仅用于新 session 默认值与旧数据兼容补值
+- `AGENT_CO_AGENT_CHAIN_MAX_CALLS_PER_TURN`：不再作为默认运行限制，保留兼容常量或迁移期辅助逻辑即可；最终运行时默认行为应是 session 级 `null = 不限制`
 
 生效时机：
 

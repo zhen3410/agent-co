@@ -288,7 +288,7 @@ Move these responsibilities out of `src/server.ts`:
 
 Keep behavior unchanged:
 - same default session naming
-- same Redis fallback behavior when `BOT_ROOM_REDIS_REQUIRED=false`
+- same Redis fallback behavior when `AGENT_CO_REDIS_REQUIRED=false`
 - same shutdown persistence flow
 
 - [ ] **Step 2: Introduce application services around use cases**

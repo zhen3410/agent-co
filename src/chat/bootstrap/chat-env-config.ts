@@ -59,17 +59,17 @@ export function createChatEnvConfig(options: CreateChatEnvConfigOptions): ChatEn
   const { cwd, env, serverDirname } = options;
   const agentDataFile = env.AGENT_DATA_FILE || path.join(cwd, 'data', 'agents.json');
   const groupDataFile = env.GROUP_DATA_FILE || path.join(path.dirname(agentDataFile), 'groups.json');
-  const defaultChatSessionsKey = 'bot-room:chat:sessions:v1';
-  const envChatSessionsKey = (env.BOT_ROOM_CHAT_SESSIONS_KEY || '').trim();
+  const defaultChatSessionsKey = 'agent-co:chat:sessions:v1';
+  const envChatSessionsKey = (env.AGENT_CO_CHAT_SESSIONS_KEY || '').trim();
 
   return {
     port: Number(env.PORT || 3002),
     defaultUserName: '用户',
     auth: {
-      enabled: env.BOT_ROOM_AUTH_ENABLED !== 'false',
+      enabled: env.AGENT_CO_AUTH_ENABLED !== 'false',
       adminBaseUrl: env.AUTH_ADMIN_BASE_URL || 'http://127.0.0.1:3003',
-      sessionCookieName: 'bot_room_session',
-      visitorCookieName: 'bot_room_visitor',
+      sessionCookieName: 'agent_co_session',
+      visitorCookieName: 'agent_co_visitor',
       sessionTtlMs: 1000 * 60 * 60 * 24 * 7,
       loginRateLimitMax: 5
     },
@@ -78,22 +78,22 @@ export function createChatEnvConfig(options: CreateChatEnvConfigOptions): ChatEn
       groupDataFile
     },
     logging: {
-      verboseLogDir: env.BOT_ROOM_VERBOSE_LOG_DIR || path.join(cwd, 'logs', 'ai-cli-verbose'),
+      verboseLogDir: env.AGENT_CO_VERBOSE_LOG_DIR || path.join(cwd, 'logs', 'ai-cli-verbose'),
       publicDir: path.join(serverDirname, '..', 'public')
     },
     redis: {
       url: 'redis://127.0.0.1:6379',
-      configKey: 'bot-room:config',
+      configKey: 'agent-co:config',
       defaultChatSessionsKey,
       persistDebounceMs: 500,
-      required: env.BOT_ROOM_REDIS_REQUIRED !== 'false',
-      disabled: env.BOT_ROOM_DISABLE_REDIS === 'true',
+      required: env.AGENT_CO_REDIS_REQUIRED !== 'false',
+      disabled: env.AGENT_CO_DISABLE_REDIS === 'true',
       envChatSessionsKey,
       chatSessionsKey: envChatSessionsKey || defaultChatSessionsKey
     },
     callback: {
-      authToken: env.BOT_ROOM_CALLBACK_TOKEN || 'bot-room-callback-token',
-      authHeader: 'x-bot-room-callback-token'
+      authToken: env.AGENT_CO_CALLBACK_TOKEN || 'agent-co-callback-token',
+      authHeader: 'x-agent-co-callback-token'
     },
     rateLimit: {
       maxRequests: 100
@@ -101,12 +101,12 @@ export function createChatEnvConfig(options: CreateChatEnvConfigOptions): ChatEn
     chatDefaults: {
       sessionId: 'default',
       sessionName: '默认会话',
-      agentChainMaxHops: normalizePositiveSessionSetting(env.BOT_ROOM_AGENT_CHAIN_MAX_HOPS, 4, false) as number
+      agentChainMaxHops: normalizePositiveSessionSetting(env.AGENT_CO_AGENT_CHAIN_MAX_HOPS, 4, false) as number
     },
     security: {
       nodeEnv: env.NODE_ENV,
       authAdminToken: env.AUTH_ADMIN_TOKEN,
-      defaultPassword: env.BOT_ROOM_DEFAULT_PASSWORD
+      defaultPassword: env.AGENT_CO_DEFAULT_PASSWORD
     }
   };
 }

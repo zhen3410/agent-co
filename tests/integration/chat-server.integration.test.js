@@ -192,7 +192,7 @@ async function ensureRedisTestServer() {
     }
   } catch {}
 
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-redis-it-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-redis-it-'));
   const child = spawn('redis-server', [
     '--port', '6379',
     '--bind', '127.0.0.1',
@@ -236,14 +236,14 @@ async function ensureRedisTestServer() {
 
 async function createRedisBackedChatServerFixture(options = {}) {
   const redisHandle = await ensureRedisTestServer();
-  const redisKey = `bot-room:chat:sessions:test:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+  const redisKey = `agent-co:chat:sessions:test:${Date.now()}:${Math.random().toString(16).slice(2)}`;
   if (options.redisState) {
     redisCli(['SET', redisKey, JSON.stringify(options.redisState)]);
   } else {
     redisCli(['DEL', redisKey]);
   }
 
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-redis-it-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-redis-it-'));
   const agentDataFile = join(tempDir, 'agents.json');
   const authFixture = await createAuthAdminFixture();
   const port = getRandomPort();
@@ -253,16 +253,16 @@ async function createRedisBackedChatServerFixture(options = {}) {
       ...process.env,
       NODE_ENV: 'test',
         PORT: String(port),
-        BOT_ROOM_AUTH_ENABLED: 'true',
-        BOT_ROOM_REDIS_REQUIRED: 'false',
-        BOT_ROOM_DISABLE_REDIS: 'false',
-        BOT_ROOM_CHAT_SESSIONS_KEY: redisKey,
+        AGENT_CO_AUTH_ENABLED: 'true',
+        AGENT_CO_REDIS_REQUIRED: 'false',
+        AGENT_CO_DISABLE_REDIS: 'false',
+        AGENT_CO_CHAT_SESSIONS_KEY: redisKey,
         AGENT_DATA_FILE: agentDataFile,
         AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
         AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
-      BOT_ROOM_CLI_TIMEOUT_MS: '15000',
-      BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
-      BOT_ROOM_CLI_KILL_GRACE_MS: '200',
+      AGENT_CO_CLI_TIMEOUT_MS: '15000',
+      AGENT_CO_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
+      AGENT_CO_CLI_KILL_GRACE_MS: '200',
       ...(options.env || {})
     },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -355,10 +355,10 @@ function createExplicitThenStopClaudeScript(tempDir) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
-const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
-const apiUrl = process.env.BOT_ROOM_API_URL || '';
-const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
 
 async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
@@ -367,9 +367,9 @@ async function post(content, invokeAgents) {
     headers: {
       Authorization: \`Bearer \${token}\`,
       'Content-Type': 'application/json',
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     },
     body: JSON.stringify({ content, invokeAgents })
   });
@@ -400,10 +400,10 @@ function createSingleReplyClaudeScript(tempDir) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
-const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
-const apiUrl = process.env.BOT_ROOM_API_URL || '';
-const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
 
 async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
@@ -412,9 +412,9 @@ async function post(content, invokeAgents) {
     headers: {
       Authorization: \`Bearer \${token}\`,
       'Content-Type': 'application/json',
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     },
     body: JSON.stringify({ content, invokeAgents })
   });
@@ -442,11 +442,11 @@ function createManualSummaryClaudeScript(tempDir, options = {}) {
   const summaryText = options.summaryText || 'Alice 总结：当前讨论已暂停，结论如下。';
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
-const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
-const apiUrl = process.env.BOT_ROOM_API_URL || '';
-const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
-const dispatchKind = process.env.BOT_ROOM_DISPATCH_KIND || 'initial';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
+const dispatchKind = process.env.AGENT_CO_DISPATCH_KIND || 'initial';
 
 async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
@@ -455,9 +455,9 @@ async function post(content, invokeAgents) {
     headers: {
       Authorization: \`Bearer \${token}\`,
       'Content-Type': 'application/json',
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     },
     body: JSON.stringify({ content, invokeAgents })
   });
@@ -492,10 +492,10 @@ function createMultiVisiblePartialChainClaudeScript(tempDir) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
-const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
-const apiUrl = process.env.BOT_ROOM_API_URL || '';
-const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
 
 async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
@@ -504,9 +504,9 @@ async function post(content, invokeAgents) {
     headers: {
       Authorization: \`Bearer \${token}\`,
       'Content-Type': 'application/json',
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     },
     body: JSON.stringify({ content, invokeAgents })
   });
@@ -539,10 +539,10 @@ function createCyclingClaudeScript(tempDir) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
-const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
-const apiUrl = process.env.BOT_ROOM_API_URL || '';
-const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
 
 async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
@@ -551,9 +551,9 @@ async function post(content, invokeAgents) {
     headers: {
       Authorization: \`Bearer \${token}\`,
       'Content-Type': 'application/json',
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     },
     body: JSON.stringify({ content, invokeAgents })
   });
@@ -584,7 +584,7 @@ function createSingleAtContinuationClaudeScript(tempDir) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
 if (agentName === 'Alice') {
   process.stdout.write(JSON.stringify({ output_text: '@Bob 请从增长视角继续补充。' }) + '\\n');
 } else if (agentName === 'Bob') {
@@ -601,7 +601,7 @@ function createSingleAtReferenceOnlyClaudeScript(tempDir) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
 if (agentName === 'Alice') {
   process.stdout.write(JSON.stringify({ output_text: '我同意 @Bob 刚才提到的增长判断。' }) + '\\n');
 } else if (agentName === 'Bob') {
@@ -618,7 +618,7 @@ function createAllMentionClaudeScript(tempDir) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
 if (agentName === 'Alice') {
   process.stdout.write(JSON.stringify({ output_text: '我建议 @所有人 稍后一起看下这个方向。' }) + '\\n');
 } else {
@@ -630,7 +630,7 @@ EOF
 }
 
 test('统一 agent 调用入口会通过 CLI provider 返回结果', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-cli-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-invoker-cli-'));
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 printf '%s\n' '{"output_text":"CLI provider reply"}'
@@ -678,7 +678,7 @@ async function waitForCondition(check, timeoutMs = 3000, intervalMs = 80) {
 }
 
 test('统一 agent 调用入口在 api 模式下会调用 OpenAI-compatible provider 并解析结果', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-api-success-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-invoker-api-success-'));
   const stub = await createOpenAICompatibleStub((req, res) => {
     assert.equal(req.method, 'POST');
     assert.equal(req.url, '/v1/chat/completions');
@@ -780,7 +780,7 @@ test('统一 agent 调用入口在 api 模式下会调用 OpenAI-compatible prov
 });
 
 test('统一 agent 调用入口在 api 模式下支持流式增量，并忽略 reasoning_content', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-api-stream-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-invoker-api-stream-'));
   const stub = await createOpenAICompatibleStub((req, res) => {
     assert.equal(req.method, 'POST');
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -844,7 +844,7 @@ test('统一 agent 调用入口在 api 模式下支持流式增量，并忽略 r
 });
 
 test('统一 agent 调用入口在 api 模式下构造 history 时不会重复附加当前用户消息，且会过滤失败回退文本', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-api-history-filter-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-invoker-api-history-filter-'));
   const stub = await createOpenAICompatibleStub((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
@@ -934,7 +934,7 @@ test('统一 agent 调用入口在 api 模式下构造 history 时不会重复�
 
 test('统一 agent 调用入口在 api 模式下会对 401/403 返回明确错误', async () => {
   for (const statusCode of [401, 403]) {
-    const tempDir = mkdtempSync(join(tmpdir(), `bot-room-agent-invoker-api-auth-${statusCode}-`));
+    const tempDir = mkdtempSync(join(tmpdir(), `agent-co-agent-invoker-api-auth-${statusCode}-`));
     const stub = await createOpenAICompatibleStub((req, res) => {
       res.writeHead(statusCode, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: { message: `auth failed ${statusCode}` } }));
@@ -980,7 +980,7 @@ test('统一 agent 调用入口在 api 模式下会对 401/403 返回明确错�
 
 test('统一 agent 调用入口在 api 模式下会对 429/500 返回明确错误', async () => {
   for (const statusCode of [429, 500]) {
-    const tempDir = mkdtempSync(join(tmpdir(), `bot-room-agent-invoker-api-upstream-${statusCode}-`));
+    const tempDir = mkdtempSync(join(tmpdir(), `agent-co-agent-invoker-api-upstream-${statusCode}-`));
     const stub = await createOpenAICompatibleStub((req, res) => {
       res.writeHead(statusCode, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: { message: `upstream failed ${statusCode}` } }));
@@ -1025,7 +1025,7 @@ test('统一 agent 调用入口在 api 模式下会对 429/500 返回明确错�
 });
 
 test('统一 agent 调用入口在 api 模式下会对不兼容响应返回可诊断错误', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-api-invalid-body-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-invoker-api-invalid-body-'));
   const stub = await createOpenAICompatibleStub((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ choices: [{ message: { role: 'assistant' } }] }));
@@ -1069,7 +1069,7 @@ test('统一 agent 调用入口在 api 模式下会对不兼容响应返回可�
 });
 
 test('统一 agent 调用入口在 api 模式下会对空 content 且 length 截断返回 apiMaxTokens 过低提示', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-api-empty-content-length-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-invoker-api-empty-content-length-'));
   const stub = await createOpenAICompatibleStub((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
@@ -1123,7 +1123,7 @@ test('统一 agent 调用入口在 api 模式下会对空 content 且 length 截
 });
 
 test('统一 agent 调用入口在 api 模式下会对缺少连接配置返回明确错误', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-api-missing-connection-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-invoker-api-missing-connection-'));
   const connectionFile = writeApiConnectionStore(tempDir, []);
   const originalConnectionFile = process.env.MODEL_CONNECTION_DATA_FILE;
 
@@ -1154,7 +1154,7 @@ test('统一 agent 调用入口在 api 模式下会对缺少连接配置返回�
 });
 
 test('统一 agent 调用入口会优先按 cliName 路由到 Codex CLI', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-invoker-codex-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-invoker-codex-'));
   const fakeClaude = join(tempDir, 'claude');
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
@@ -1194,7 +1194,7 @@ printf '%s\n' '{"output_text":"CODEX provider reply"}'
 });
 
 test('聊天主链在 API 模式下会通过统一 invoker 调用 OpenAI-compatible provider', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-api-agent-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-api-agent-'));
   const connectionStub = await createOpenAICompatibleStub((req, res) => {
     assert.equal(req.method, 'POST');
     assert.equal(req.url, '/v1/chat/completions');
@@ -1247,7 +1247,7 @@ test('聊天主链在 API 模式下会通过统一 invoker 调用 OpenAI-compati
     env: {
       AGENT_DATA_FILE: agentDataFile,
       MODEL_CONNECTION_DATA_FILE: connectionFile,
-      BOT_ROOM_VERBOSE_LOG_DIR: join(tempDir, 'verbose-logs')
+      AGENT_CO_VERBOSE_LOG_DIR: join(tempDir, 'verbose-logs')
     }
   });
 
@@ -1299,7 +1299,7 @@ test('依赖状态接口继续返回可解析的 JSON 结构', async () => {
 });
 
 test('chat-stream 在 API 模式下会先推送 agent_delta，再推送最终 agent_message', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-stream-api-agent-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stream-api-agent-'));
   const connectionStub = await createOpenAICompatibleStub((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     res.write('data: {"choices":[{"index":0,"delta":{"content":"流式"}}]}\n\n');
@@ -1342,7 +1342,7 @@ test('chat-stream 在 API 模式下会先推送 agent_delta，再推送最终 ag
     env: {
       AGENT_DATA_FILE: agentDataFile,
       MODEL_CONNECTION_DATA_FILE: connectionFile,
-      BOT_ROOM_VERBOSE_LOG_DIR: join(tempDir, 'verbose-logs')
+      AGENT_CO_VERBOSE_LOG_DIR: join(tempDir, 'verbose-logs')
     }
   });
 
@@ -1462,14 +1462,14 @@ test('登录后支持多智能体协作回复', async () => {
 });
 
 test('智能体 callback 消息中的 invokeAgents 参数会触发链式调用', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-claude-chain-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-claude-chain-'));
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
-const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
-const apiUrl = process.env.BOT_ROOM_API_URL || '';
-const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
 
 async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
@@ -1478,9 +1478,9 @@ async function post(content, invokeAgents) {
     headers: {
       Authorization: \`Bearer \${token}\`,
       'Content-Type': 'application/json',
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     },
     body: JSON.stringify({ content, invokeAgents })
   });
@@ -1537,14 +1537,14 @@ EOF
 });
 
 test('流式连接中断后不会继续执行后续被 @ 的智能体链路', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-stream-abort-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-stream-abort-'));
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
-const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
-const apiUrl = process.env.BOT_ROOM_API_URL || '';
-const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
 
 async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
@@ -1553,9 +1553,9 @@ async function post(content, invokeAgents) {
     headers: {
       Authorization: \`Bearer \${token}\`,
       'Content-Type': 'application/json',
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     },
     body: JSON.stringify({ content, invokeAgents })
   });
@@ -1652,7 +1652,7 @@ EOF
 });
 
 test('支持带中文标点的 @Codex架构师 提及', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-mention-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-mention-'));
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
 printf '{"output_text":"中文标点 mention ok"}\n'
@@ -1688,11 +1688,11 @@ printf '{"output_text":"中文标点 mention ok"}\n'
 });
 
 test('支持全角＠all 群聊提及并触发所有智能体回复', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-fullwidth-all-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-fullwidth-all-'));
   const fakeClaude = join(tempDir, 'claude');
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
-agent_name="\${BOT_ROOM_AGENT_NAME:-Claude}"
+agent_name="\${AGENT_CO_AGENT_NAME:-Claude}"
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"'"$agent_name"' ok"}]}}\n'
 `, 'utf8');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
@@ -1733,15 +1733,15 @@ printf '{"output_text":"Codex架构师 ok"}\n'
 });
 
 test('启用超过 4 个智能体时，@所有人 仍会触发全部已启用智能体回复', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-broadcast-all-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-broadcast-all-'));
   const fakeClaude = join(tempDir, 'claude');
   const fakeCodex = join(tempDir, 'codex');
   const agentDataFile = join(tempDir, 'agents.json');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
-printf '{"output_text":"%s 已收到"}\\n' "\${BOT_ROOM_AGENT_NAME:-AI}"
+printf '{"output_text":"%s 已收到"}\\n' "\${AGENT_CO_AGENT_NAME:-AI}"
 `, 'utf8');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
-printf '{"output_text":"{\\"output_text\\":\\"%s 已收到\\"}\\n"' "\${BOT_ROOM_AGENT_NAME:-AI}"
+printf '{"output_text":"{\\"output_text\\":\\"%s 已收到\\"}\\n"' "\${AGENT_CO_AGENT_NAME:-AI}"
 `, 'utf8');
   writeFileSync(agentDataFile, JSON.stringify({
     activeAgents: [
@@ -1790,7 +1790,7 @@ printf '{"output_text":"{\\"output_text\\":\\"%s 已收到\\"}\\n"' "\${BOT_ROOM
 });
 
 test('Codex 架构师在未回调时会回退展示 CLI 直接输出，并记录关键运维日志', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-'));
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
 printf '{"output_text":"这是 Codex 直接回复（无回调）"}\\n'
@@ -1800,7 +1800,7 @@ printf '{"output_text":"这是 Codex 直接回复（无回调）"}\\n'
   const fixture = await createChatServerFixture({
     env: {
       PATH: `${tempDir}:${process.env.PATH || ''}`,
-      BOT_ROOM_VERBOSE_LOG_DIR: join(tempDir, 'verbose-logs')
+      AGENT_CO_VERBOSE_LOG_DIR: join(tempDir, 'verbose-logs')
     }
   });
 
@@ -1830,7 +1830,7 @@ printf '{"output_text":"这是 Codex 直接回复（无回调）"}\\n'
 });
 
 test('Codex CLI 鉴权失效时，/api/chat 会直接返回真实失败信息而不是模拟回复', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-auth-error-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-auth-error-'));
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
 printf 'unexpected status 402 Payment Required: {"detail":{"code":"deactivated_workspace"}}\\n' >&2
@@ -1865,7 +1865,7 @@ exit 1
 });
 
 test('Codex CLI usage limit 时，/api/chat 会直接返回额度提示而不是模拟回复', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-usage-limit-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-usage-limit-'));
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
 printf "You've hit your usage limit. To get more access now, send a request to your admin or try again at Apr 4th, 2026 3:05 AM.\\n" >&2
@@ -1899,7 +1899,7 @@ exit 1
 });
 
 test('verbose 日志列表能正确显示中文智能体名 Codex架构师', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-verbose-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-verbose-'));
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
 printf '{"output_text":"verbose log test"}\\n'
@@ -1932,7 +1932,7 @@ printf '{"output_text":"verbose log test"}\\n'
 });
 
 test('chat-stream 会在 Codex 无回调时推送 agent_message，避免前端一直停留在思考中', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-stream-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-stream-'));
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
 printf '{"output_text":"SSE 直出回复"}\\n'
@@ -1965,7 +1965,7 @@ printf '{"output_text":"SSE 直出回复"}\\n'
 });
 
 test('chat-stream 在智能体没有任何可见消息时会推送 error 事件，避免前端静默结束', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-empty-stream-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-empty-stream-'));
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
 printf '{"type":"turn.completed"}\\n'
@@ -1997,11 +1997,11 @@ printf '{"type":"turn.completed"}\\n'
   }
 });
 
-test('Codex 直出包含 bot_room 工具编排痕迹时，不应把内部协作过程直接展示给用户', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-internal-leak-'));
+test('Codex 直出包含 agent_co 工具编排痕迹时，不应把内部协作过程直接展示给用户', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-internal-leak-'));
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
-printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"先读取会话协作技能说明并拉取聊天室上下文。已按要求先调用 ` + "\"`bot_room_get_context`" + ` 获取完整会话历史，又尝试用 ` + "\"`bot_room_post_message`" + ` 往群里同步结论。"}}\\n'
+printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"先读取会话协作技能说明并拉取聊天室上下文。已按要求先调用 ` + "\"`agent_co_get_context`" + ` 获取完整会话历史，又尝试用 ` + "\"`agent_co_post_message`" + ` 往群里同步结论。"}}\\n'
 `, 'utf8');
   chmodSync(fakeCodex, 0o755);
 
@@ -2024,8 +2024,8 @@ printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","t
     const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
     assert.ok(codexMessage, 'should include a visible fallback message');
     assert.match(codexMessage.text, /协作工具调用未成功/u);
-    assert.doesNotMatch(codexMessage.text, /bot_room_get_context/u);
-    assert.doesNotMatch(codexMessage.text, /bot_room_post_message/u);
+    assert.doesNotMatch(codexMessage.text, /agent_co_get_context/u);
+    assert.doesNotMatch(codexMessage.text, /agent_co_post_message/u);
     assert.doesNotMatch(codexMessage.text, /先读取会话协作技能说明/u);
   } finally {
     await fixture.cleanup();
@@ -2034,14 +2034,14 @@ printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","t
 });
 
 test('chat-stream 会继续推送由智能体 @ 触发的后续智能体消息', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-claude-stream-chain-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-claude-stream-chain-'));
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
-const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
-const apiUrl = process.env.BOT_ROOM_API_URL || '';
-const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
 
 async function post(content, invokeAgents) {
   const encodedAgentName = encodeURIComponent(agentName);
@@ -2050,9 +2050,9 @@ async function post(content, invokeAgents) {
     headers: {
       Authorization: \`Bearer \${token}\`,
       'Content-Type': 'application/json',
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     },
     body: JSON.stringify({ content, invokeAgents })
   });
@@ -2105,7 +2105,7 @@ EOF
 });
 
 test('chat-stream 客户端中途断开时会记录明确的断流日志', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-claude-stream-disconnect-log-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-claude-stream-disconnect-log-'));
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 sleep 2
@@ -2152,14 +2152,14 @@ printf '{"output_text":"late reply"}\\n'
 });
 
 test('chat-resume 会继续执行流式中断后剩余的智能体链路，避免重复执行已完成节点', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-stream-resume-chain-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-stream-resume-chain-'));
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
-const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
-const apiUrl = process.env.BOT_ROOM_API_URL || '';
-const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
 
 async function post(content) {
   const encodedAgentName = encodeURIComponent(agentName);
@@ -2168,9 +2168,9 @@ async function post(content) {
     headers: {
       Authorization: \`Bearer \${token}\`,
       'Content-Type': 'application/json',
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     },
     body: JSON.stringify({ content })
   });
@@ -2266,14 +2266,14 @@ EOF
 });
 
 test('Codex 架构师可通过 callback 接口回传中文智能体名消息，避免因 header 编码问题丢失可见消息', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-codex-callback-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-callback-'));
   const fakeCodex = join(tempDir, 'codex');
   writeFileSync(fakeCodex, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
-const sessionId = process.env.BOT_ROOM_SESSION_ID || '';
-const apiUrl = process.env.BOT_ROOM_API_URL || '';
-const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
 
 (async () => {
   const contextUrl = new URL('/api/callbacks/thread-context', apiUrl);
@@ -2283,9 +2283,9 @@ const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
   await fetch(contextUrl, {
     headers: {
       Authorization: \`Bearer \${token}\`,
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     }
   });
 
@@ -2294,9 +2294,9 @@ const token = process.env.BOT_ROOM_CALLBACK_TOKEN || '';
     headers: {
       Authorization: \`Bearer \${token}\`,
       'Content-Type': 'application/json',
-      'x-bot-room-callback-token': token,
-      'x-bot-room-session-id': sessionId,
-      'x-bot-room-agent': encodedAgentName
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
     },
     body: JSON.stringify({ content: '已通过 MCP 回调' })
   });
@@ -2343,7 +2343,7 @@ EOF
 
 
 test('peer 模式下无显式继续对象时会将讨论标记为 paused', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-paused-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-paused-'));
   createSingleReplyClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -2392,7 +2392,7 @@ test('peer 模式下无显式继续对象时会将讨论标记为 paused', async
 });
 
 test('peer 会话切回 classic 时会将 discussionState 归一化为 active', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-to-classic-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-to-classic-'));
   createSingleReplyClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -2457,7 +2457,7 @@ test('peer 会话切回 classic 时会将 discussionState 归一化为 active', 
 });
 
 test('peer 模式下若最终已无待继续讨论则会标记为 paused，即使本轮较早消息曾显式继续', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-multi-visible-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-multi-visible-'));
   createMultiVisiblePartialChainClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -2508,7 +2508,7 @@ test('peer 模式下若最终已无待继续讨论则会标记为 paused，即�
 });
 
 test('peer 模式下显式继续若因队列限制未实际入队则会标记为 paused', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-blocked-chain-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-blocked-chain-'));
   createExplicitThenStopClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -2560,7 +2560,7 @@ test('peer 模式下显式继续若因队列限制未实际入队则会标记为
 });
 
 test('peer 模式下单 @ 点名会兼容升级为继续传播', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-single-at-upgrade-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-single-at-upgrade-'));
   createSingleAtContinuationClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -2611,7 +2611,7 @@ test('peer 模式下单 @ 点名会兼容升级为继续传播', async () => {
 });
 
 test('peer 模式下普通引用型单 @ 不会被兼容升级为继续传播', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-single-at-reference-only-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-single-at-reference-only-'));
   createSingleAtReferenceOnlyClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -2661,7 +2661,7 @@ test('peer 模式下普通引用型单 @ 不会被兼容升级为继续传播', 
 });
 
 test('peer 模式下 @所有人 不会被兼容升级为继续传播', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-all-no-upgrade-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-all-no-upgrade-'));
   createAllMentionClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -2711,11 +2711,11 @@ test('peer 模式下 @所有人 不会被兼容升级为继续传播', async () 
 });
 
 test('legacy chained pending task 在恢复执行时会被兼容映射并继续执行', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-legacy-chained-resume-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-legacy-chained-resume-'));
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash
 node - <<'EOF'
-const agentName = process.env.BOT_ROOM_AGENT_NAME || 'AI';
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
 process.stdout.write(JSON.stringify({ output_text: \`\${agentName} resumed from legacy chained\` }) + '\\n');
 EOF
 `, 'utf8');
@@ -2789,7 +2789,7 @@ EOF
 });
 
 test('classic 模式下原有链式传播行为保持不变', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-classic-chain-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-classic-chain-'));
   createExplicitThenStopClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -2827,7 +2827,7 @@ test('classic 模式下原有链式传播行为保持不变', async () => {
 });
 
 test('classic 模式下单 @ 点名不会兼容升级为继续传播', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-classic-single-at-no-upgrade-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-classic-single-at-no-upgrade-'));
   createSingleAtContinuationClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -2866,7 +2866,7 @@ test('classic 模式下单 @ 点名不会兼容升级为继续传播', async () 
 });
 
 test('peer 模式下可手动触发生成总结', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-manual-summary-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-manual-summary-'));
   createManualSummaryClaudeScript(tempDir, {
     delayMs: 700,
     summaryText: 'Alice 总结：讨论已暂停，当前结论已收敛。'
@@ -2947,7 +2947,7 @@ test('peer 模式下可手动触发生成总结', async () => {
 });
 
 test('peer 模式下生成总结支持按 sessionId 指向非当前活跃会话', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-summary-session-id-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-summary-session-id-'));
   createManualSummaryClaudeScript(tempDir, {
     summaryText: 'Alice 总结：这是指定会话的总结。'
   });
@@ -3029,7 +3029,7 @@ test('peer 模式下生成总结支持按 sessionId 指向非当前活跃会话'
 });
 
 test('peer 模式下生成总结完成后会恢复原有 active 讨论状态', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-summary-restore-active-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-summary-restore-active-'));
   createManualSummaryClaudeScript(tempDir, {
     summaryText: 'Alice 总结：当前仍有待继续的讨论分支。'
   });
@@ -3132,7 +3132,7 @@ test('peer 模式下生成总结完成后会恢复原有 active 讨论状态', a
 });
 
 test('peer 模式下重复触发生成总结会被拒绝且不破坏原有讨论状态', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-summary-duplicate-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-summary-duplicate-'));
   createManualSummaryClaudeScript(tempDir, {
     delayMs: 700,
     summaryText: 'Alice 总结：当前仍有待继续的讨论分支。'
@@ -3250,7 +3250,7 @@ test('peer 模式下重复触发生成总结会被拒绝且不破坏原有讨论
 });
 
 test('peer 模式下生成总结期间会拒绝新的聊天请求且不破坏原有讨论状态', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-summary-chat-block-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-summary-chat-block-'));
   createManualSummaryClaudeScript(tempDir, {
     delayMs: 700,
     summaryText: 'Alice 总结：当前仍有待继续的讨论分支。'
@@ -3372,10 +3372,10 @@ test('peer 模式下生成总结期间会拒绝新的聊天请求且不破坏原
 });
 
 test('非 test 环境启动时会忽略 Redis 中残留的测试 chat_sessions_key 并回退正式 key', async () => {
-  const previousDefaultState = redisCli(['GET', 'bot-room:chat:sessions:v1']);
-  const previousConfiguredKey = redisCli(['HGET', 'bot-room:config', 'chat_sessions_key']);
+  const previousDefaultState = redisCli(['GET', 'agent-co:chat:sessions:v1']);
+  const previousConfiguredKey = redisCli(['HGET', 'agent-co:config', 'chat_sessions_key']);
   const now = Date.now();
-  const testRedisKey = `bot-room:chat:sessions:test:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+  const testRedisKey = `agent-co:chat:sessions:test:${Date.now()}:${Math.random().toString(16).slice(2)}`;
   const productionState = {
     version: 1,
     userChatSessions: {
@@ -3405,7 +3405,7 @@ test('非 test 环境启动时会忽略 Redis 中残留的测试 chat_sessions_k
     }
   };
 
-  redisCli(['SET', 'bot-room:chat:sessions:v1', JSON.stringify(productionState)]);
+  redisCli(['SET', 'agent-co:chat:sessions:v1', JSON.stringify(productionState)]);
   redisCli(['SET', testRedisKey, JSON.stringify({
     version: 1,
     userChatSessions: {
@@ -3426,9 +3426,9 @@ test('非 test 环境启动时会忽略 Redis 中残留的测试 chat_sessions_k
       'user:admin': 'default'
     }
   })]);
-  redisCli(['HSET', 'bot-room:config', 'chat_sessions_key', testRedisKey]);
+  redisCli(['HSET', 'agent-co:config', 'chat_sessions_key', testRedisKey]);
 
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-prod-ignore-test-key-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-prod-ignore-test-key-'));
   const agentDataFile = join(tempDir, 'agents.json');
   const authFixture = await createAuthAdminFixture();
   const port = getRandomPort();
@@ -3438,15 +3438,15 @@ test('非 test 环境启动时会忽略 Redis 中残留的测试 chat_sessions_k
       ...process.env,
       NODE_ENV: 'production',
       PORT: String(port),
-      BOT_ROOM_AUTH_ENABLED: 'true',
-      BOT_ROOM_REDIS_REQUIRED: 'false',
-      BOT_ROOM_DISABLE_REDIS: 'false',
+      AGENT_CO_AUTH_ENABLED: 'true',
+      AGENT_CO_REDIS_REQUIRED: 'false',
+      AGENT_CO_DISABLE_REDIS: 'false',
       AGENT_DATA_FILE: agentDataFile,
       AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
       AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
-      BOT_ROOM_CLI_TIMEOUT_MS: '15000',
-      BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
-      BOT_ROOM_CLI_KILL_GRACE_MS: '200'
+      AGENT_CO_CLI_TIMEOUT_MS: '15000',
+      AGENT_CO_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
+      AGENT_CO_CLI_KILL_GRACE_MS: '200'
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -3493,20 +3493,20 @@ test('非 test 环境启动时会忽略 Redis 中残留的测试 chat_sessions_k
     rmSync(tempDir, { recursive: true, force: true });
     redisCli(['DEL', testRedisKey]);
     if (previousConfiguredKey) {
-      redisCli(['HSET', 'bot-room:config', 'chat_sessions_key', previousConfiguredKey]);
+      redisCli(['HSET', 'agent-co:config', 'chat_sessions_key', previousConfiguredKey]);
     } else {
-      redisCli(['HDEL', 'bot-room:config', 'chat_sessions_key']);
+      redisCli(['HDEL', 'agent-co:config', 'chat_sessions_key']);
     }
     if (previousDefaultState) {
-      redisCli(['SET', 'bot-room:chat:sessions:v1', previousDefaultState]);
+      redisCli(['SET', 'agent-co:chat:sessions:v1', previousDefaultState]);
     } else {
-      redisCli(['DEL', 'bot-room:chat:sessions:v1']);
+      redisCli(['DEL', 'agent-co:chat:sessions:v1']);
     }
   }
 });
 
 test('生成总结不会隐式恢复普通链式传播', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-peer-summary-no-chain-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-peer-summary-no-chain-'));
   createManualSummaryClaudeScript(tempDir, {
     summaryText: 'Alice 总结后尝试 @@Bob 继续讨论，但不应恢复普通链式传播。',
     summaryInvokeAgents: ['Bob']
@@ -3566,7 +3566,7 @@ test('生成总结不会隐式恢复普通链式传播', async () => {
 });
 
 test('agentChainMaxCallsPerAgent 为 null 时，同智能体循环提及不会被截断', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-chain-unlimited-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-chain-unlimited-'));
   createCyclingClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -3611,7 +3611,7 @@ test('agentChainMaxCallsPerAgent 为 null 时，同智能体循环提及不会�
 });
 
 test('当前会话的 agentChainMaxHops 会限制链式传播轮数', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-chain-hops-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-chain-hops-'));
   createCyclingClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({
@@ -3656,7 +3656,7 @@ test('当前会话的 agentChainMaxHops 会限制链式传播轮数', async () =
 });
 
 test('agentChainMaxCallsPerAgent 为正整数时，会限制重复同智能体调用', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-fake-chain-limited-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-chain-limited-'));
   createCyclingClaudeScript(tempDir);
 
   const fixture = await createChatServerFixture({

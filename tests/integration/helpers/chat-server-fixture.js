@@ -60,7 +60,7 @@ function ensureBuildArtifacts() {
 
 async function createChatServerFixture(options = {}) {
   const maxAttempts = options.maxAttempts || 5;
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-chat-it-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-it-'));
   const agentDataFile = join(tempDir, 'agents.json');
   let authFixture = null;
   let child = null;
@@ -79,15 +79,15 @@ async function createChatServerFixture(options = {}) {
         ...process.env,
         NODE_ENV: 'test',
         PORT: String(port),
-        BOT_ROOM_AUTH_ENABLED: 'true',
-        BOT_ROOM_REDIS_REQUIRED: 'false',
-        BOT_ROOM_DISABLE_REDIS: 'true',
+        AGENT_CO_AUTH_ENABLED: 'true',
+        AGENT_CO_REDIS_REQUIRED: 'false',
+        AGENT_CO_DISABLE_REDIS: 'true',
         AGENT_DATA_FILE: agentDataFile,
         AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
         AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
-        BOT_ROOM_CLI_TIMEOUT_MS: '15000',
-        BOT_ROOM_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
-        BOT_ROOM_CLI_KILL_GRACE_MS: '200',
+        AGENT_CO_CLI_TIMEOUT_MS: '15000',
+        AGENT_CO_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
+        AGENT_CO_CLI_KILL_GRACE_MS: '200',
         ...(options.env || {})
       },
       stdio: ['ignore', 'pipe', 'pipe']
