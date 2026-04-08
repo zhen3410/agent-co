@@ -12,6 +12,7 @@ import * as readline from 'readline';
 import { AIAgent, Message, RichBlock } from './types';
 import { digestHistory } from './rich-digest';
 import { extractRichBlocks } from './rich-extract';
+import { parseCliEventLine } from './cli-event-parser';
 
 function readDurationFromEnv(name: string, fallbackMs: number): number {
   const raw = process.env[name];
@@ -330,19 +331,23 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
         return;
       }
 
-      try {
-        const event = JSON.parse(line);
-        if (typeof event.result === 'string') {
-          finalResult = event.result;
-        }
+      const parsedLine = parseCliEventLine(line);
 
-        const extractedTexts = collectTextFromValue(event);
-        if (extractedTexts.length > 0) {
-          result += extractedTexts.join('');
+      if (parsedLine.kind === 'json') {
+        if (parsedLine.event?.type === 'result_text') {
+          finalResult = parsedLine.event.text;
+        } else if (parsedLine.event?.type === 'assistant_text') {
+          result += parsedLine.event.text;
+        } else {
+          const extractedTexts = collectTextFromValue(parsedLine.raw);
+          if (extractedTexts.length > 0) {
+            result += extractedTexts.join('');
+          }
         }
-      } catch {
-        result += `${line}\n`;
+        return;
       }
+
+      result += `${line}\n`;
     });
 
     child.on('close', (code) => {
