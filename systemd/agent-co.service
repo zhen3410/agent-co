@@ -1,13 +1,14 @@
 [Unit]
-Description=Bot Room Chat Service
-After=network.target redis-server.service bot-room-auth-admin.service
-Requires=redis-server.service bot-room-auth-admin.service
+Description=agent-co (chat + auth-admin)
+After=network.target redis-server.service
+Requires=redis-server.service
 
 [Service]
 Type=simple
 WorkingDirectory=__APP_DIR__
+EnvironmentFile=-/etc/agent-co/agent-co.env
 ExecStartPre=/bin/sh -c 'redis-cli -u "redis://127.0.0.1:6379" ping | grep -q PONG'
-ExecStart=/usr/bin/node __APP_DIR__/dist/server.js
+ExecStart=/bin/bash __APP_DIR__/scripts/start-services.sh
 Restart=always
 RestartSec=2
 User=root
@@ -16,6 +17,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=false
+ReadWritePaths=__APP_DIR__/data
 ReadOnlyPaths=__APP_DIR__/public
 
 [Install]

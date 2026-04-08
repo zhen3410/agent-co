@@ -45,7 +45,6 @@ bash "$APP_DIR/scripts/install-systemd.sh"
 
 echo "[6/6] 完成，服务状态："
 systemctl --no-pager --full status redis-server || true
-systemctl --no-pager --full status bot-room-auth-admin.service || true
-systemctl --no-pager --full status bot-room-chat.service || true
+systemctl --no-pager --full status agent-co.service || true
 
 echo "一键部署完成。"

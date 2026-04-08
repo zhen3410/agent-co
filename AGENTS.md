@@ -10,6 +10,7 @@ Core application code lives in [`src/`](/root/chat/src): `server.ts` runs the ch
 - `npm run start:auth` runs `dist/auth-admin-server.js`.
 - `npm test` runs the full integration suite (`npm run build && node --test tests/integration/*.integration.test.js`).
 - `bash scripts/init-dev.sh` prepares a local dev environment.
+- **Production services must be managed via systemd** — use `npm run deploy:one-click` or `bash scripts/install-systemd.sh` to register the unified service (`agent-co`). Do not manually run `npm start` or `node dist/server.js` in production.
 
 ## Coding Style & Naming Conventions
 Use TypeScript with `strict` compiler settings. Follow the existing style: 2-space indentation, semicolons, single quotes, `camelCase` for variables/functions, `PascalCase` for types/interfaces, and `SCREAMING_SNAKE_CASE` for top-level config constants. Keep modules focused; avoid adding more responsibilities to already large entrypoints such as `src/server.ts`. There is no configured formatter or linter in `package.json`, so match surrounding code closely.
