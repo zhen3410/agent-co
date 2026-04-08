@@ -43,7 +43,8 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}
 
     const args = readFileSync(argsFile, 'utf8').trim().split('\n');
     assert.ok(args.includes('--mcp-config'));
-    assert.ok(args.includes('--allowedTools'));
+    assert.ok(args.includes('--permission-mode'), 'must include --permission-mode');
+    assert.ok(!args.includes('--allowedTools'), 'must NOT include --allowedTools with bypassPermissions');
 
     const configIndex = args.indexOf('--mcp-config');
     const configJson = JSON.parse(args[configIndex + 1]);
@@ -53,9 +54,8 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}
     assert.equal(serverConfig.env.AGENT_CO_SESSION_ID, 's_test');
     assert.equal(serverConfig.env.AGENT_CO_API_URL, 'http://127.0.0.1:3002');
 
-    const toolsIndex = args.indexOf('--allowedTools');
-    const tools = args[toolsIndex + 1];
-    assert.equal(tools, 'mcp__agent-co__agent_co_post_message,mcp__agent-co__agent_co_get_context');
+    const permIndex = args.indexOf('--permission-mode');
+    assert.equal(args[permIndex + 1], 'bypassPermissions');
   } finally {
     process.env.PATH = originalPath;
     rmSync(tempDir, { recursive: true, force: true });

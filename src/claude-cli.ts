@@ -216,9 +216,14 @@ function buildCliCommand(cli: CliKind, prompt: string, extraEnv: Record<string, 
     delete (env as Record<string, unknown>).CLAUDECODE;
     delete (env as Record<string, unknown>).CLAUDE_SESSION_ID;
 
-    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
+    const args = [
+      '-p', prompt,
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--permission-mode', 'bypassPermissions'
+    ];
     if (mcp) {
-      args.push('--mcp-config', mcp.mcpConfig, '--allowedTools', mcp.allowedTools);
+      args.push('--mcp-config', mcp.mcpConfig);
     }
 
     return {
