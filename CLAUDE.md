@@ -94,13 +94,30 @@
 npm run init         # 初始化 data/、logs/ 与 .env（若不存在）
 set -a && source .env && set +a  # 本地开发时导出 .env；npm 脚本不会自动加载
 npm run build        # 编译 TypeScript
-npm start            # 启动聊天服务器 (端口 3002)
-npm run dev          # 开发模式运行 (ts-node)
-npm run start:auth   # 启动鉴权管理服务 (端口 3003)
+npm run dev          # 开发模式运行 (ts-node，端口 3002)
+npm run start:chat   # 运行编译后的聊天服务（端口 3002）
+npm run start:auth   # 运行编译后的鉴权管理服务（端口 3003）
+npm run deploy:one-click  # 一键部署（安装 Redis + systemd）
 npm test             # 运行集成测试
 npm run test:unit    # 运行单元测试
 npm run test:fast    # 快速测试（单元 + 关键集成）
-npm run deploy:one-click  # 一键部署（安装 Redis + systemd）
+```
+
+### 生产环境（systemd）
+
+生产环境**必须通过 systemd 管理**，不要手动 `npm start` 或 `node dist/server.js`。
+
+```bash
+# 一键部署（安装 Redis + 注册 systemd 服务 + 启动）
+npm run deploy:one-click
+
+# 或仅注册/更新 systemd 服务
+bash scripts/install-systemd.sh
+
+# 日常运维
+sudo systemctl status agent-co              # 查看服务状态
+sudo systemctl restart agent-co             # 重启服务
+sudo journalctl -u agent-co -f              # 查看实时日志
 ```
 
 ## 环境变量配置

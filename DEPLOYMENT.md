@@ -1,11 +1,11 @@
 # agent-co 部署说明（systemd）
 
-本项目拆分为两个独立服务：
+本项目包含两个协同服务，通过单个 systemd unit (`agent-co.service`) 统一管理：
 
-1. **聊天室服务**（`dist/server.js`，端口 3002）
-2. **鉴权管理服务**（`dist/auth-admin-server.js`，端口 3003）
+1. **鉴权管理服务**（`dist/auth-admin-server.js`，端口 3003）
+2. **聊天室服务**（`dist/server.js`，端口 3002）
 
-这样可以把“聊天业务”和“账号密码管理”隔离，降低安全风险。
+启动脚本 `scripts/start-services.sh` 保证鉴权服务先就绪，再启动聊天服务。
 
 ## 一、编译
 
@@ -39,35 +39,30 @@ sudo APP_DIR=/path/to/agent-co bash /path/to/agent-co/scripts/install-systemd.sh
 
 脚本会自动完成：
 
+- 移除旧的双服务 unit（如有）
 - 复制 unit 文件到 `/etc/systemd/system`
-- 复制环境变量模板到 `/etc/agent-co/*.env`
+- 合并或生成环境变量文件 `/etc/agent-co/agent-co.env`
 - `systemctl daemon-reload`
-- `systemctl enable --now agent-co-auth-admin.service`
-- `systemctl enable --now agent-co-chat.service`
-
-两个服务都以 `root` 用户运行（`User=root`）。
+- `systemctl enable --now agent-co.service`
 
 ### 3）修改生产配置
 
 请编辑以下文件并替换默认敏感值：
 
-- `/etc/agent-co/agent-co-auth-admin.env`
-- `/etc/agent-co/agent-co-chat.env`
+- `/etc/agent-co/agent-co.env`
 
 修改后重启服务：
 
 ```bash
-sudo systemctl restart agent-co-auth-admin.service
-sudo systemctl restart agent-co-chat.service
+sudo systemctl restart agent-co.service
 ```
 
 ### 4）常用运维命令
 
 ```bash
-sudo systemctl status agent-co-auth-admin.service
-sudo systemctl status agent-co-chat.service
-sudo journalctl -u agent-co-auth-admin.service -f
-sudo journalctl -u agent-co-chat.service -f
+sudo systemctl status agent-co.service
+sudo systemctl restart agent-co.service
+sudo journalctl -u agent-co.service -f
 ```
 
 ## 三、默认鉴权行为

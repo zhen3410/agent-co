@@ -67,22 +67,42 @@ set +a
 npm run build
 ```
 
-#### 4. 启动聊天服务
+### 4. Start services / 启动服务
+
+**Production** — use systemd (recommended):
+
+**生产环境**使用 systemd 管理（推荐）：
 
 ```bash
-npm run dev
+npm run deploy:one-click  # 一键部署（安装 Redis + 注册 systemd 服务 + 启动）
 ```
 
-也可以直接运行编译产物：
+Or register systemd services only:
+
+或仅注册 systemd 服务：
 
 ```bash
-npm run start:chat
+bash scripts/install-systemd.sh
 ```
 
-#### 5. 启动鉴权管理服务
+Day-to-day operations:
+
+日常运维命令：
 
 ```bash
-npm run start:auth
+sudo systemctl status agent-co              # 查看服务状态
+sudo systemctl restart agent-co             # 重启服务
+sudo journalctl -u agent-co -f              # 实时日志
+```
+
+**Local development** — run directly:
+
+**本地开发**可直接运行：
+
+```bash
+npm run dev          # 开发模式（ts-node）
+npm run start:chat   # 编译后的聊天服务
+npm run start:auth   # 编译后的鉴权管理服务
 ```
 
 默认地址：

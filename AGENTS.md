@@ -11,6 +11,7 @@ Application code lives in [`src/`](/root/chat/src), with the current architectur
 - `npm test` runs the full integration suite (`npm run build && node --test tests/integration/*.integration.test.js`).
 - `node --test tests/unit/*.unit.test.js` runs targeted unit tests when present.
 - `bash scripts/init-dev.sh` prepares a local dev environment.
+- **Production services must be managed via systemd** — use `npm run deploy:one-click` or `bash scripts/install-systemd.sh` to register the unified service (`agent-co`). Do not manually run `npm start` or `node dist/server.js` in production.
 
 ## Coding Style & Naming Conventions
 Use TypeScript with `strict` compiler settings. Follow the existing style: 2-space indentation, semicolons, single quotes, `camelCase` for variables/functions, `PascalCase` for types/interfaces, and `SCREAMING_SNAKE_CASE` for top-level config constants. Keep modules focused and place changes in the matching layer or subsystem (`chat`, `admin`, `agent-invocation`, `providers`, `shared`) instead of adding new responsibilities to top-level composition roots such as `src/server.ts` and `src/auth-admin-server.ts`. When editing existing code, preserve the current bootstrap/application/http/runtime/infrastructure boundaries unless the task explicitly calls for refactoring them. There is no configured formatter or linter in `package.json`, so match surrounding code closely.

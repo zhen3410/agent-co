@@ -11,8 +11,7 @@ fi
 APP_DIR="$(cd "$APP_DIR" && pwd)"
 SYSTEMD_DIR="/etc/systemd/system"
 ENV_DIR="/etc/agent-co"
-CHAT_UNIT_SRC="$APP_DIR/systemd/agent-co-chat.service"
-AUTH_UNIT_SRC="$APP_DIR/systemd/agent-co-auth-admin.service"
+UNIT_SRC="$APP_DIR/systemd/agent-co.service"
 
 if [[ "$EUID" -ne 0 ]]; then
   echo "请使用 root 运行：sudo bash scripts/install-systemd.sh"
@@ -26,7 +25,7 @@ if [[ ! -d "$APP_DIR/systemd" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$AUTH_UNIT_SRC" || ! -f "$CHAT_UNIT_SRC" ]]; then
+if [[ ! -f "$UNIT_SRC" ]]; then
   echo "未找到 systemd unit 文件，请确认部署目录完整：$APP_DIR/systemd"
   exit 1
 fi
@@ -43,20 +42,38 @@ render_and_install_unit() {
   sed "s/__APP_DIR__/$escaped_app_dir/g" "$src" > "$dst"
 }
 
-render_and_install_unit "$AUTH_UNIT_SRC" "$SYSTEMD_DIR/agent-co-auth-admin.service"
-render_and_install_unit "$CHAT_UNIT_SRC" "$SYSTEMD_DIR/agent-co-chat.service"
-chmod 0644 "$SYSTEMD_DIR/agent-co-auth-admin.service" "$SYSTEMD_DIR/agent-co-chat.service"
+# Remove legacy dual-service units if present
+for legacy in agent-co-chat.service agent-co-auth-admin.service bot-room-chat.service bot-room-auth-admin.service; do
+  if [[ -f "$SYSTEMD_DIR/$legacy" ]]; then
+    systemctl stop "$legacy" 2>/dev/null || true
+    systemctl disable "$legacy" 2>/dev/null || true
+    rm -f "$SYSTEMD_DIR/$legacy"
+    echo "已移除旧服务：$legacy"
+  fi
+done
 
-if [[ ! -f "$ENV_DIR/agent-co-auth-admin.env" ]]; then
-  install -m 0640 "$APP_DIR/systemd/agent-co-auth-admin.env.example" "$ENV_DIR/agent-co-auth-admin.env"
-  echo "已生成 $ENV_DIR/agent-co-auth-admin.env，请修改默认密钥后继续。"
+render_and_install_unit "$UNIT_SRC" "$SYSTEMD_DIR/agent-co.service"
+chmod 0644 "$SYSTEMD_DIR/agent-co.service"
+
+if [[ ! -f "$ENV_DIR/agent-co.env" ]]; then
+  # Migrate from legacy split env files if they exist
+  if [[ -f "/etc/bot-room/bot-room-chat.env" && -f "/etc/bot-room/bot-room-auth-admin.env" ]]; then
+    echo "# Merged from legacy split env files on $(date -I)" > "$ENV_DIR/agent-co.env"
+    echo "" >> "$ENV_DIR/agent-co.env"
+    cat "/etc/bot-room/bot-room-chat.env" "/etc/bot-room/bot-room-auth-admin.env" >> "$ENV_DIR/agent-co.env"
+    echo "已从旧配置合并为 $ENV_DIR/agent-co.env"
+  else
+    install -m 0640 "$APP_DIR/systemd/agent-co.env.example" "$ENV_DIR/agent-co.env"
+    echo "已生成 $ENV_DIR/agent-co.env，请修改默认密钥后继续。"
+  fi
 fi
 
-systemctl daemon-reload
-systemctl enable --now agent-co-auth-admin.service
-systemctl enable --now agent-co-chat.service
+# Make start-services.sh executable (in case deployed from git without +x)
+chmod +x "$APP_DIR/scripts/start-services.sh"
 
-systemctl --no-pager --full status agent-co-auth-admin.service || true
-systemctl --no-pager --full status agent-co-chat.service || true
+systemctl daemon-reload
+systemctl enable --now agent-co.service
+
+systemctl --no-pager --full status agent-co.service || true
 
 echo "systemd 安装完成。"
