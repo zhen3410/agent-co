@@ -146,32 +146,39 @@ Key structure snapshot (not an exhaustive file list) / 关键结构快照（非�
 
 ```text
 src/
-  server.ts                Chat service composition root
-  auth-admin-server.ts     Auth/admin service composition root
+  server.ts                Chat service composition root (~57 lines)
+  auth-admin-server.ts     Auth/admin service composition root (~69 lines)
+  agent-invoker.ts         Re-export shim for backward compatibility
   agent-manager.ts         Agent definitions, @ mention parsing, @@ chain invocation parsing
-  agent-invoker.ts         Shared agent invocation orchestration
   agent-config-store.ts    Agent persistence, apply modes (immediate / after_chat)
   api-connection-store.ts  OpenAI-compatible API connection CRUD and validation
   group-store.ts           Agent group storage and validation
-  claude-cli.ts            Claude CLI adapter and verbose logging integration
+  claude-cli.ts            CLI subprocess management, streaming JSON, MCP injection
   block-buffer.ts          Rich block buffering for callback-based flows
   rich-extract.ts          Extract cc_rich blocks from model output
   rich-digest.ts           Rich block digest helpers for prompts
   rate-limiter.ts          In-memory rate limiting helpers
   bot-room-mcp-server.ts   MCP server for agent callbacks
+  professional-agent-prompts.ts  Professional agent prompt builder
+  professional-agent-prompts.json  Professional role prompt templates (7 roles)
   types.ts                 Shared TypeScript type definitions
   chat/
     bootstrap/             Chat server bootstrap and startup wiring
     http/                  Chat/auth/callback/ops route adapters
+      ops/                 Dependency, system, verbose-log route sub-modules
     application/           Chat, session, auth use cases
-    infrastructure/        Auth-admin client, persistence helpers, dependency log store
-    runtime/               Chat runtime state and agent-store runtime
+    infrastructure/        Auth-admin client, session repository, dependency log store
+    runtime/               Chat runtime state, session state, discussion state, persistence
   admin/
     bootstrap/             Auth-admin bootstrap and startup wiring
     http/                  Admin routes and auth helpers
     application/           User/agent/group/model/system admin use cases
-    infrastructure/        User persistence store
+    infrastructure/        User persistence store (JSON + PBKDF2)
     runtime/               Admin runtime config and startup/security logic
+  agent-invocation/        Agent dispatch routing (CLI vs API), target normalization
+  shared/
+    errors/                AppError class, error codes, HTTP status mapping
+    http/                  Shared HTTP helpers: body, cors, json, static, error mapper
   providers/               CLI / OpenAI-compatible agent providers
 public/                    Main chat UI and static assets
 public-auth/               Admin UI static assets
@@ -179,6 +186,7 @@ data/                      Runtime data directory
 logs/                      Runtime logs (including ai-cli-verbose/)
 scripts/                   Bootstrap and deployment scripts
 systemd/                   Example service unit files
+tests/unit/                Unit tests (agent-invocation, app-error, session-discussion-rules)
 tests/integration/         End-to-end oriented integration coverage
 dist/                      Compiled build output
 ```
@@ -552,13 +560,13 @@ CLI agent verbose output is recorded under `BOT_ROOM_VERBOSE_LOG_DIR` (default: 
 
 ## Testing / 测试
 
-Run all integration tests:
-
 ```bash
-npm test
+npm test                # Run all integration tests
+npm run test:unit       # Run unit tests only
+npm run test:fast       # Fast run: unit tests + key integration tests
 ```
 
-Individual test files are under `tests/integration/`.
+Unit tests are under `tests/unit/`, integration tests under `tests/integration/`.
 
 ## License / 许可证
 
