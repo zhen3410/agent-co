@@ -10,7 +10,7 @@ function sortedKeys(value) {
 }
 
 function createVerboseLogFixtureDir() {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-verbose-it-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-verbose-it-'));
   const verboseDir = join(tempDir, 'verbose-logs');
   mkdirSync(verboseDir, { recursive: true });
 
@@ -76,7 +76,7 @@ test('verbose 日志接口支持中文智能体名称并可读取文件内容', 
   const verboseFixture = createVerboseLogFixtureDir();
   const fixture = await createChatServerFixture({
     env: {
-      BOT_ROOM_VERBOSE_LOG_DIR: verboseFixture.verboseDir
+      AGENT_CO_VERBOSE_LOG_DIR: verboseFixture.verboseDir
     }
   });
 

@@ -22,9 +22,9 @@ export function applyChatCorsHeaders(res: http.ServerResponse): void {
     headers: [
       'Content-Type',
       'Authorization',
-      'x-bot-room-callback-token',
-      'x-bot-room-session-id',
-      'x-bot-room-agent'
+      'x-agent-co-callback-token',
+      'x-agent-co-session-id',
+      'x-agent-co-agent'
     ]
   });
 }

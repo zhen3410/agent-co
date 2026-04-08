@@ -1,11 +1,11 @@
 [Unit]
-Description=Bot Room Auth Admin Service
+Description=agent-co Auth Admin Service
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=__APP_DIR__
-EnvironmentFile=-/etc/bot-room/bot-room-auth-admin.env
+EnvironmentFile=-/etc/agent-co/agent-co-auth-admin.env
 ExecStart=/usr/bin/node __APP_DIR__/dist/auth-admin-server.js
 Restart=always
 RestartSec=2

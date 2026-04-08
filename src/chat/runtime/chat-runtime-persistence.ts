@@ -33,8 +33,8 @@ export function createChatRuntimePersistence(deps: ChatRuntimePersistenceDepende
   });
 
   function isTestRedisChatSessionsKey(key: string): boolean {
-    return key.startsWith('bot-room:chat:sessions:test:')
-      || key.startsWith('bot-room:test:session-chain-settings:');
+    return key.startsWith('agent-co:chat:sessions:test:')
+      || key.startsWith('agent-co:test:session-chain-settings:');
   }
 
   async function loadRuntimeConfigFromRedis(): Promise<void> {
@@ -91,7 +91,7 @@ export function createChatRuntimePersistence(deps: ChatRuntimePersistenceDepende
 
   async function hydrate(): Promise<void> {
     if (deps.config.redisDisabled) {
-      console.warn('[Redis] 已通过 BOT_ROOM_DISABLE_REDIS=true 禁用会话持久化');
+      console.warn('[Redis] 已通过 AGENT_CO_DISABLE_REDIS=true 禁用会话持久化');
       return;
     }
 

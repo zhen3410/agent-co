@@ -10,9 +10,9 @@ if [[ ! -d "$APP_DIR" ]]; then
 fi
 APP_DIR="$(cd "$APP_DIR" && pwd)"
 SYSTEMD_DIR="/etc/systemd/system"
-ENV_DIR="/etc/bot-room"
-CHAT_UNIT_SRC="$APP_DIR/systemd/bot-room-chat.service"
-AUTH_UNIT_SRC="$APP_DIR/systemd/bot-room-auth-admin.service"
+ENV_DIR="/etc/agent-co"
+CHAT_UNIT_SRC="$APP_DIR/systemd/agent-co-chat.service"
+AUTH_UNIT_SRC="$APP_DIR/systemd/agent-co-auth-admin.service"
 
 if [[ "$EUID" -ne 0 ]]; then
   echo "请使用 root 运行：sudo bash scripts/install-systemd.sh"
@@ -43,20 +43,20 @@ render_and_install_unit() {
   sed "s/__APP_DIR__/$escaped_app_dir/g" "$src" > "$dst"
 }
 
-render_and_install_unit "$AUTH_UNIT_SRC" "$SYSTEMD_DIR/bot-room-auth-admin.service"
-render_and_install_unit "$CHAT_UNIT_SRC" "$SYSTEMD_DIR/bot-room-chat.service"
-chmod 0644 "$SYSTEMD_DIR/bot-room-auth-admin.service" "$SYSTEMD_DIR/bot-room-chat.service"
+render_and_install_unit "$AUTH_UNIT_SRC" "$SYSTEMD_DIR/agent-co-auth-admin.service"
+render_and_install_unit "$CHAT_UNIT_SRC" "$SYSTEMD_DIR/agent-co-chat.service"
+chmod 0644 "$SYSTEMD_DIR/agent-co-auth-admin.service" "$SYSTEMD_DIR/agent-co-chat.service"
 
-if [[ ! -f "$ENV_DIR/bot-room-auth-admin.env" ]]; then
-  install -m 0640 "$APP_DIR/systemd/bot-room-auth-admin.env.example" "$ENV_DIR/bot-room-auth-admin.env"
-  echo "已生成 $ENV_DIR/bot-room-auth-admin.env，请修改默认密钥后继续。"
+if [[ ! -f "$ENV_DIR/agent-co-auth-admin.env" ]]; then
+  install -m 0640 "$APP_DIR/systemd/agent-co-auth-admin.env.example" "$ENV_DIR/agent-co-auth-admin.env"
+  echo "已生成 $ENV_DIR/agent-co-auth-admin.env，请修改默认密钥后继续。"
 fi
 
 systemctl daemon-reload
-systemctl enable --now bot-room-auth-admin.service
-systemctl enable --now bot-room-chat.service
+systemctl enable --now agent-co-auth-admin.service
+systemctl enable --now agent-co-chat.service
 
-systemctl --no-pager --full status bot-room-auth-admin.service || true
-systemctl --no-pager --full status bot-room-chat.service || true
+systemctl --no-pager --full status agent-co-auth-admin.service || true
+systemctl --no-pager --full status agent-co-chat.service || true
 
 echo "systemd 安装完成。"

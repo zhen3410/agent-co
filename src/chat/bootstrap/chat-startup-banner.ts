@@ -42,10 +42,10 @@ export function logChatStartupBanner(config: ChatStartupBannerConfig): void {
   if (config.authEnabled) {
     console.log(`🔐 鉴权已启用: 依赖独立鉴权服务 ${config.authAdminBaseUrl}`);
   } else {
-    console.log('🔓 鉴权未启用: 设置 BOT_ROOM_AUTH_ENABLED=false');
+    console.log('🔓 鉴权未启用: 设置 AGENT_CO_AUTH_ENABLED=false');
   }
   if (config.redisDisabled) {
-    console.log('🧠 Redis 会话持久化已禁用: BOT_ROOM_DISABLE_REDIS=true');
+    console.log('🧠 Redis 会话持久化已禁用: AGENT_CO_DISABLE_REDIS=true');
   } else {
     console.log(`🧠 Redis 会话持久化已启用: url=${config.redisUrl}, key=${config.redisChatSessionsKey}`);
   }

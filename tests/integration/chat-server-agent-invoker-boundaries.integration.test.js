@@ -24,7 +24,7 @@ test('compiled façade keeps the stable runtime export surface over the dedicate
 });
 
 test('compiled façade and internal invoker keep the same cli-routing behavior', async () => {
-  const tempDir = mkdtempSync(path.join(tmpdir(), 'bot-room-agent-invoker-boundary-'));
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'agent-co-agent-invoker-boundary-'));
   const fakeClaude = path.join(tempDir, 'claude');
   const fakeCodex = path.join(tempDir, 'codex');
   writeFileSync(fakeClaude, `#!/usr/bin/env bash\nprintf '%s\\n' '{"output_text":"CLAUDE path should not be used"}'\n`, 'utf8');
@@ -72,7 +72,7 @@ test('compiled façade and internal invoker keep the same cli-routing behavior',
 test('compiled façade and internal invoker keep the same api-path failure behavior', async () => {
   const facadeModule = requireBuiltModule('agent-invoker.js');
   const internalModule = requireBuiltModule('agent-invocation', 'agent-invoker.js');
-  const tempDir = mkdtempSync(path.join(tmpdir(), 'bot-room-agent-invoker-api-boundary-'));
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'agent-co-agent-invoker-api-boundary-'));
   const connectionFile = path.join(tempDir, 'api-connections.json');
   writeFileSync(connectionFile, JSON.stringify({ apiConnections: [], updatedAt: 1 }, null, 2), 'utf8');
 

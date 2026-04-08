@@ -7,7 +7,7 @@
 - `server.ts`
 - `callClaudeCLI()`
 - `claude/codex CLI`
-- 本地 `bot-room-mcp-server` 回调上下文和发消息
+- 本地 `agent-co-mcp-server` 回调上下文和发消息
 
 这种方式已可用，但存在以下问题：
 

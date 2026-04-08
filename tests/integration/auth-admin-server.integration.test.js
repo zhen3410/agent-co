@@ -934,7 +934,7 @@ test('API connection 验证会拒绝非法 baseURL', () => {
 });
 
 test('API connection store 可以保存并重新读取', () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-api-conn-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-api-conn-'));
   const filePath = join(tempDir, 'api-connections.json');
 
   try {
@@ -970,7 +970,7 @@ test('API connection store 可以保存并重新读取', () => {
 });
 
 test('API connection store 在读取非法 updatedAt 时会回退为当前时间', () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-api-conn-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-api-conn-'));
   const filePath = join(tempDir, 'api-connections.json');
 
   try {
@@ -1171,7 +1171,7 @@ test('user admin service 通过 store 保持用户名规范化与凭据校验一
   const { createUserStore } = require('../../dist/admin/infrastructure/user-store.js');
   const { createUserAdminService } = require('../../dist/admin/application/user-admin-service.js');
 
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-user-store-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-user-store-'));
   const usersFile = join(tempDir, 'users.json');
 
   try {
@@ -1204,7 +1204,7 @@ test('user admin service 通过 store 保持用户名规范化与凭据校验一
 
 test('agent admin service 支持延迟生效、显式应用并在删除时清理分组引用', () => {
   const { createAgentAdminService, parseApplyMode } = require('../../dist/admin/application/agent-admin-service.js');
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-agent-service-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-service-'));
   const agentsFile = join(tempDir, 'agents.json');
   const groupsFile = join(tempDir, 'groups.json');
   const connectionsFile = join(tempDir, 'api-connections.json');
@@ -1286,7 +1286,7 @@ test('user store 初始引导会按原样持久化默认用户名，同时支持
   const { createUserStore } = require('../../dist/admin/infrastructure/user-store.js');
   const { createUserAdminService, UserAdminServiceError } = require('../../dist/admin/application/user-admin-service.js');
 
-  const tempDir = mkdtempSync(join(tmpdir(), 'bot-room-user-bootstrap-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-user-bootstrap-'));
   const usersFile = join(tempDir, 'users.json');
 
   try {

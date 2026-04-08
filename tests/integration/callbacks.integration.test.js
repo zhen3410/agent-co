@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
-const CALLBACK_TOKEN = 'bot-room-callback-token';
+const CALLBACK_TOKEN = 'agent-co-callback-token';
 
 async function enableAgents(fixture, agentNames) {
   for (const agentName of agentNames) {
@@ -48,7 +48,7 @@ test('callback thread-context 返回会话历史', async () => {
     const contextResponse = await fixture.request(`/api/callbacks/thread-context?sessionid=${encodeURIComponent(sessionId)}`, {
       headers: {
         Authorization: `Bearer ${CALLBACK_TOKEN}`,
-        'x-bot-room-callback-token': CALLBACK_TOKEN
+        'x-agent-co-callback-token': CALLBACK_TOKEN
       }
     });
 
@@ -73,9 +73,9 @@ test('callback post-message 的消息可被对应智能体消费并出现在聊�
       method: 'POST',
       headers: {
         Authorization: `Bearer ${CALLBACK_TOKEN}`,
-        'x-bot-room-callback-token': CALLBACK_TOKEN,
-        'x-bot-room-session-id': sessionId,
-        'x-bot-room-agent': 'Alice'
+        'x-agent-co-callback-token': CALLBACK_TOKEN,
+        'x-agent-co-session-id': sessionId,
+        'x-agent-co-agent': 'Alice'
       },
       body: { content: '我完成开发了，请 @Reviewer 做 Code Review。' }
     });
