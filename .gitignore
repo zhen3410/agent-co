@@ -6,4 +6,6 @@ dist/
 
 .worktrees/
 .codex
+logs/
+.cat-cafe-credentials.json
 data/api-connections.json
