@@ -1704,7 +1704,7 @@ EOF
 
 test('agent 间调用会默认创建待复核任务', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-invocation-task-create-'));
-  createExplicitThenStopClaudeScript(tempDir);
+  createReviewLoopClaudeScript(tempDir, 'accept');
 
   const fixture = await createChatServerFixture({
     env: {
@@ -1736,13 +1736,15 @@ test('agent 间调用会默认创建待复核任务', async () => {
     const [task] = historyResponse.body.session.invocationTasks;
     assert.equal(typeof task.id, 'string');
     assert.equal(task.id.length > 0, true);
-    assert.equal(task.status, 'pending_reply');
+    assert.equal(task.status, 'completed');
+    assert.equal(task.reviewAction, 'accept');
     assert.equal(task.callerAgentName, 'Alice');
     assert.equal(task.calleeAgentName, 'Bob');
     assert.equal(typeof task.deadlineAt, 'number');
     assert.equal(Number.isFinite(task.deadlineAt), true);
     assert.equal(task.retryCount, 0);
     assert.equal(task.followupCount, 0);
+    assert.equal(typeof task.lastReplyMessageId, 'string');
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

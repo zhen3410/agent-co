@@ -156,10 +156,14 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
       const err = error as Error;
       console.log(`[${logTag}] AI 调用失败: ${err.message}`);
       runtime.appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=${errorStage} error=${err.message}`);
-      const fallbackText = isApiMode
-        ? `API 调用失败：${err.message}`
-        : buildCliErrorVisibleText(err.message);
-      fallbackMessage = buildFallbackMessage(agentName, fallbackText);
+      if (signal?.aborted) {
+        runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${errorStage}_aborted`);
+      } else {
+        const fallbackText = isApiMode
+          ? `API 调用失败：${err.message}`
+          : buildCliErrorVisibleText(err.message);
+        fallbackMessage = buildFallbackMessage(agentName, fallbackText);
+      }
     }
 
     const callbackReplies = runtime.consumeCallbackMessages(session.id, agentName);

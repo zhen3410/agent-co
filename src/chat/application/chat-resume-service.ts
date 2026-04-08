@@ -148,13 +148,16 @@ export function createChatResumeService(deps: ChatResumeServiceDependencies): Ch
     const invocationTaskMap = new Map(
       (Array.isArray(invocationTasks) ? invocationTasks : []).map(task => [task.id, task])
     );
+    const serializedCallerReviewTasks = new Map(
+      pendingTasks
+        .filter((task) => task.reviewMode === 'caller_review' && typeof task.taskId === 'string' && task.taskId.length > 0)
+        .map((task) => [task.taskId as string, { ...task }])
+    );
     const immediateTasks = pendingTasks.filter((task) => task.reviewMode !== 'caller_review');
     const deferredTasks: PendingAgentDispatchTask[] = [];
     const reviewMessages = [...history, ...pendingVisibleMessages];
     const serializedCallerReviewTaskIds = new Set(
-      pendingTasks
-        .filter((task) => task.reviewMode === 'caller_review' && typeof task.taskId === 'string' && task.taskId.length > 0)
-        .map((task) => task.taskId as string)
+      serializedCallerReviewTasks.keys()
     );
 
     for (const invocationTask of invocationTaskMap.values()) {
@@ -187,6 +190,11 @@ export function createChatResumeService(deps: ChatResumeServiceDependencies): Ch
         const rebuiltTask = buildAwaitingCallerReviewTask(reviewMessages, invocationTask);
         if (rebuiltTask) {
           immediateTasks.push(rebuiltTask);
+        } else {
+          const serializedTask = serializedCallerReviewTasks.get(invocationTask.id);
+          if (serializedTask) {
+            immediateTasks.push(serializedTask);
+          }
         }
       }
     }

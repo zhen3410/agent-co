@@ -456,6 +456,13 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           : undefined
       });
 
+      if (signal?.aborted && visibleMessages.length === 0) {
+        queue.unshift(task);
+        streamStopped = true;
+        runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=stream_stop_during_task reason=client_disconnect`);
+        break;
+      }
+
       for (const rawMessage of visibleMessages) {
         const { mentions: referenceMentions } = collectEligibleMentions(rawMessage.text || '', session);
 
@@ -518,23 +525,30 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         }
 
         const pendingMentionsToQueue: PendingAgentDispatchTask[] = invocationReviewResult ? [...invocationReviewResult.pendingTasks] : [];
-        const allowContinuationQueue = task.dispatchKind !== 'summary' && invocationReviewResult === null;
+        const allowContinuationQueue = task.dispatchKind !== 'summary' && task.dispatchKind !== 'internal_review';
 
         for (const mention of allowContinuationQueue ? chainedMentions : []) {
           const queuedChainedCalls = queue.filter(item => runtime.isChainedDispatchKind(item.dispatchKind)).length;
           const queuedCalls = callCounts.get(mention) || 0;
-          const pendingCalls = queue.filter(item => item.agentName === mention).length
-            + pendingMentionsToQueue.filter(item => item.agentName === mention).length;
+          const pendingChainedTargetCount = pendingMentionsToQueue
+            .filter(item => runtime.isChainedDispatchKind(item.dispatchKind))
+            .length;
+          const pendingCalls = queue
+            .filter(item => item.agentName === mention && item.dispatchKind !== 'internal_review')
+            .length
+            + pendingMentionsToQueue
+              .filter(item => item.agentName === mention && item.dispatchKind !== 'internal_review')
+              .length;
           if (!canQueueContinuationTarget({
             chainedCalls,
             queuedChainedCalls,
-            pendingTargetCount: pendingMentionsToQueue.length,
+            pendingTargetCount: pendingChainedTargetCount,
             queuedCallsForAgent: queuedCalls,
             pendingCallsForAgent: pendingCalls,
             maxChainHops: agentChainMaxHops,
             maxCallsPerAgent: agentChainMaxCallsPerAgent
           })) {
-            const wouldExceedHopLimit = chainedCalls + queuedChainedCalls + pendingMentionsToQueue.length >= agentChainMaxHops;
+            const wouldExceedHopLimit = chainedCalls + queuedChainedCalls + pendingChainedTargetCount >= agentChainMaxHops;
             if (wouldExceedHopLimit) {
               break;
             }
