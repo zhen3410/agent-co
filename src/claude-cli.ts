@@ -2,7 +2,6 @@
  * claude-cli.ts
  *
  * 功能：调用 Claude CLI / Codex CLI
- * 参考 minimal-claude.js 实现
  */
 
 import { spawn } from 'child_process';
@@ -382,4 +381,3 @@ export async function callAgentCLI(
 ): Promise<CliCallResult> {
   return callClaudeCLI(userMessage, agent, history, options);
 }
-
