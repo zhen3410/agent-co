@@ -1,13 +1,7 @@
 [Unit]
-<<<<<<<< HEAD:systemd/agent-co.service
 Description=agent-co (chat + auth-admin)
 After=network.target redis-server.service
 Requires=redis-server.service
-========
-Description=agent-co Chat Service
-After=network.target redis-server.service agent-co-auth-admin.service
-Requires=redis-server.service agent-co-auth-admin.service
->>>>>>>> origin/main:systemd/agent-co-chat.service
 
 [Service]
 Type=simple
