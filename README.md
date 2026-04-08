@@ -1,25 +1,18 @@
-# Bot Room
+<p align="center">
+  <img src="public/logo.svg" alt="Bot Room" width="480" />
+</p>
 
-**Bot Room** is a self-hosted multi-agent chat room built with Node.js and TypeScript. It supports CLI-based (Claude CLI / Codex CLI) and API-based (OpenAI-compatible) agent backends, per-session agent management with peer discussion mode, lightweight auth/admin tooling, PWA support, and integration-oriented callback flows.
+<h1 align="center">Bot Room</h1>
 
-**Bot Room** 是一个基于 Node.js 和 TypeScript 的自托管多智能体聊天室。支持 CLI 调用（Claude CLI / Codex CLI）和 API 调用（OpenAI 兼容接口）两种智能体后端，提供按会话管理智能体、peer 讨论模式、轻量鉴权后台、PWA 支持，以及基于回调的集成流程。
+<p align="center">
+  <a href="README_EN.md">English</a> | <b>中文</b>
+</p>
 
-## Highlights / 项目亮点
+---
 
-- **Multi-agent conversations** with built-in agents such as Claude, Codex Architect, Alice, and Bob.
-- **Dual execution modes** — agents can run via CLI (Claude/Codex CLI) or API (OpenAI-compatible endpoints) with configurable model, temperature, and token limits.
-- **Peer discussion mode** — agents can engage in multi-turn peer discussions with chain dispatch, pause/resume, and manual summarization.
-- **Session isolation** with per-session history, enabled-agent sets, current-agent focus state, and configurable chain limits.
-- **Agent chaining** — agents can invoke other agents via `@@AgentName` syntax or callback `invokeAgents`, with configurable max hops and per-agent call limits.
-- **Agent groups** — organize agents into groups for sidebar display and batch `@group` mentions.
-- **API connection management** — create, test, and manage OpenAI-compatible API connections with secure credential storage.
-- **Focused chat UI** optimized for desktop and mobile, with a sticky top control bar and scrolling message area.
-- **Admin/auth service** for login, user management, agent configuration, prompt updates, workdir selection, and model connection management.
-- **Rich text blocks** — agents can render cards and checklists via `cc_rich` code blocks or HTTP callback.
-- **PWA-ready frontend** with install prompt support for mobile home-screen usage.
-- **Operational pages** for verbose CLI logs, dependency status, and dependency log queries.
-- **MCP server** for agent callbacks — agents can post messages and read thread context via MCP tools.
-- **Integration tests** covering chat flows, auth/admin APIs, callbacks, and frontend bindings.
+基于 Node.js 和 TypeScript 的自托管多智能体聊天室。支持 CLI 调用（Claude CLI / Codex CLI）和 API 调用（OpenAI 兼容接口）两种智能体后端，提供按会话管理智能体、peer 讨论模式、轻量鉴权后台、PWA 支持，以及基于回调的集成流程。
+
+### 项目亮点
 
 - **多智能体对话**，内置 Claude、Codex 架构师、Alice、Bob 等智能体。
 - **双执行模式** — 智能体可通过 CLI（Claude/Codex CLI）或 API（OpenAI 兼容接口）运行，支持配置模型、温度和 token 限制。
@@ -36,38 +29,31 @@
 - **MCP 回调服务** — 智能体可通过 MCP 工具主动发送消息和读取会话上下文。
 - **集成测试覆盖**，包括聊天流程、鉴权后台、回调链路和前端绑定行为。
 
-## Architecture / 架构概览
-
-This repository currently ships two HTTP services:
+### 架构概览
 
 当前仓库包含两个 HTTP 服务：
 
-- **Chat service**: `src/server.ts`, default port `3002`
-- **Auth/Admin service**: `src/auth-admin-server.ts`, default port `3003`
-
-The chat service serves the main UI from `public/index.html`.
-The auth/admin service serves the admin page from `public-auth/admin.html`.
+- **聊天服务**：`src/server.ts`，默认端口 `3002`
+- **鉴权管理服务**：`src/auth-admin-server.ts`，默认端口 `3003`
 
 聊天服务负责主聊天 UI，静态页面入口是 `public/index.html`。
 鉴权管理服务负责后台管理页，入口是 `public-auth/admin.html`。
 
-## Quick Start / 快速开始
+### 快速开始
 
-### 1. Install dependencies / 安装依赖
+#### 1. 安装依赖
 
 ```bash
 npm install
 ```
 
-### 2. Initialize local directories / 初始化本地目录
+#### 2. 初始化本地目录
 
 ```bash
 npm run init
 ```
 
-This script prepares local runtime directories such as `data/` and verbose log folders, and creates `.env` from `.env.example` when missing. The npm start scripts do **not** load `.env` automatically, so for local development you should export it before starting services:
-
-这个脚本会准备本地运行所需目录，例如 `data/` 和详细日志目录；如果 `.env` 不存在，还会基于 `.env.example` 创建它。注意 npm 启动脚本**不会自动加载** `.env`，因此本地开发前建议先导出环境变量：
+这个脚本会准备本地运行所需目录（例如 `data/` 和详细日志目录）；如果 `.env` 不存在，还会基于 `.env.example` 创建它。注意 npm 启动脚本**不会自动加载** `.env`，因此本地开发前建议先导出环境变量：
 
 ```bash
 set -a
@@ -75,19 +61,17 @@ source .env
 set +a
 ```
 
-### 3. Build / 构建
+#### 3. 构建
 
 ```bash
 npm run build
 ```
 
-### 4. Start the chat service / 启动聊天服务
+#### 4. 启动聊天服务
 
 ```bash
 npm run dev
 ```
-
-Or run the compiled build:
 
 也可以直接运行编译产物：
 
@@ -95,40 +79,30 @@ Or run the compiled build:
 npm run start:chat
 ```
 
-### 5. Start the auth/admin service / 启动鉴权管理服务
+#### 5. 启动鉴权管理服务
 
 ```bash
 npm run start:auth
 ```
 
-By default, the services are available at:
-
 默认地址：
 
-- Chat UI / 聊天页: `http://127.0.0.1:3002`
-- Admin UI / 管理页: `http://127.0.0.1:3003`
+- 聊天页：`http://127.0.0.1:3002`
+- 管理页：`http://127.0.0.1:3003`
 
-## Default Development Behavior / 默认开发行为
-
-- Auth is enabled by default unless `BOT_ROOM_AUTH_ENABLED=false`.
-- The chat service expects the auth/admin service at `AUTH_ADMIN_BASE_URL`, defaulting to `http://127.0.0.1:3003`.
-- Redis-backed persistence is optional for local development. If you set `BOT_ROOM_REDIS_REQUIRED=false`, the chat service can continue without requiring Redis as a hard dependency. You can also fully disable Redis with `BOT_ROOM_DISABLE_REDIS=true`.
-- If the auth data file does not exist, the admin service will create a default user on first startup.
+### 默认开发行为
 
 - 默认开启鉴权，除非显式设置 `BOT_ROOM_AUTH_ENABLED=false`。
 - 聊天服务默认通过 `AUTH_ADMIN_BASE_URL` 访问鉴权后台，默认值是 `http://127.0.0.1:3003`。
 - 本地开发时 Redis 可以不是强依赖；设置 `BOT_ROOM_REDIS_REQUIRED=false` 后，即使 Redis 不可用也可以继续开发。也可以通过 `BOT_ROOM_DISABLE_REDIS=true` 完全禁用 Redis。
 - 如果鉴权数据文件不存在，管理服务会在首次启动时自动创建默认用户。
 
-Default dev credentials / 默认开发账号：
+默认开发账号：
 
-- If you rely on runtime fallback defaults, the initial credentials are `admin` / `admin123!`.
-- If you `source .env` generated from `.env.example`, the initial credentials are `admin` / `admin123!`.
+- 用户名：`admin`
+- 密码：`admin123!`
 
-- 如果使用运行时代码内置默认值，初始化账号为 `admin` / `admin123!`。
-- 如果使用 `npm run init` 生成并 `source .env` 的开发配置，初始化账号同样为 `admin` / `admin123!`。
-
-## Useful Scripts / 常用脚本
+### 常用脚本
 
 ```bash
 npm run init            # 初始化本地目录
@@ -137,95 +111,100 @@ npm run dev             # 开发模式运行
 npm run start:chat      # 运行编译后的聊天服务
 npm run start:auth      # 运行编译后的鉴权管理服务
 npm test                # 运行集成测试
+npm run test:unit       # 运行单元测试
+npm run test:fast       # 快速测试（单元 + 关键集成）
 npm run deploy:one-click  # 一键部署（安装 Redis + systemd）
 ```
 
-## Project Structure / 目录结构
-
-Key structure snapshot (not an exhaustive file list) / 关键结构快照（非完整清单）：
+### 目录结构
 
 ```text
 src/
-  server.ts                Chat service composition root
-  auth-admin-server.ts     Auth/admin service composition root
-  agent-manager.ts         Agent definitions, @ mention parsing, @@ chain invocation parsing
-  agent-invoker.ts         Shared agent invocation orchestration
-  agent-config-store.ts    Agent persistence, apply modes (immediate / after_chat)
-  api-connection-store.ts  OpenAI-compatible API connection CRUD and validation
-  group-store.ts           Agent group storage and validation
-  claude-cli.ts            Claude CLI adapter and verbose logging integration
-  block-buffer.ts          Rich block buffering for callback-based flows
-  rich-extract.ts          Extract cc_rich blocks from model output
-  rich-digest.ts           Rich block digest helpers for prompts
-  rate-limiter.ts          In-memory rate limiting helpers
-  bot-room-mcp-server.ts   MCP server for agent callbacks
-  types.ts                 Shared TypeScript type definitions
+  server.ts                聊天服务组合根（~57 行）
+  auth-admin-server.ts     鉴权管理服务组合根（~69 行）
+  agent-invoker.ts         向后兼容 re-export shim
+  agent-manager.ts         智能体定义、@ 提及解析、@@ 链式调用解析
+  agent-config-store.ts    智能体持久化，生效模式（immediate / after_chat）
+  api-connection-store.ts  OpenAI 兼容 API 连接 CRUD 与验证
+  group-store.ts           智能体分组存储与验证
+  claude-cli.ts            CLI 子进程管理、流式 JSON、MCP 注入
+  block-buffer.ts          Route A 富文本块缓冲
+  rich-extract.ts          从模型输出中提取 cc_rich 块
+  rich-digest.ts           富文本摘要辅助（用于 prompt）
+  rate-limiter.ts          内存速率限制
+  bot-room-mcp-server.ts   MCP 回调服务
+  professional-agent-prompts.ts   专业智能体提示词构建器
+  professional-agent-prompts.json 7 个专业角色提示词模板
+  types.ts                 共享 TypeScript 类型定义
   chat/
-    bootstrap/             Chat server bootstrap and startup wiring
-    http/                  Chat/auth/callback/ops route adapters
-    application/           Chat, session, auth use cases
-    infrastructure/        Auth-admin client, persistence helpers, dependency log store
-    runtime/               Chat runtime state and agent-store runtime
+    bootstrap/             聊天服务启动装配
+    http/                  聊天/鉴权/回调/运维路由适配层
+      ops/                 依赖状态、系统目录、verbose 日志子路由
+    application/           聊天、会话、鉴权领域用例
+    infrastructure/        鉴权代理、会话存储、依赖日志
+    runtime/               聊天运行时状态、会话状态、讨论状态、持久化
   admin/
-    bootstrap/             Auth-admin bootstrap and startup wiring
-    http/                  Admin routes and auth helpers
-    application/           User/agent/group/model/system admin use cases
-    infrastructure/        User persistence store
-    runtime/               Admin runtime config and startup/security logic
-  providers/               CLI / OpenAI-compatible agent providers
-public/                    Main chat UI and static assets
-public-auth/               Admin UI static assets
-data/                      Runtime data directory
-logs/                      Runtime logs (including ai-cli-verbose/)
-scripts/                   Bootstrap and deployment scripts
-systemd/                   Example service unit files
-tests/integration/         End-to-end oriented integration coverage
-dist/                      Compiled build output
+    bootstrap/             管理服务启动装配
+    http/                  管理端路由与鉴权中间件
+    application/           用户/智能体/分组/模型/系统管理用例
+    infrastructure/        用户持久化存储（JSON + PBKDF2）
+    runtime/               管理运行时配置与安全检查
+  agent-invocation/        智能体调度路由（CLI vs API）、目标规范化
+  shared/
+    errors/                AppError 类、错误码、HTTP 状态映射
+    http/                  共享 HTTP 工具：body、cors、json、静态文件、错误映射
+  providers/               CLI / OpenAI 兼容智能体提供者
+public/                    主聊天 UI 与静态资源
+public-auth/               管理端 UI 静态资源
+data/                      运行时数据目录
+logs/                      运行时日志（含 ai-cli-verbose/）
+scripts/                   启动与部署脚本
+systemd/                   systemd 服务配置示例
+tests/unit/                单元测试
+tests/integration/         集成测试
+dist/                      编译输出
 ```
 
-### Module responsibilities / 模块职责
+#### 模块放置约定
 
-- **Chat routes** live under `src/chat/http/`
-- **Auth/admin routes** live under `src/admin/http/`
-- **Shared HTTP helpers** live under `src/shared/http/`
-- **New use cases / 业务编排** should usually be added under `src/chat/application/` or `src/admin/application/`
-- **New infrastructure integrations** (filesystem, Redis, upstream HTTP, persistence helpers) should usually be added under `src/chat/infrastructure/`, `src/chat/runtime/`, `src/admin/infrastructure/`, or `src/admin/runtime/`
+- **聊天路由**放到 `src/chat/http/`
+- **管理端路由**放到 `src/admin/http/`
+- **业务编排 / 用例逻辑**放到 `src/chat/application/` 或 `src/admin/application/`
+- **基础设施集成**（文件系统、Redis、上游 HTTP、持久化）放到 `src/chat/infrastructure/`、`src/chat/runtime/`、`src/admin/infrastructure/` 或 `src/admin/runtime/`
+- **智能体调用逻辑**放到 `src/agent-invocation/`
+- **HTTP 工具/错误处理**放到 `src/shared/`
+- 保持 `src/server.ts` 与 `src/auth-admin-server.ts` 为精简启动入口
 
-This keeps `src/server.ts` and `src/auth-admin-server.ts` as thin startup files instead of feature containers.
-这样可以让 `src/server.ts` 与 `src/auth-admin-server.ts` 保持为精简的启动入口，而不是再次膨胀成业务容器。
+### 环境变量配置
 
-## Environment Variables / 环境变量配置
+#### 聊天服务
 
-### Chat Service / 聊天服务
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PORT` | `3002` | 服务端口 |
+| `BOT_ROOM_AUTH_ENABLED` | `true` | 是否启用鉴权 |
+| `AUTH_ADMIN_BASE_URL` | `http://127.0.0.1:3003` | 鉴权管理服务地址 |
+| `AGENT_DATA_FILE` | `data/agents.json` | 智能体配置文件路径 |
+| `BOT_ROOM_VERBOSE_LOG_DIR` | `logs/ai-cli-verbose` | 详细日志目录 |
+| `BOT_ROOM_REDIS_REQUIRED` | `true` | Redis 是否为强依赖 |
+| `BOT_ROOM_DISABLE_REDIS` | `false` | 完全禁用 Redis 持久化 |
+| `BOT_ROOM_AGENT_CHAIN_MAX_HOPS` | `4` | 默认最大链式调用跳数 |
+| `BOT_ROOM_CALLBACK_TOKEN` | `bot-room-callback-token` | 回调鉴权令牌 |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3002` | Chat service port |
-| `BOT_ROOM_AUTH_ENABLED` | `true` | Enable/disable authentication |
-| `AUTH_ADMIN_BASE_URL` | `http://127.0.0.1:3003` | Auth admin service URL |
-| `AGENT_DATA_FILE` | `data/agents.json` | Agent config file path |
-| `BOT_ROOM_VERBOSE_LOG_DIR` | `logs/ai-cli-verbose` | Verbose log directory |
-| `BOT_ROOM_REDIS_REQUIRED` | `true` | Whether Redis is required |
-| `BOT_ROOM_DISABLE_REDIS` | `false` | Fully disable Redis persistence |
-| `BOT_ROOM_AGENT_CHAIN_MAX_HOPS` | `4` | Default max chain hops per session |
-| `BOT_ROOM_CALLBACK_TOKEN` | `bot-room-callback-token` | Token for callback auth |
+#### 鉴权管理服务
 
-### Auth/Admin Service / 鉴权管理服务
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `AUTH_ADMIN_PORT` | `3003` | 服务端口 |
+| `AUTH_ADMIN_TOKEN` | - | 管理员令牌（生产环境必须，≥ 32 字符） |
+| `AUTH_DATA_FILE` | `data/users.json` | 用户数据文件路径 |
+| `AGENT_DATA_FILE` | `data/agents.json` | 智能体配置文件路径 |
+| `MODEL_CONNECTION_DATA_FILE` | `data/api-connections.json` | API 连接文件路径 |
+| `GROUP_DATA_FILE` | `data/groups.json` | 分组数据文件路径 |
+| `BOT_ROOM_DEFAULT_USER` | `admin` | 默认用户名 |
+| `BOT_ROOM_DEFAULT_PASSWORD` | `admin123!` | 默认密码（生产环境请覆盖为强密码） |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AUTH_ADMIN_PORT` | `3003` | Admin service port |
-| `AUTH_ADMIN_TOKEN` | - | Admin token (required in production, >= 32 chars) |
-| `AUTH_DATA_FILE` | `data/users.json` | User data file path |
-| `AGENT_DATA_FILE` | `data/agents.json` | Agent config file path |
-| `MODEL_CONNECTION_DATA_FILE` | `data/api-connections.json` | API connections file path |
-| `GROUP_DATA_FILE` | `data/groups.json` | Agent groups file path |
-| `BOT_ROOM_DEFAULT_USER` | `admin` | Default username |
-| `BOT_ROOM_DEFAULT_PASSWORD` | `admin123!` | Default password fallback (override in production with a strong secret) |
-
-### Redis / Redis 配置
-
-The chat service connects to `redis://127.0.0.1:6379` by default and reads runtime config from `bot-room:config` (e.g., `chat_sessions_key`).
+#### Redis 配置
 
 聊天服务启动时默认连接 `redis://127.0.0.1:6379`，并从 `bot-room:config` 读取运行配置。
 
@@ -233,333 +212,327 @@ The chat service connects to `redis://127.0.0.1:6379` by default and reads runti
 redis-cli HSET bot-room:config chat_sessions_key bot-room:chat:sessions:v1
 ```
 
-## Chat Service API / 聊天服务 API 端点
+### 聊天服务 API 端点
 
-### Core Chat / 核心聊天
+#### 核心聊天
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/chat` | POST | Send message (sync response) |
-| `/api/chat-stream` | POST | Send message (SSE streaming response) |
-| `/api/chat-resume` | POST | Resume interrupted pending chain tasks |
-| `/api/chat-summary` | POST | Manual peer discussion summary (peer mode only) |
-| `/api/history` | GET | Get chat history and session info |
-| `/api/clear` | POST | Clear chat history |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/chat` | POST | 发送消息（同步响应） |
+| `/api/chat-stream` | POST | 发送消息（SSE 流式响应） |
+| `/api/chat-resume` | POST | 恢复中断的链式任务 |
+| `/api/chat-summary` | POST | 手动触发 peer 讨论总结（仅 peer 模式） |
+| `/api/history` | GET | 获取聊天历史和会话信息 |
+| `/api/clear` | POST | 清空聊天历史 |
 
-### Agents / 智能体
+#### 智能体
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/agents` | GET | Get agent list |
-| `/api/session-agents` | POST | Enable/disable agent for session |
-| `/api/groups` | GET | Get agent groups |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/agents` | GET | 获取智能体列表 |
+| `/api/session-agents` | POST | 启用/禁用会话智能体 |
+| `/api/groups` | GET | 获取智能体分组 |
 
-### Sessions / 会话管理
+#### 会话管理
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/sessions` | POST | Create new chat session |
-| `/api/sessions/select` | POST | Switch active session |
-| `/api/sessions/rename` | POST | Rename a session |
-| `/api/sessions/delete` | POST | Delete a session |
-| `/api/sessions/update` | POST | Update session settings (chain limits, discussion mode) |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/sessions` | POST | 创建新会话 |
+| `/api/sessions/select` | POST | 切换活跃会话 |
+| `/api/sessions/rename` | POST | 重命名会话 |
+| `/api/sessions/delete` | POST | 删除会话 |
+| `/api/sessions/update` | POST | 更新会话设置（链路限制、讨论模式） |
 
-### Agent Workdirs / 智能体工作目录
+#### 工作目录
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/workdirs/options` | GET | Get available workdir directories |
-| `/api/workdirs/select` | POST | Set agent workdir for session |
-| `/api/system/dirs` | GET | Browse system directories |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/workdirs/options` | GET | 获取可用工作目录 |
+| `/api/workdirs/select` | POST | 设置智能体工作目录 |
+| `/api/system/dirs` | GET | 浏览系统目录 |
 
-### Auth / 鉴权
+#### 鉴权
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/login` | POST | Login with username + password |
-| `/api/logout` | POST | Logout and clear cookie |
-| `/api/auth-status` | GET | Check auth status |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/login` | POST | 用户名+密码登录 |
+| `/api/logout` | POST | 登出并清除 Cookie |
+| `/api/auth-status` | GET | 查看鉴权状态 |
 
-### Callbacks & Blocks / 回调与区块
+#### 回调与区块
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/create-block` | POST | Route A: create rich block |
-| `/api/block-status` | GET | View BlockBuffer status |
-| `/api/callbacks/post-message` | POST | Agent posts message via callback |
-| `/api/callbacks/thread-context` | GET | Get session history for agent |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/create-block` | POST | Route A：创建富文本块 |
+| `/api/block-status` | GET | 查看 BlockBuffer 状态 |
+| `/api/callbacks/post-message` | POST | 智能体通过回调发送消息 |
+| `/api/callbacks/thread-context` | GET | 智能体获取会话历史 |
 
-### Operations / 运维
+#### 运维
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/dependencies/status` | GET | Check dependency health (Redis) |
-| `/api/dependencies/logs` | GET | Query dependency logs with filters |
-| `/api/verbose/agents` | GET | List agents with verbose logs |
-| `/api/verbose/logs` | GET | List log files for an agent |
-| `/api/verbose/log-content` | GET | Read a specific log file |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/dependencies/status` | GET | 查看依赖健康状态（Redis） |
+| `/api/dependencies/logs` | GET | 查询依赖状态日志 |
+| `/api/verbose/agents` | GET | 查看 verbose 日志智能体列表 |
+| `/api/verbose/logs` | GET | 查看智能体日志文件列表 |
+| `/api/verbose/log-content` | GET | 查看日志文件内容 |
 
-## Auth/Admin Service API / 鉴权管理服务 API 端点
+### 鉴权管理服务 API 端点
 
-### Users / 用户管理
+#### 用户管理
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/auth/verify` | POST | Verify user credentials |
-| `/api/users` | GET | List users (requires `x-admin-token`) |
-| `/api/users` | POST | Create user (requires `x-admin-token`) |
-| `/api/users/:name/password` | PUT | Change password (requires `x-admin-token`) |
-| `/api/users/:name` | DELETE | Delete user (requires `x-admin-token`) |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/auth/verify` | POST | 验证用户凭据 |
+| `/api/users` | GET | 获取用户列表（需 x-admin-token） |
+| `/api/users` | POST | 创建用户（需 x-admin-token） |
+| `/api/users/:name/password` | PUT | 修改用户密码（需 x-admin-token） |
+| `/api/users/:name` | DELETE | 删除用户（需 x-admin-token） |
 
-### Agents / 智能体配置
+#### 智能体配置
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/agents` | GET | Get agent configs (requires `x-admin-token`) |
-| `/api/agents` | POST | Create agent (requires `x-admin-token`) |
-| `/api/agents/:name` | PUT | Update agent (requires `x-admin-token`) |
-| `/api/agents/:name/prompt` | PUT | Update agent prompt (requires `x-admin-token`) |
-| `/api/agents/:name/prompt/template` | GET | Preview shared template prompt (requires `x-admin-token`) |
-| `/api/agents/:name/prompt/restore-template` | POST | Restore template prompt (requires `x-admin-token`) |
-| `/api/agents/:name` | DELETE | Delete agent (requires `x-admin-token`) |
-| `/api/agents/apply-pending` | POST | Apply pending agent configs (requires `x-admin-token`) |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/agents` | GET | 获取智能体配置（需 x-admin-token） |
+| `/api/agents` | POST | 创建智能体（需 x-admin-token） |
+| `/api/agents/:name` | PUT | 更新智能体（需 x-admin-token） |
+| `/api/agents/:name/prompt` | PUT | 更新智能体提示词（需 x-admin-token） |
+| `/api/agents/:name/prompt/template` | GET | 预览模板提示词（需 x-admin-token） |
+| `/api/agents/:name/prompt/restore-template` | POST | 恢复模板提示词（需 x-admin-token） |
+| `/api/agents/:name` | DELETE | 删除智能体（需 x-admin-token） |
+| `/api/agents/apply-pending` | POST | 应用待生效配置（需 x-admin-token） |
 
-### API Connections / 模型连接管理
+#### 模型连接管理
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/model-connections` | GET | List API connections (requires `x-admin-token`) |
-| `/api/model-connections` | POST | Create API connection (requires `x-admin-token`) |
-| `/api/model-connections/:id` | PUT | Update API connection (requires `x-admin-token`) |
-| `/api/model-connections/:id` | DELETE | Delete API connection (requires `x-admin-token`) |
-| `/api/model-connections/:id/test` | POST | Test API connection (requires `x-admin-token`) |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/model-connections` | GET/POST | 查询/创建 API 连接（需 x-admin-token） |
+| `/api/model-connections/:id` | PUT/DELETE | 更新/删除 API 连接（需 x-admin-token） |
+| `/api/model-connections/:id/test` | POST | 测试 API 连接（需 x-admin-token） |
 
-### Groups / 分组管理
+#### 分组管理
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/groups` | GET | List groups (requires `x-admin-token`) |
-| `/api/groups` | POST | Create group (requires `x-admin-token`) |
-| `/api/groups/:id` | PUT | Update group (requires `x-admin-token`) |
-| `/api/groups/:id` | DELETE | Delete group (requires `x-admin-token`) |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/groups` | GET/POST | 查询/创建分组（需 x-admin-token） |
+| `/api/groups/:id` | PUT/DELETE | 更新/删除分组（需 x-admin-token） |
 
-### System / 系统
+#### 系统
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/healthz` | GET | Health check |
-| `/api/system/dirs` | GET | Browse system directories (requires `x-admin-token`) |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/healthz` | GET | 健康检查 |
+| `/api/system/dirs` | GET | 浏览系统目录（需 x-admin-token） |
 
-## Agent Configuration / 智能体配置
+### 智能体配置
 
-### Default Agents / 默认智能体
+#### 默认智能体
 
-Defined in `src/agent-manager.ts`:
+定义在 `src/agent-manager.ts`：
 
-- Claude (🤖) — Technical and programming expert
-- Codex架构师 (🏗️) — Senior architect emphasizing high cohesion, low coupling
-- Alice (👩‍💻) — Creative expert in art and design
-- Bob (🧑‍💻) — Pragmatic engineering expert
+- Claude (🤖) — 技术和编程专家
+- Codex架构师 (🏗️) — 资深架构师，高内聚低耦合
+- Alice (👩‍💻) — 艺术和设计专家
+- Bob (🧑‍💻) — 工程实践专家
 
-### Agent Config Structure / 配置结构
+#### 配置结构
 
 ```typescript
 interface AIAgentConfig {
-  name: string;             // Agent name (2-32 chars)
-  avatar: string;           // Avatar (1 emoji recommended)
-  personality: string;      // Personality description
-  color: string;            // Display color (#RRGGBB)
-  systemPrompt?: string;    // Custom system prompt (optional)
-  executionMode?: 'cli' | 'api';  // Execution mode
-  cliName?: 'claude' | 'codex';   // CLI backend (for cli mode)
-  apiConnectionId?: string;       // API connection ID (for api mode)
-  apiModel?: string;              // Model name (for api mode)
-  apiTemperature?: number;        // Temperature (for api mode)
-  apiMaxTokens?: number;          // Max tokens (for api mode)
-  workdir?: string;               // Working directory
+  name: string;                    // 智能体名称（2-32 字符）
+  avatar: string;                  // 头像（建议 1 个 emoji）
+  personality: string;             // 性格描述
+  color: string;                   // 显示颜色（#RRGGBB）
+  systemPrompt?: string;           // 自定义系统提示词（可选）
+  executionMode?: 'cli' | 'api';   // 执行模式
+  cliName?: 'claude' | 'codex';    // CLI 后端（cli 模式）
+  apiConnectionId?: string;        // API 连接 ID（api 模式）
+  apiModel?: string;               // 模型名称（api 模式）
+  apiTemperature?: number;         // 温度参数（api 模式）
+  apiMaxTokens?: number;           // 最大 token 数（api 模式）
+  workdir?: string;                // 工作目录
 }
 ```
 
-### Dynamic Config / 动态配置
+#### 动态配置
 
-Agent configs are stored in `data/agents.json` with hot reload:
+智能体配置存储在 `data/agents.json`，支持热更新：
 
-- `applyMode: "immediate"` — Takes effect immediately
-- `applyMode: "after_chat"` — Takes effect after current session ends
+- `applyMode: "immediate"` — 立即生效
+- `applyMode: "after_chat"` — 会话结束后生效
 
-### Agent Groups / 智能体分组
+#### 智能体分组
 
-Groups are stored in `data/groups.json`:
+分组存储在 `data/groups.json`：
 
 ```typescript
 interface AgentGroup {
-  id: string;          // Unique ID (2-20 chars, alphanumeric + underscore)
-  name: string;        // Display name (2-16 chars)
-  icon: string;        // Emoji icon (1-2 emojis)
-  agentNames: string[]; // Agent name array
+  id: string;          // 唯一标识（2-20 字符，字母数字下划线）
+  name: string;        // 显示名称（2-16 字符）
+  icon: string;        // emoji 图标（1-2 个）
+  agentNames: string[]; // 智能体名称数组
 }
 ```
 
-- **Sidebar grouping**: Agents organized by groups in the sidebar
-- **Batch mention**: Type `@groupName` to mention all agents in the group
+- **侧边栏分组展示**：智能体按分组折叠显示
+- **批量提及**：输入 `@分组名` 提及该分组所有智能体
 
-### API Connections / 模型连接
+#### API 连接
 
-API connections are stored in `data/api-connections.json`, supporting any OpenAI-compatible endpoint:
+API 连接存储在 `data/api-connections.json`，支持任何 OpenAI 兼容端点：
 
-- Secure credential storage with masked API keys
-- Connection test endpoint for validation
-- Only HTTPS allowed (or localhost HTTP)
-- Agents reference connections via `apiConnectionId`
+- 安全凭据存储（API 密钥遮蔽）
+- 连接测试端点
+- 仅允许 HTTPS（或 localhost HTTP）
+- 智能体通过 `apiConnectionId` 引用连接
 
-## Agent Execution / 智能体执行
+### 智能体执行
 
-### Dual Execution Modes / 双执行模式
+#### 双执行模式
 
-Agents can be configured to run via:
+1. **CLI 模式** — 调用 Claude CLI 或 Codex CLI 子进程，支持流式输出
+2. **API 模式** — 调用 OpenAI 兼容 API 端点，可配置模型、温度、token 限制
 
-1. **CLI mode** — Invokes Claude CLI or Codex CLI as subprocess with streaming support
-2. **API mode** — Calls OpenAI-compatible API endpoints with configurable model parameters
+#### 链式调用
 
-### Agent Chaining / 链式调用
+- 单 `@智能体名` — 引用/提及，不触发链式调用
+- 双 `@@智能体名` — 显式链式调用
+- 回调 `invokeAgents` — 智能体通过回调编程式调用其他智能体
+- 可配置限制：`agentChainMaxHops`（默认 4）和 `agentChainMaxCallsPerAgent`
 
-- Single `@AgentName` — Reference/mention, does not trigger chain
-- Double `@@AgentName` — Explicit chain invocation
-- Callback `invokeAgents` — Agents can programmatically chain to other agents
-- Configurable limits: `agentChainMaxHops` (default 4) and `agentChainMaxCallsPerAgent`
+#### Peer 讨论模式
 
-### Peer Discussion Mode / Peer 讨论模式
+会话支持两种讨论模式：
 
-Sessions can operate in two discussion modes:
+- **classic** — 标准单轮或链式响应
+- **peer** — 多轮 peer 讨论，支持自动暂停/恢复：
+  - 检测不到显式链式延续时自动暂停
+  - 通过 `/api/chat-summary` 手动总结
+  - 讨论状态：`active` / `paused` / `summarizing`
 
-- **classic** — Standard single-turn or chained responses
-- **peer** — Multi-turn peer discussion with automatic pause/resume:
-  - Discussion auto-pauses when no explicit chain continuation is detected
-  - Manual summarization via `/api/chat-summary`
-  - Discussion state: `active` / `paused` / `summarizing`
+#### MCP 回调服务
 
-### MCP Callback Server / MCP 回调服务
+内置 MCP 服务（`src/bot-room-mcp-server.ts`）为 CLI 智能体提供工具：
 
-The built-in MCP server (`src/bot-room-mcp-server.ts`) provides tools for CLI agents:
+- `bot_room_post_message` — 向聊天室发送消息
+- `bot_room_thread_context` — 获取当前会话历史
 
-- `bot_room_post_message` — Post a message to the chat room
-- `bot_room_thread_context` — Read current session history
+注入给 CLI 智能体的环境变量：
+- `BOT_ROOM_API_URL` — 聊天服务 URL
+- `BOT_ROOM_SESSION_ID` — 当前会话 ID
+- `BOT_ROOM_AGENT_NAME` — 智能体名称
+- `BOT_ROOM_CALLBACK_TOKEN` — 鉴权令牌
 
-Environment variables for agent context:
-- `BOT_ROOM_API_URL` — Chat service URL
-- `BOT_ROOM_SESSION_ID` — Current session ID
-- `BOT_ROOM_AGENT_NAME` — Agent name
-- `BOT_ROOM_CALLBACK_TOKEN` — Auth token
+### 富文本支持
 
-## Rich Text / 富文本支持
+AI 回复支持 `cc_rich` 代码块：
 
-AI responses support `cc_rich` code blocks:
-
-### Card / 卡片
+#### Card 卡片
 
 ```json
 {
   "kind": "card",
-  "title": "Title",
-  "body": "Content",
+  "title": "标题",
+  "body": "内容",
   "tone": "info"
 }
 ```
 
-### Checklist / 清单
+#### Checklist 清单
 
 ```json
 {
   "kind": "checklist",
-  "title": "Title",
+  "title": "标题",
   "items": [
-    { "text": "Task", "done": false },
-    { "text": "Done", "done": true }
+    { "text": "任务", "done": false },
+    { "text": "已完成", "done": true }
   ]
 }
 ```
 
-### Dual Route / 双路由富文本
+#### 双路由富文本
 
-- **Route A**: Pre-store blocks via `/api/create-block` HTTP callback
-- **Route B**: Extract `cc_rich` blocks from AI response text
-- Blocks from both routes are merged (deduplicated by id)
+- **Route A**：通过 `/api/create-block` HTTP 回调预存 blocks
+- **Route B**：从 AI 回复文本中提取 `cc_rich` 代码块
+- 最终合并两种来源的 blocks（按 id 去重）
 
-## Streaming Response (SSE) / 流式响应
+### 流式响应（SSE）
 
-`/api/chat-stream` supports Server-Sent Events:
+`/api/chat-stream` 支持 Server-Sent Events：
 
-| Event | Data |
-|-------|------|
-| `user_message` | User message object |
+| 事件 | 数据 |
+|------|------|
+| `user_message` | 用户消息对象 |
 | `agent_thinking` | `{ agent: string }` |
 | `agent_delta` | `{ agent: string, delta: string }` |
-| `agent_message` | AI message object |
+| `agent_message` | AI 消息对象 |
 | `notice` | `{ notice: string }` |
 | `done` | `{ currentAgent: string \| null }` |
 | `error` | `{ error: string }` |
 
-## Session Mechanism / 会话机制
+### 会话机制
 
-### Session Memory / 会话记忆
+#### 会话记忆
 
-- After `@Claude`, `currentAgent` is set to "Claude"
-- Subsequent messages without @ are automatically sent to the current agent
-- Clearing history resets `currentAgent`
+- `@Claude` 后，`currentAgent` 设为 "Claude"
+- 后续无 @ 的消息自动发送给当前智能体
+- 清空历史时重置 `currentAgent`
 
-### User Isolation / 用户隔离
+#### 用户隔离
 
-- Logged-in users: session token as identifier
-- Unauthenticated users: IP address as identifier
-- Each user has independent chat history, sessions, and agent state
+- 登录用户：session token 作为标识
+- 未登录用户：IP 地址作为标识
+- 每个用户独立聊天历史和智能体状态
 
-### Multi-Session / 多会话
+#### 多会话
 
-- Users can create, rename, switch, and delete sessions
-- Session settings (chain limits, discussion mode) are per-session
-- Agent workdirs are per-session-per-agent
+- 用户可创建、重命名、切换和删除会话
+- 会话设置（链路限制、讨论模式）按会话独立
+- 智能体工作目录按会话按智能体独立配置
 
-## Security / 安全特性
+### 安全特性
 
-### Rate Limiting / 速率限制
+#### 速率限制
 
-- Global requests: 100 per minute
-- Login attempts: 5 per minute
+- 全局请求：每分钟 100 次
+- 登录尝试：每分钟 5 次
 
-### Production Checks / 生产环境检查
+#### 生产环境检查
 
-- `AUTH_ADMIN_TOKEN` must be >= 32 characters
-- `BOT_ROOM_DEFAULT_PASSWORD` must be >= 12 characters with uppercase, lowercase, digits, and special characters
+- `AUTH_ADMIN_TOKEN` 必须 ≥ 32 字符
+- `BOT_ROOM_DEFAULT_PASSWORD` 必须 ≥ 12 字符，包含大小写字母、数字和特殊字符
 
-### Callback Auth / 回调鉴权
+#### 回调鉴权
 
-- Callback endpoints require `x-bot-room-callback-token` or `Authorization: Bearer` header
-- Token configurable via `BOT_ROOM_CALLBACK_TOKEN`
+- 回调端点需要 `x-bot-room-callback-token` 或 `Authorization: Bearer` 头
+- 令牌通过 `BOT_ROOM_CALLBACK_TOKEN` 配置
 
-## iOS / PWA
+### iOS / PWA
 
-- `public/manifest.json` + `public/service-worker.js` provide basic PWA capability
-- iOS Safari supports "Add to Home Screen" for app-like experience
-- `apple-touch-icon` (SVG) and iOS web app meta tags included
+- `public/manifest.json` + `public/service-worker.js` 提供基础 PWA 能力
+- iOS Safari 可通过「添加到主屏幕」安装为类 App 体验
+- 已添加 `apple-touch-icon`（SVG）与 iOS web app meta 标签
 
-## Verbose Logging / Verbose 日志
+### Verbose 日志
 
-CLI agent verbose output is recorded under `BOT_ROOM_VERBOSE_LOG_DIR` (default: `logs/ai-cli-verbose`):
+CLI 智能体的详细输出记录在 `BOT_ROOM_VERBOSE_LOG_DIR`（默认 `logs/ai-cli-verbose`）：
 
-- File naming: `{timestamp}-{cliName}-{agentName}.log`
-- Includes stdout, stderr, and meta information
-- Queryable via `/api/verbose/*` endpoints
+- 文件命名：`{timestamp}-{cliName}-{agentName}.log`
+- 包含 stdout、stderr 和 meta 信息
+- 可通过 `/api/verbose/*` 端点查询
 
-## Testing / 测试
-
-Run all integration tests:
+### 测试
 
 ```bash
-npm test
+npm test                # 运行所有集成测试
+npm run test:unit       # 仅运行单元测试
+npm run test:fast       # 快速测试（单元 + 关键集成）
 ```
 
-Individual test files are under `tests/integration/`.
+单元测试位于 `tests/unit/`，集成测试位于 `tests/integration/`。
 
-## License / 许可证
+### 许可证
 
 ISC
