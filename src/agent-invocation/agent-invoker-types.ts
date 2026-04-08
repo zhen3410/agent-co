@@ -16,15 +16,16 @@ export interface InvokeAgentParams {
   onTextDelta?: (delta: string) => void;
 }
 
-export interface NormalizedInvokeTarget {
-  executionMode: AgentExecutionMode;
-  cliName?: AgentCliName;
+export interface ApiInvokeTarget {
+  executionMode: Extract<AgentExecutionMode, 'api'>;
 }
 
-export interface CliInvokeTarget extends NormalizedInvokeTarget {
-  executionMode: 'cli';
+export interface CliInvokeTarget {
+  executionMode: Extract<AgentExecutionMode, 'cli'>;
   cliName: AgentCliName;
 }
+
+export type NormalizedInvokeTarget = ApiInvokeTarget | CliInvokeTarget;
 
 export interface ModelConnectionFileOptions {
   cwd?: string;

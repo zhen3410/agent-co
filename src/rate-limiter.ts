@@ -25,7 +25,7 @@ interface RateLimitEntry {
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
 // 定期清理过期条目
-setInterval(() => {
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
   rateLimitStore.forEach((entry, key) => {
     if (now > entry.resetAt) {
@@ -33,6 +33,8 @@ setInterval(() => {
     }
   });
 }, 60 * 1000);
+
+cleanupInterval.unref?.();
 
 // ============================================
 // 导出函数

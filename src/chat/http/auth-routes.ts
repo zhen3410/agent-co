@@ -4,19 +4,10 @@ import { sendHttpError } from '../../shared/http/errors';
 import { sendJson } from '../../shared/http/json';
 import { AuthService, AuthServiceError } from '../application/auth-service';
 import { createAuthRequestContext } from './request-context';
+import { applySetCookies, normalizeAuthLoginBody } from './auth-route-helpers';
 
 export interface AuthRoutesDependencies {
   authService: AuthService;
-}
-
-function applySetCookies(res: http.ServerResponse, cookies: string[]): void {
-  if (cookies.length === 0) {
-    return;
-  }
-
-  const existing = res.getHeader('Set-Cookie');
-  const current = existing ? (Array.isArray(existing) ? existing.map(String) : [String(existing)]) : [];
-  res.setHeader('Set-Cookie', [...current, ...cookies]);
 }
 
 export async function handleAuthRoutes(
@@ -31,7 +22,8 @@ export async function handleAuthRoutes(
     try {
       const body = await parseBody<{ username?: string; password?: string }>(req);
       const authContext = createAuthRequestContext(req);
-      const result = await deps.authService.login(authContext, body.username || '', body.password || '');
+      const { username, password } = normalizeAuthLoginBody(body);
+      const result = await deps.authService.login(authContext, username, password);
       applySetCookies(res, result.setCookies);
       sendJson(res, 200, { success: true, authEnabled: result.authEnabled });
     } catch (error) {
