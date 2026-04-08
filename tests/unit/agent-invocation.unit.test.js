@@ -19,6 +19,20 @@ test('agent invocation low-level modules expose a stable export surface', () => 
     ['normalizeCliName', 'normalizeInvokeTarget']
   );
   assert.deepEqual(
+    Object.keys(requireBuiltModule('agent-invocation', 'provider-capabilities.js')).sort(),
+    [
+      'API_PROVIDER_CAPABILITY',
+      'CLI_PROVIDER_CAPABILITY',
+      'OPENAI_COMPATIBLE_API_PROVIDER_CAPABILITY',
+      'isApiProviderCapability',
+      'resolveApiProviderCapability'
+    ]
+  );
+  assert.deepEqual(
+    Object.keys(requireBuiltModule('agent-invocation', 'provider-registry.js')).sort(),
+    ['createApiProviderRegistry', 'createInvocationProviderRegistry', 'resolveApiProvider', 'resolveInvocationProvider']
+  );
+  assert.deepEqual(
     Object.keys(requireBuiltModule('agent-invocation', 'model-connection-loader.js')).sort(),
     ['loadApiAgentConnection', 'resolveModelConnectionDataFile']
   );

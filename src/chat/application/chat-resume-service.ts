@@ -15,7 +15,8 @@ export function createChatResumeService(deps: ChatResumeServiceDependencies): Ch
     async resumePendingChat(context: SessionUserContext) {
       deps.syncAgentsFromStore();
       const { userKey, session } = deps.sessionService.resolveChatSession(context);
-      if (deps.sessionService.isSessionSummaryInProgress(userKey, session)) {
+      const summaryInProgress = deps.sessionService.isSessionSummaryInProgress(userKey, session);
+      if (summaryInProgress) {
         throw deps.createError('当前会话正在生成总结，暂时不能继续执行剩余链路，请稍后再试。', {
           code: APP_ERROR_CODES.CONFLICT
         });

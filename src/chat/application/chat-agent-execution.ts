@@ -1,5 +1,4 @@
 import { AgentInvokeResult, Message, RichBlock } from '../../types';
-import { generateMockReply } from '../../claude-cli';
 import { invokeAgent } from '../../agent-invoker';
 import { extractRichBlocks } from '../../rich-extract';
 import type { RunAgentTask } from './chat-service-types';
@@ -36,21 +35,6 @@ function buildAgentVisibleMessages(agentName: string, providerResult: AgentInvok
   }
 
   return fallbackMessage ? [fallbackMessage] : [];
-}
-
-function shouldSurfaceCliError(message: string): boolean {
-  const normalized = (message || '').toLowerCase();
-  if (!normalized) return false;
-
-  return normalized.includes('deactivated_workspace')
-    || normalized.includes('payment required')
-    || normalized.includes('usage limit')
-    || normalized.includes('rate limit')
-    || normalized.includes('too many requests')
-    || normalized.includes('auth error')
-    || normalized.includes('unauthorized')
-    || normalized.includes('forbidden')
-    || normalized.includes('402');
 }
 
 function isCliWorkspaceAuthError(message: string): boolean {
@@ -156,16 +140,10 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
     } catch (error: unknown) {
       const err = error as Error;
       console.log(`[${logTag}] AI 调用失败: ${err.message}`);
-      const surfaceCliError = !isApiMode && shouldSurfaceCliError(err.message);
-      if (!stream && !isApiMode && !surfaceCliError) {
-        console.log('[Chat] 使用模拟回复');
-      }
       runtime.appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=${errorStage} error=${err.message}`);
       const fallbackText = isApiMode
         ? `API 调用失败：${err.message}`
-        : surfaceCliError
-          ? buildCliErrorVisibleText(err.message)
-          : generateMockReply(prompt, agentName);
+        : buildCliErrorVisibleText(err.message);
       fallbackMessage = buildFallbackMessage(agentName, fallbackText);
     }
 

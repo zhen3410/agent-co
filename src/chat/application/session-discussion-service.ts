@@ -1,6 +1,11 @@
 import { DiscussionState, Message } from '../../types';
 import { ChatRuntime, PendingAgentDispatchTask, UserChatSession } from '../runtime/chat-runtime';
 import { SummaryContinuationState } from './session-service-types';
+import {
+  isSummaryInProgress,
+  normalizeSummaryContinuationState,
+  selectManualSummaryAgent
+} from '../domain/discussion-policy';
 
 export interface SessionDiscussionServiceDependencies {
   runtime: ChatRuntime;
@@ -77,9 +82,11 @@ export function createSessionDiscussionService(deps: SessionDiscussionServiceDep
   }
 
   function isSessionSummaryInProgress(userKey: string, session: UserChatSession): boolean {
-    return runtime.normalizeDiscussionMode(session.discussionMode) === 'peer'
-      && (runtime.normalizeDiscussionState(session.discussionState) === 'summarizing'
-        || runtime.hasSummaryRequest(`${userKey}::${session.id}`));
+    return isSummaryInProgress({
+      discussionMode: runtime.normalizeDiscussionMode(session.discussionMode),
+      discussionState: runtime.normalizeDiscussionState(session.discussionState),
+      hasSummaryRequest: runtime.hasSummaryRequest(`${userKey}::${session.id}`)
+    });
   }
 
   function snapshotSummaryContinuationState(session: UserChatSession): SummaryContinuationState {
@@ -95,13 +102,10 @@ export function createSessionDiscussionService(deps: SessionDiscussionServiceDep
   }
 
   function restoreSummaryContinuationState(session: UserChatSession, snapshot: SummaryContinuationState): void {
-    session.pendingAgentTasks = snapshot.pendingAgentTasks && snapshot.pendingAgentTasks.length > 0
-      ? snapshot.pendingAgentTasks.map(task => ({ ...task }))
-      : undefined;
-    session.pendingVisibleMessages = snapshot.pendingVisibleMessages && snapshot.pendingVisibleMessages.length > 0
-      ? snapshot.pendingVisibleMessages.map(message => ({ ...message }))
-      : undefined;
-    session.discussionState = snapshot.discussionState === 'active' ? 'active' : 'paused';
+    const normalizedSnapshot = normalizeSummaryContinuationState(snapshot);
+    session.pendingAgentTasks = normalizedSnapshot.pendingAgentTasks;
+    session.pendingVisibleMessages = normalizedSnapshot.pendingVisibleMessages;
+    session.discussionState = normalizedSnapshot.discussionState;
     runtime.touchSession(session);
   }
 
@@ -113,16 +117,10 @@ export function createSessionDiscussionService(deps: SessionDiscussionServiceDep
   }
 
   function resolveManualSummaryAgent(session: UserChatSession): string | null {
-    const enabledAgents = runtime.getSessionEnabledAgents(session);
-    if (enabledAgents.length === 0) {
-      return null;
-    }
-
-    if (session.currentAgent && enabledAgents.includes(session.currentAgent)) {
-      return session.currentAgent;
-    }
-
-    return enabledAgents[0] || null;
+    return selectManualSummaryAgent({
+      enabledAgents: runtime.getSessionEnabledAgents(session),
+      currentAgent: session.currentAgent
+    });
   }
 
   function buildManualSummaryPrompt(session: UserChatSession): string {

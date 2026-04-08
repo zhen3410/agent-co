@@ -2,6 +2,7 @@ import { ChatRuntime } from '../runtime/chat-runtime';
 import { APP_ERROR_CODES } from '../../shared/errors/app-error-codes';
 import { SessionService, SessionUserContext } from './session-service';
 import { ChatServiceErrorFactory, ChatSummaryService, ExecuteAgentTurnParams, ExecuteAgentTurnResult } from './chat-service-types';
+import { canStartManualSummary } from '../domain/discussion-policy';
 
 export interface ChatSummaryServiceDependencies {
   syncAgentsFromStore(): void;
@@ -27,7 +28,8 @@ export function createChatSummaryService(deps: ChatSummaryServiceDependencies): 
         });
       }
 
-      if (deps.runtime.normalizeDiscussionMode(session.discussionMode) !== 'peer') {
+      const discussionMode = deps.runtime.normalizeDiscussionMode(session.discussionMode);
+      if (!canStartManualSummary(discussionMode)) {
         throw deps.createError('仅 peer 模式支持手动生成总结', {
           code: APP_ERROR_CODES.VALIDATION_FAILED
         });

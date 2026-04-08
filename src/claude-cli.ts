@@ -12,6 +12,7 @@ import * as readline from 'readline';
 import { AIAgent, Message, RichBlock } from './types';
 import { digestHistory } from './rich-digest';
 import { extractRichBlocks } from './rich-extract';
+import { parseCliEventLine } from './cli-event-parser';
 
 function readDurationFromEnv(name: string, fallbackMs: number): number {
   const raw = process.env[name];
@@ -330,19 +331,23 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
         return;
       }
 
-      try {
-        const event = JSON.parse(line);
-        if (typeof event.result === 'string') {
-          finalResult = event.result;
-        }
+      const parsedLine = parseCliEventLine(line);
 
-        const extractedTexts = collectTextFromValue(event);
-        if (extractedTexts.length > 0) {
-          result += extractedTexts.join('');
+      if (parsedLine.kind === 'json') {
+        if (parsedLine.event?.type === 'result_text') {
+          finalResult = parsedLine.event.text;
+        } else if (parsedLine.event?.type === 'assistant_text') {
+          result += parsedLine.event.text;
+        } else {
+          const extractedTexts = collectTextFromValue(parsedLine.raw);
+          if (extractedTexts.length > 0) {
+            result += extractedTexts.join('');
+          }
         }
-      } catch {
-        result += `${line}\n`;
+        return;
       }
+
+      result += `${line}\n`;
     });
 
     child.on('close', (code) => {
@@ -378,77 +383,3 @@ export async function callAgentCLI(
   return callClaudeCLI(userMessage, agent, history, options);
 }
 
-export function generateMockReply(userMessage: string, agentName: string): string {
-  const lowerMsg = userMessage.toLowerCase();
-
-  if (lowerMsg.includes('待办') || lowerMsg.includes('todo') || lowerMsg.includes('计划')) {
-    return `好的,我来帮你列一个今天的待办事项：
-
-\`\`\`cc_rich
-{
-  "kind": "checklist",
-  "title": "📋 今天的待办",
-  "items": [
-    { "text": "完成任务一", "done": false },
-    { "text": "完成任务二", "done": false },
-    { "text": "已完成事项", "done": true }
-  ]
-}
-\`\`\`
-
-记得按时完成哦！`;
-  }
-
-  if (lowerMsg.includes('总结') || lowerMsg.includes('进展') || lowerMsg.includes('摘要')) {
-    return `好的,这是进展摘要:
-
-\`\`\`cc_rich
-{
-  "kind": "card",
-  "title": "📊 进展摘要",
-  "body": "完成了多个任务,进展顺利。",
-  "tone": "info"
-}
-\`\`\`
-
-继续保持!`;
-  }
-
-  if (lowerMsg.includes('警告') || lowerMsg.includes('注意') || lowerMsg.includes('问题')) {
-    return `我注意到一个需要关注的问题:
-
-\`\`\`cc_rich
-{
-  "kind": "card",
-  "title": "⚠️ 注意事项",
-  "body": "请检查相关资源使用情况。",
-  "tone": "warning"
-}
-\`\`\`
-
-需要我帮你分析吗?`;
-  }
-
-  if (lowerMsg.includes('完成') || lowerMsg.includes('成功')) {
-    return `太棒了!
-
-\`\`\`cc_rich
-{
-  "kind": "card",
-  "title": "✅ 操作成功",
-  "body": "任务已成功完成!",
-  "tone": "success"
-}
-\`\`\`
-
-还有什么需要帮助的吗?`;
-  }
-
-  return `我是 ${agentName},我收到了你的消息: "${userMessage}"
-
-如果你想看我展示富文本功能,可以尝试说:
-- "帮我列一个今天的待办事项"
-- "总结一下进展"
-- "给我一个警告提示"
-- "显示一个成功消息"`;
-}
