@@ -1,14 +1,24 @@
-import { DiscussionMode, DiscussionState, Message } from '../../types';
+import { DiscussionMode, DiscussionState, InvocationTask, InvocationTaskStatus, Message } from '../../types';
 import { ChatSessionRepository, PendingAgentDispatchTask, UserChatSession } from '../infrastructure/chat-session-repository';
 import {
   ChatRuntimeConfig,
   ChatSessionSummary,
   DetailedNormalizedUserChatSession,
+  InvocationTaskUpdatePatch,
   NormalizedUserChatSession,
   SessionChainPatch,
   generateChatSessionId,
   normalizePositiveSessionSetting
 } from './chat-runtime-types';
+import {
+  normalizeInvocationTaskRecord,
+  TIMEOUT_ELIGIBLE_INVOCATION_TASK_STATUSES
+} from './invocation-task-normalization';
+
+const ACTIVE_INVOCATION_TASK_STATUSES = new Set<InvocationTaskStatus>([
+  'pending_reply',
+  'awaiting_caller_review'
+]);
 
 interface ChatSessionStateDependencies {
   config: Pick<ChatRuntimeConfig, 'defaultChatSessionId' | 'defaultChatSessionName' | 'getValidAgentNames'>;
@@ -46,6 +56,13 @@ interface ChatSessionState {
   isAgentEnabledForSession(session: UserChatSession, agentName: string): boolean;
   setSessionEnabledAgent(userKey: string, sessionId: string, agentName: string, enabled: boolean): { enabledAgents: string[]; currentAgentWillExpire: boolean } | null;
   expireDisabledCurrentAgent(userKey: string, session: UserChatSession): string | null;
+  createInvocationTask(userKey: string, sessionId: string, task: InvocationTask): InvocationTask | null;
+  updateInvocationTask(userKey: string, sessionId: string, taskId: string, patch: InvocationTaskUpdatePatch): InvocationTask | null;
+  listInvocationTasks(userKey: string, sessionId: string): InvocationTask[];
+  listActiveInvocationTasks(userKey: string, sessionId: string): InvocationTask[];
+  resolveOverdueInvocationTasks(userKey: string, sessionId: string, now?: number): InvocationTask[];
+  markInvocationTaskCompleted(userKey: string, sessionId: string, taskId: string): InvocationTask | null;
+  markInvocationTaskFailed(userKey: string, sessionId: string, taskId: string, reason?: string): InvocationTask | null;
   buildSessionResponse(session: UserChatSession): NormalizedUserChatSession;
   buildDetailedSessionResponse(session: UserChatSession): DetailedNormalizedUserChatSession;
   parseSessionChainPatch(patch: unknown): SessionChainPatch;
@@ -66,6 +83,7 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
       currentAgent: null,
       enabledAgents: [],
       agentWorkdirs: {},
+      invocationTasks: [],
       ...deps.normalizeSessionChainSettings(),
       ...deps.normalizeSessionDiscussionSettings(),
       createdAt: now,
@@ -98,6 +116,23 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
     return deps.config.getValidAgentNames();
   }
 
+  function normalizeInvocationTask(task: unknown, sessionId: string): InvocationTask | null {
+    return normalizeInvocationTaskRecord(task, sessionId);
+  }
+
+  function normalizeInvocationTasks(session: UserChatSession): InvocationTask[] {
+    const source = Array.isArray(session.invocationTasks) ? session.invocationTasks : [];
+    const normalized = source
+      .map(task => normalizeInvocationTask(task, session.id))
+      .filter((task): task is InvocationTask => task !== null);
+    session.invocationTasks = normalized;
+    return normalized;
+  }
+
+  function cloneInvocationTask(task: InvocationTask): InvocationTask {
+    return { ...task };
+  }
+
   function buildSessionResponse(session: UserChatSession): NormalizedUserChatSession {
     const normalized = deps.normalizeSessionChainSettings(session);
     const discussion = deps.normalizeSessionDiscussionSettings(session);
@@ -112,6 +147,7 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
       pendingVisibleMessages: Array.isArray(session.pendingVisibleMessages)
         ? session.pendingVisibleMessages.map(message => ({ ...message }))
         : undefined,
+      invocationTasks: normalizeInvocationTasks(session).map(cloneInvocationTask),
       agentChainMaxHops: normalized.agentChainMaxHops,
       agentChainMaxCallsPerAgent: normalized.agentChainMaxCallsPerAgent,
       discussionMode: discussion.discussionMode,
@@ -194,6 +230,7 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
       return fallback;
     }
 
+    normalizeInvocationTasks(activeSession);
     deps.repository.setActiveSessionId(userKey, activeSession.id);
     return activeSession;
   }
@@ -203,6 +240,7 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
     return Array.from(sessions.values())
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .map((session) => {
+        normalizeInvocationTasks(session);
         const normalized = deps.normalizeSessionChainSettings(session);
         const discussion = deps.normalizeSessionDiscussionSettings(session);
         return {
@@ -220,7 +258,10 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
   }
 
   function getUserHistory(userKey: string, sessionId: string): Message[] {
-    return ensureUserSessions(userKey).get(sessionId)?.history || [];
+    const session = ensureUserSessions(userKey).get(sessionId);
+    if (!session) return [];
+    normalizeInvocationTasks(session);
+    return session.history || [];
   }
 
   function clearUserHistory(userKey: string, sessionId: string): void {
@@ -318,7 +359,120 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
       if (sourceSession.history.length > existing.history.length) {
         existing.history = sourceSession.history;
       }
+      const targetInvocationTasks = normalizeInvocationTasks(existing);
+      const sourceInvocationTasks = normalizeInvocationTasks(sourceSession);
+      const mergedInvocationTasks = new Map<string, InvocationTask>();
+      for (const task of sourceInvocationTasks) {
+        mergedInvocationTasks.set(task.id, task);
+      }
+      for (const task of targetInvocationTasks) {
+        const current = mergedInvocationTasks.get(task.id);
+        if (!current || task.updatedAt >= current.updatedAt) {
+          mergedInvocationTasks.set(task.id, task);
+        }
+      }
+      existing.invocationTasks = Array.from(mergedInvocationTasks.values());
     }
+  }
+
+  function createInvocationTask(userKey: string, sessionId: string, task: InvocationTask): InvocationTask | null {
+    const session = ensureUserSessions(userKey).get(sessionId);
+    if (!session) return null;
+
+    const normalizedTask = normalizeInvocationTask(task, sessionId);
+    if (!normalizedTask) return null;
+
+    const tasks = normalizeInvocationTasks(session);
+    const existingTaskIndex = tasks.findIndex(item => item.id === normalizedTask.id);
+    if (existingTaskIndex >= 0) {
+      tasks[existingTaskIndex] = {
+        ...tasks[existingTaskIndex],
+        ...normalizedTask,
+        sessionId,
+        updatedAt: Date.now()
+      };
+      deps.touchSession(session);
+      return cloneInvocationTask(tasks[existingTaskIndex]);
+    }
+
+    tasks.push({
+      ...normalizedTask,
+      sessionId,
+      createdAt: normalizedTask.createdAt || Date.now(),
+      updatedAt: normalizedTask.updatedAt || Date.now()
+    });
+    deps.touchSession(session);
+    return cloneInvocationTask(tasks[tasks.length - 1]);
+  }
+
+  function updateInvocationTask(userKey: string, sessionId: string, taskId: string, patch: InvocationTaskUpdatePatch): InvocationTask | null {
+    const session = ensureUserSessions(userKey).get(sessionId);
+    if (!session) return null;
+
+    const tasks = normalizeInvocationTasks(session);
+    const index = tasks.findIndex(task => task.id === taskId);
+    if (index < 0) return null;
+
+    const nextTask = normalizeInvocationTask({
+      ...tasks[index],
+      ...patch,
+      id: tasks[index].id,
+      sessionId: tasks[index].sessionId,
+      createdAt: tasks[index].createdAt,
+      updatedAt: Date.now()
+    }, sessionId);
+    if (!nextTask) return null;
+
+    tasks[index] = nextTask;
+    deps.touchSession(session);
+    return cloneInvocationTask(nextTask);
+  }
+
+  function listInvocationTasks(userKey: string, sessionId: string): InvocationTask[] {
+    const session = ensureUserSessions(userKey).get(sessionId);
+    if (!session) return [];
+    return normalizeInvocationTasks(session).map(cloneInvocationTask);
+  }
+
+  function listActiveInvocationTasks(userKey: string, sessionId: string): InvocationTask[] {
+    return listInvocationTasks(userKey, sessionId).filter(task => ACTIVE_INVOCATION_TASK_STATUSES.has(task.status));
+  }
+
+  function resolveOverdueInvocationTasks(userKey: string, sessionId: string, now = Date.now()): InvocationTask[] {
+    const session = ensureUserSessions(userKey).get(sessionId);
+    if (!session) return [];
+
+    const tasks = normalizeInvocationTasks(session);
+    const timedOutTasks: InvocationTask[] = [];
+    for (const task of tasks) {
+      if (!TIMEOUT_ELIGIBLE_INVOCATION_TASK_STATUSES.has(task.status)) continue;
+      if (!task.deadlineAt || task.deadlineAt > now) continue;
+      task.status = 'timed_out';
+      task.timedOutAt = now;
+      task.updatedAt = now;
+      timedOutTasks.push(cloneInvocationTask(task));
+    }
+
+    if (timedOutTasks.length > 0) {
+      deps.touchSession(session);
+    }
+
+    return timedOutTasks;
+  }
+
+  function markInvocationTaskCompleted(userKey: string, sessionId: string, taskId: string): InvocationTask | null {
+    return updateInvocationTask(userKey, sessionId, taskId, {
+      status: 'completed',
+      completedAt: Date.now()
+    });
+  }
+
+  function markInvocationTaskFailed(userKey: string, sessionId: string, taskId: string, reason?: string): InvocationTask | null {
+    return updateInvocationTask(userKey, sessionId, taskId, {
+      status: 'failed',
+      failedAt: Date.now(),
+      failureReason: reason
+    });
   }
 
   function migrateLegacySessionUserData(oldUserKey: string, newUserKey: string): void {
@@ -431,6 +585,13 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
     isAgentEnabledForSession,
     setSessionEnabledAgent,
     expireDisabledCurrentAgent,
+    createInvocationTask,
+    updateInvocationTask,
+    listInvocationTasks,
+    listActiveInvocationTasks,
+    resolveOverdueInvocationTasks,
+    markInvocationTaskCompleted,
+    markInvocationTaskFailed,
     buildSessionResponse,
     buildDetailedSessionResponse,
     parseSessionChainPatch

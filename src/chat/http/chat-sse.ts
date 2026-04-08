@@ -10,6 +10,7 @@ export interface ChatSseExecutionResult {
 
 export interface ChatSseCallbacks {
   shouldContinue(): boolean;
+  signal?: AbortSignal;
   onUserMessage(message: unknown): void;
   onThinking(agentName: string): void;
   onTextDelta(agentName: string, delta: string): void;
@@ -25,6 +26,11 @@ export async function runChatSse(
     execute(callbacks: ChatSseCallbacks): Promise<ChatSseExecutionResult>;
   }
 ): Promise<void> {
+  const heartbeatIntervalMs = (() => {
+    const raw = process.env.AGENT_CO_SSE_HEARTBEAT_INTERVAL_MS;
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 15_000;
+  })();
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -35,12 +41,15 @@ export async function runChatSse(
 
   let streamClosed = false;
   let streamCompleted = false;
+  const executionController = new AbortController();
+  let heartbeatTimer: NodeJS.Timeout | null = null;
 
   const markStreamClosed = (source: 'req_aborted' | 'req_close' | 'res_close') => {
     if (streamClosed) {
       return;
     }
     streamClosed = true;
+    executionController.abort();
     if (!streamCompleted) {
       params.runtime.appendOperationalLog('info', 'chat-exec', `session=${params.sessionId} stage=stream_disconnect reason=client_disconnect source=${source}`);
     }
@@ -62,9 +71,17 @@ export async function runChatSse(
     return true;
   };
 
+  if (heartbeatIntervalMs > 0) {
+    heartbeatTimer = setInterval(() => {
+      sendEvent('heartbeat', { timestamp: Date.now() });
+    }, heartbeatIntervalMs);
+    heartbeatTimer.unref?.();
+  }
+
   try {
     const result = await params.execute({
       shouldContinue: () => !streamClosed && !res.writableEnded && !res.destroyed,
+      signal: executionController.signal,
       onUserMessage: (message) => {
         sendEvent('user_message', message);
       },
@@ -96,5 +113,9 @@ export async function runChatSse(
     }
     res.write(`event: error\ndata: ${JSON.stringify({ error: (error as Error).message })}\n\n`);
     res.end();
+  } finally {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+    }
   }
 }

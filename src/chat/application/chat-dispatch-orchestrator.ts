@@ -1,18 +1,26 @@
-import { Message } from '../../types';
+import { InvocationReviewAction, Message } from '../../types';
 import { AgentManager } from '../../agent-manager';
 import { SessionService } from './session-service';
-import { ChatRuntime, PendingAgentDispatchTask, UserChatSession } from '../runtime/chat-runtime';
+import { ChatRuntime, UserChatSession } from '../runtime/chat-runtime';
+import { generateId } from '../runtime/chat-runtime-types';
 import {
   AgentDispatchTask,
   ChatDispatchOrchestrator,
   ExecuteAgentTurnParams,
   ExecuteAgentTurnResult,
   MentionCollectionResult,
+  PendingAgentDispatchTask,
   RunAgentTask
 } from './chat-service-types';
 import {
+  canFollowUpInvocationTask,
+  canRetryInvocationTask,
   canQueueContinuationTarget,
   collectImplicitPeerContinuationTargets,
+  isInvocationTaskOverdue,
+  INVOCATION_TASK_DEFAULT_DEADLINE_MS,
+  INVOCATION_TASK_MAX_FOLLOW_UPS,
+  INVOCATION_TASK_MAX_RETRIES,
   resolvePeerDiscussionStateAfterTurn,
   shouldRunChainedTask,
   shouldSkipAgentTaskForCallLimit
@@ -37,8 +45,332 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
     };
   }
 
+  function buildInvocationReviewPrompt(task: {
+    callerAgentName: string;
+    calleeAgentName: string;
+    originalPrompt: string;
+  }, replyText: string): string {
+    return [
+      `你正在复核 ${task.calleeAgentName} 对委派任务的回复。`,
+      `原始委派请求：${task.originalPrompt}`,
+      `${task.calleeAgentName} 的回复：${replyText || '(空回复)'}`,
+      '只允许输出以下三种格式之一：',
+      'accept: <接受原因>',
+      'follow_up: <下一条具体追问>',
+      'retry: <要求对方重做的具体要求>',
+      '关键词必须是 accept / follow_up / retry。'
+    ].join('\n');
+  }
+
+  function buildInvocationTimeoutReviewPrompt(task: {
+    calleeAgentName: string;
+    originalPrompt: string;
+  }): string {
+    return [
+      `你正在复核 ${task.calleeAgentName} 对委派任务的回复。`,
+      `原始委派请求：${task.originalPrompt}`,
+      `${task.calleeAgentName} 未在截止时间前回复，请只允许输出以下三种格式之一：`,
+      'accept: <接受原因>',
+      'follow_up: <下一条具体追问>',
+      'retry: <要求对方重做的具体要求>',
+      '关键词必须是 accept / follow_up / retry。'
+    ].join('\n');
+  }
+
+  function parseInvocationReviewResult(text: string): { action: InvocationReviewAction; nextPrompt: string } | null {
+    const normalized = (text || '').trim();
+    if (!normalized) return null;
+
+    const match = normalized.match(/^\s*(accept|follow_up|retry)\s*(?:[:：-]\s*(.*))?$/is);
+    if (!match) return null;
+
+    const action = match[1].toLowerCase() as InvocationReviewAction;
+    const nextPrompt = (match[2] || '').trim();
+    if ((action === 'follow_up' || action === 'retry') && !nextPrompt) {
+      return null;
+    }
+    return { action, nextPrompt };
+  }
+
+  function buildInternalReviewTask(params: {
+    agentName: string;
+    prompt: string;
+    taskId: string;
+    callerAgentName: string;
+    calleeAgentName: string;
+    deadlineAt?: number;
+  }): PendingAgentDispatchTask {
+    return {
+      agentName: params.agentName,
+      prompt: params.prompt,
+      includeHistory: true,
+      dispatchKind: 'internal_review',
+      taskId: params.taskId,
+      callerAgentName: params.callerAgentName,
+      calleeAgentName: params.calleeAgentName,
+      reviewMode: 'caller_review',
+      deadlineAt: params.deadlineAt
+    };
+  }
+
+  function buildCalleeReplyTask(params: {
+    agentName: string;
+    prompt: string;
+    taskId: string;
+    callerAgentName: string;
+    calleeAgentName: string;
+    deadlineAt?: number;
+  }): PendingAgentDispatchTask {
+    return {
+      agentName: params.agentName,
+      prompt: params.prompt,
+      includeHistory: true,
+      dispatchKind: 'explicit_chained',
+      taskId: params.taskId,
+      callerAgentName: params.callerAgentName,
+      calleeAgentName: params.calleeAgentName,
+      reviewMode: 'caller_review',
+      deadlineAt: params.deadlineAt
+    };
+  }
+
+  interface InvocationReviewLoopResult {
+    pendingTasks: PendingAgentDispatchTask[];
+    suppressMessage: boolean;
+  }
+
+  function transitionInvocationTaskToTimeoutReview(params: {
+    userKey: string;
+    sessionId: string;
+    invocationTaskId: string;
+    now: number;
+  }): PendingAgentDispatchTask | null {
+    const invocationTask = runtime.listInvocationTasks(params.userKey, params.sessionId)
+      .find(item => item.id === params.invocationTaskId);
+    if (!invocationTask) {
+      return null;
+    }
+
+    const updatedTask = runtime.updateInvocationTask(params.userKey, params.sessionId, invocationTask.id, {
+      status: 'awaiting_caller_review',
+      timedOutAt: params.now
+    });
+    const promptTask = updatedTask || invocationTask;
+    return buildInternalReviewTask({
+      agentName: promptTask.callerAgentName,
+      prompt: buildInvocationTimeoutReviewPrompt(promptTask),
+      taskId: promptTask.id,
+      callerAgentName: promptTask.callerAgentName,
+      calleeAgentName: promptTask.calleeAgentName,
+      deadlineAt: promptTask.deadlineAt
+    });
+  }
+
+  function buildOverdueInvocationReviewTasks(params: {
+    userKey: string;
+    session: UserChatSession;
+    now: number;
+  }): PendingAgentDispatchTask[] {
+    const timedOutTasks = runtime.resolveOverdueInvocationTasks(params.userKey, params.session.id, params.now);
+    const reviewTasks: PendingAgentDispatchTask[] = [];
+
+    for (const timedOutTask of timedOutTasks) {
+      if (!isInvocationTaskOverdue({
+        status: 'pending_reply',
+        deadlineAt: timedOutTask.deadlineAt,
+        now: params.now
+      })) {
+        continue;
+      }
+
+      const reviewTask = transitionInvocationTaskToTimeoutReview({
+        userKey: params.userKey,
+        sessionId: params.session.id,
+        invocationTaskId: timedOutTask.id,
+        now: params.now
+      });
+      if (reviewTask) {
+        reviewTasks.push(reviewTask);
+      }
+    }
+
+    return reviewTasks;
+  }
+
+  function interceptOverdueQueuedInvocationTask(params: {
+    userKey: string;
+    session: UserChatSession;
+    task: PendingAgentDispatchTask;
+    now: number;
+  }): PendingAgentDispatchTask | null {
+    const { userKey, session, task, now } = params;
+    if (!task.taskId || task.dispatchKind === 'internal_review' || task.reviewMode !== 'caller_review') {
+      return null;
+    }
+
+    const invocationTask = runtime.listInvocationTasks(userKey, session.id)
+      .find(item => item.id === task.taskId);
+    if (!invocationTask || !isInvocationTaskOverdue({
+      status: invocationTask.status,
+      deadlineAt: invocationTask.deadlineAt,
+      now
+    })) {
+      return null;
+    }
+
+    return transitionInvocationTaskToTimeoutReview({
+      userKey,
+      sessionId: session.id,
+      invocationTaskId: invocationTask.id,
+      now
+    });
+  }
+
+  function handleInvocationReviewLoopMessage(params: {
+    userKey: string;
+    session: UserChatSession;
+    task: PendingAgentDispatchTask;
+    message: Message;
+  }): InvocationReviewLoopResult | null {
+    const { userKey, session, task, message } = params;
+    if (task.dispatchKind === 'internal_review') {
+      const invocationTask = message.taskId
+        ? runtime.listInvocationTasks(userKey, session.id).find(item => item.id === message.taskId)
+        : null;
+      if (!invocationTask || message.sender !== task.agentName || invocationTask.status !== 'awaiting_caller_review') {
+        if (invocationTask) {
+          runtime.markInvocationTaskFailed(userKey, session.id, invocationTask.id, 'invalid_review_state');
+        }
+        return {
+          suppressMessage: true,
+          pendingTasks: []
+        };
+      }
+
+      const review = parseInvocationReviewResult(message.text || '');
+      if (!review) {
+        runtime.markInvocationTaskFailed(userKey, session.id, invocationTask.id, 'invalid_review_result');
+        return {
+          suppressMessage: true,
+          pendingTasks: []
+        };
+      }
+
+      if (review.action === 'accept') {
+        runtime.updateInvocationTask(userKey, session.id, invocationTask.id, {
+          status: 'completed',
+          reviewAction: 'accept',
+          completedAt: Date.now()
+        });
+        return {
+          suppressMessage: true,
+          pendingTasks: []
+        };
+      }
+
+      const nextPrompt = review.nextPrompt;
+      if (review.action === 'retry' && !canRetryInvocationTask({
+        retryCount: invocationTask.retryCount,
+        maxRetries: INVOCATION_TASK_MAX_RETRIES
+      })) {
+        runtime.markInvocationTaskFailed(userKey, session.id, invocationTask.id, 'retry_limit_exceeded');
+        return {
+          suppressMessage: true,
+          pendingTasks: []
+        };
+      }
+      if (review.action === 'follow_up' && !canFollowUpInvocationTask({
+        followupCount: invocationTask.followupCount,
+        maxFollowUps: INVOCATION_TASK_MAX_FOLLOW_UPS
+      })) {
+        runtime.markInvocationTaskFailed(userKey, session.id, invocationTask.id, 'follow_up_limit_exceeded');
+        return {
+          suppressMessage: true,
+          pendingTasks: []
+        };
+      }
+
+      const nextDeadlineAt = Date.now() + INVOCATION_TASK_DEFAULT_DEADLINE_MS;
+      runtime.updateInvocationTask(userKey, session.id, invocationTask.id, {
+        status: 'pending_reply',
+        prompt: nextPrompt,
+        reviewAction: review.action,
+        deadlineAt: nextDeadlineAt,
+        followupCount: review.action === 'follow_up' ? invocationTask.followupCount + 1 : invocationTask.followupCount,
+        retryCount: review.action === 'retry' ? invocationTask.retryCount + 1 : invocationTask.retryCount
+      });
+      return {
+        suppressMessage: true,
+        pendingTasks: [
+          buildCalleeReplyTask({
+            agentName: invocationTask.calleeAgentName,
+            prompt: nextPrompt,
+            taskId: invocationTask.id,
+            callerAgentName: invocationTask.callerAgentName,
+            calleeAgentName: invocationTask.calleeAgentName,
+            deadlineAt: nextDeadlineAt
+          })
+        ]
+      };
+    }
+
+    if (!message.taskId) {
+      return null;
+    }
+
+    const invocationTask = runtime.listInvocationTasks(userKey, session.id)
+      .find(item => item.id === message.taskId);
+    if (!invocationTask) {
+      return null;
+    }
+
+    if (message.sender === invocationTask.calleeAgentName && invocationTask.status === 'pending_reply') {
+      const replyArrivedAt = Number.isFinite(message.timestamp) ? Number(message.timestamp) : Date.now();
+      if (isInvocationTaskOverdue({
+        status: invocationTask.status,
+        deadlineAt: invocationTask.deadlineAt,
+        now: replyArrivedAt
+      })) {
+        const timeoutReviewTask = transitionInvocationTaskToTimeoutReview({
+          userKey,
+          sessionId: session.id,
+          invocationTaskId: invocationTask.id,
+          now: replyArrivedAt
+        });
+        return timeoutReviewTask ? {
+          suppressMessage: true,
+          pendingTasks: [timeoutReviewTask]
+        } : {
+          suppressMessage: true,
+          pendingTasks: []
+        };
+      }
+
+      const reviewPrompt = buildInvocationReviewPrompt(invocationTask, message.text || '');
+      runtime.updateInvocationTask(userKey, session.id, invocationTask.id, {
+        status: 'awaiting_caller_review',
+        lastReplyMessageId: message.id
+      });
+      return {
+        suppressMessage: false,
+        pendingTasks: [
+          buildInternalReviewTask({
+            agentName: invocationTask.callerAgentName,
+            prompt: reviewPrompt,
+            taskId: invocationTask.id,
+            callerAgentName: invocationTask.callerAgentName,
+            calleeAgentName: invocationTask.calleeAgentName,
+            deadlineAt: invocationTask.deadlineAt
+          })
+        ]
+      };
+    }
+
+    return null;
+  }
+
   async function executeAgentTurn(params: ExecuteAgentTurnParams): Promise<ExecuteAgentTurnResult> {
-    const { userKey, session, initialTasks, stream, onThinking, onTextDelta, onMessage, shouldContinue } = params;
+    const { userKey, session, initialTasks, stream, onThinking, onTextDelta, onMessage, shouldContinue, signal } = params;
     const queue: PendingAgentDispatchTask[] = Array.isArray(params.pendingTasks)
       ? params.pendingTasks.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' }))
       : initialTasks.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' }));
@@ -51,7 +383,23 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
 
     const canContinue = () => shouldContinue ? shouldContinue() : true;
 
-    while (queue.length > 0) {
+    while (true) {
+      if (queue.length === 0) {
+        if (streamStopped) {
+          break;
+        }
+
+        const overdueReviewTasks = buildOverdueInvocationReviewTasks({
+          userKey,
+          session,
+          now: Date.now()
+        });
+        if (overdueReviewTasks.length === 0) {
+          break;
+        }
+        queue.push(...overdueReviewTasks);
+      }
+
       if (!canContinue()) {
         streamStopped = true;
         runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} stage=stream_stop reason=client_disconnect`);
@@ -59,6 +407,18 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       }
 
       const task = queue.shift()!;
+      const overdueReviewTask = interceptOverdueQueuedInvocationTask({
+        userKey,
+        session,
+        task,
+        now: Date.now()
+      });
+      if (overdueReviewTask) {
+        queue.unshift(overdueReviewTask);
+        continue;
+      }
+
+      const isInternalReviewTask = task.dispatchKind === 'internal_review';
       if (!shouldRunChainedTask({
         dispatchKind: task.dispatchKind,
         chainedCalls,
@@ -69,7 +429,7 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       }
 
       const currentCalls = callCounts.get(task.agentName) || 0;
-      if (shouldSkipAgentTaskForCallLimit({
+      if (!isInternalReviewTask && shouldSkipAgentTaskForCallLimit({
         currentCalls,
         maxCallsPerAgent: agentChainMaxCallsPerAgent
       })) {
@@ -77,7 +437,9 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         continue;
       }
 
-      callCounts.set(task.agentName, currentCalls + 1);
+      if (!isInternalReviewTask) {
+        callCounts.set(task.agentName, currentCalls + 1);
+      }
       if (runtime.isChainedDispatchKind(task.dispatchKind)) {
         chainedCalls += 1;
       }
@@ -88,6 +450,7 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         session,
         task,
         stream,
+        signal,
         onTextDelta: onTextDelta
           ? (delta) => onTextDelta(task.agentName, delta)
           : undefined
@@ -136,16 +499,26 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           dispatchKind: task.dispatchKind
         };
 
-        sawVisibleMessage = true;
-        sessionService.appendMessage(session, message);
-        aiMessages.push(message);
-        onMessage?.(message);
-        if (stream) {
-          await new Promise<void>(resolve => setImmediate(resolve));
+        const invocationReviewResult = handleInvocationReviewLoopMessage({
+          userKey,
+          session,
+          task,
+          message
+        });
+        const shouldSuppressMessage = invocationReviewResult?.suppressMessage === true;
+
+        if (!shouldSuppressMessage) {
+          sawVisibleMessage = true;
+          sessionService.appendMessage(session, message);
+          aiMessages.push(message);
+          onMessage?.(message);
+          if (stream) {
+            await new Promise<void>(resolve => setImmediate(resolve));
+          }
         }
 
-        const pendingMentionsToQueue: PendingAgentDispatchTask[] = [];
-        const allowContinuationQueue = task.dispatchKind !== 'summary';
+        const pendingMentionsToQueue: PendingAgentDispatchTask[] = invocationReviewResult ? [...invocationReviewResult.pendingTasks] : [];
+        const allowContinuationQueue = task.dispatchKind !== 'summary' && invocationReviewResult === null;
 
         for (const mention of allowContinuationQueue ? chainedMentions : []) {
           const queuedChainedCalls = queue.filter(item => runtime.isChainedDispatchKind(item.dispatchKind)).length;
@@ -170,11 +543,39 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
             continue;
           }
 
+          const callerAgentName = message.sender || task.agentName;
+          const taskId = generateId();
+          const deadlineAt = Date.now() + INVOCATION_TASK_DEFAULT_DEADLINE_MS;
+          const shouldTrackCallerReview = task.dispatchKind !== 'summary';
+          const reviewMode = shouldTrackCallerReview ? 'caller_review' : 'none';
+
+          if (shouldTrackCallerReview) {
+            runtime.createInvocationTask(userKey, session.id, {
+              id: taskId,
+              sessionId: session.id,
+              status: 'pending_reply',
+              callerAgentName,
+              calleeAgentName: mention,
+              prompt: message.text || '',
+              originalPrompt: message.text || '',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              deadlineAt,
+              retryCount: 0,
+              followupCount: 0
+            });
+          }
+
           pendingMentionsToQueue.push({
             agentName: mention,
             prompt: message.text || '',
             includeHistory: true,
-            dispatchKind: 'explicit_chained'
+            dispatchKind: 'explicit_chained',
+            taskId: shouldTrackCallerReview ? taskId : undefined,
+            callerAgentName: shouldTrackCallerReview ? callerAgentName : undefined,
+            calleeAgentName: shouldTrackCallerReview ? mention : undefined,
+            reviewMode,
+            deadlineAt: shouldTrackCallerReview ? deadlineAt : undefined
           });
         }
 

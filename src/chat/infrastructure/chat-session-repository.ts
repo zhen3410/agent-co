@@ -1,10 +1,17 @@
-import { Message, DiscussionMode, DiscussionState, AgentDispatchKind } from '../../types';
+import { Message, DiscussionMode, DiscussionState, AgentDispatchKind, InvocationTask } from '../../types';
+
+export type AgentDispatchReviewMode = 'none' | 'caller_review';
 
 export interface AgentDispatchTask {
   agentName: string;
   prompt: string;
   includeHistory: boolean;
   dispatchKind?: AgentDispatchKind;
+  taskId?: string;
+  callerAgentName?: string;
+  calleeAgentName?: string;
+  reviewMode?: AgentDispatchReviewMode;
+  deadlineAt?: number;
 }
 
 export interface PendingAgentDispatchTask extends AgentDispatchTask {
@@ -24,6 +31,7 @@ export interface UserChatSession {
   discussionState?: DiscussionState;
   pendingAgentTasks?: PendingAgentDispatchTask[];
   pendingVisibleMessages?: Message[];
+  invocationTasks?: InvocationTask[];
   createdAt: number;
   updatedAt: number;
 }

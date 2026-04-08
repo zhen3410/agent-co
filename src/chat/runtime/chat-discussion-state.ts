@@ -65,7 +65,7 @@ export function createChatDiscussionState(deps: ChatDiscussionStateDependencies)
   }
 
   function normalizeDispatchKind(value: unknown, fallback: AgentDispatchKind | null = 'initial'): AgentDispatchKind | null {
-    if (value === 'explicit_chained' || value === 'implicit_chained' || value === 'summary' || value === 'initial') {
+    if (value === 'explicit_chained' || value === 'implicit_chained' || value === 'internal_review' || value === 'summary' || value === 'initial') {
       return value;
     }
 

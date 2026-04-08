@@ -1,4 +1,8 @@
-import { DiscussionState, Message } from '../../types';
+import { DiscussionState, InvocationTaskStatus, Message } from '../../types';
+
+export const INVOCATION_TASK_DEFAULT_DEADLINE_MS = 5 * 60 * 1000;
+export const INVOCATION_TASK_MAX_RETRIES = 1;
+export const INVOCATION_TASK_MAX_FOLLOW_UPS = 2;
 
 export interface ImplicitPeerContinuationTargetParams {
   message: string;
@@ -44,6 +48,22 @@ export interface ResolvePeerDiscussionStateAfterTurnParams {
   discussionMode: string;
   sawVisibleMessage: boolean;
   hasPendingExplicitContinuation: boolean;
+}
+
+export interface IsInvocationTaskOverdueParams {
+  status: InvocationTaskStatus;
+  deadlineAt?: number | null;
+  now: number;
+}
+
+export interface CanRetryInvocationTaskParams {
+  retryCount: number;
+  maxRetries: number;
+}
+
+export interface CanFollowUpInvocationTaskParams {
+  followupCount: number;
+  maxFollowUps: number;
 }
 
 export function collectImplicitPeerContinuationTargets(params: ImplicitPeerContinuationTargetParams): string[] {
@@ -104,4 +124,18 @@ export function resolvePeerDiscussionStateAfterTurn(params: ResolvePeerDiscussio
   }
 
   return params.hasPendingExplicitContinuation ? 'active' : 'paused';
+}
+
+export function isInvocationTaskOverdue(params: IsInvocationTaskOverdueParams): boolean {
+  return params.status === 'pending_reply'
+    && Number.isFinite(params.deadlineAt)
+    && Number(params.deadlineAt) <= params.now;
+}
+
+export function canRetryInvocationTask(params: CanRetryInvocationTaskParams): boolean {
+  return params.retryCount < params.maxRetries;
+}
+
+export function canFollowUpInvocationTask(params: CanFollowUpInvocationTaskParams): boolean {
+  return params.followupCount < params.maxFollowUps;
 }

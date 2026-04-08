@@ -1,10 +1,11 @@
-import { Message, DiscussionMode, DiscussionState, AgentDispatchKind } from '../../types';
+import { Message, DiscussionMode, DiscussionState, AgentDispatchKind, InvocationTask } from '../../types';
 import { UserChatSession, PendingAgentDispatchTask } from '../infrastructure/chat-session-repository';
 import { DependencyStatusItem, DependencyStatusLogEntry } from '../infrastructure/dependency-log-store';
 
-export type NormalizedUserChatSession = UserChatSession & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent' | 'discussionMode' | 'discussionState'>>;
+export type NormalizedUserChatSession = UserChatSession & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent' | 'discussionMode' | 'discussionState' | 'invocationTasks'>>;
 export type DetailedNormalizedUserChatSession = NormalizedUserChatSession & { enabledAgents: string[]; agentWorkdirs: Record<string, string> };
 export type SessionChainPatch = Partial<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent' | 'discussionMode'>>;
+export type InvocationTaskUpdatePatch = Partial<Omit<InvocationTask, 'id' | 'sessionId' | 'createdAt'>>;
 
 export interface ChatSessionSummary {
   id: string;
@@ -70,6 +71,13 @@ export interface ChatRuntime {
   isAgentEnabledForSession(session: UserChatSession, agentName: string): boolean;
   setSessionEnabledAgent(userKey: string, sessionId: string, agentName: string, enabled: boolean): { enabledAgents: string[]; currentAgentWillExpire: boolean } | null;
   expireDisabledCurrentAgent(userKey: string, session: UserChatSession): string | null;
+  createInvocationTask(userKey: string, sessionId: string, task: InvocationTask): InvocationTask | null;
+  updateInvocationTask(userKey: string, sessionId: string, taskId: string, patch: InvocationTaskUpdatePatch): InvocationTask | null;
+  listInvocationTasks(userKey: string, sessionId: string): InvocationTask[];
+  listActiveInvocationTasks(userKey: string, sessionId: string): InvocationTask[];
+  resolveOverdueInvocationTasks(userKey: string, sessionId: string, now?: number): InvocationTask[];
+  markInvocationTaskCompleted(userKey: string, sessionId: string, taskId: string): InvocationTask | null;
+  markInvocationTaskFailed(userKey: string, sessionId: string, taskId: string, reason?: string): InvocationTask | null;
   buildSessionResponse(session: UserChatSession): NormalizedUserChatSession;
   buildDetailedSessionResponse(session: UserChatSession): DetailedNormalizedUserChatSession;
   parseSessionChainPatch(patch: unknown): SessionChainPatch;

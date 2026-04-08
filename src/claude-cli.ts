@@ -52,6 +52,8 @@ export interface ClaudeResult {
 export interface ClaudeCallOptions {
   includeHistory?: boolean;
   extraEnv?: Record<string, string>;
+  onTextDelta?: (delta: string) => void;
+  signal?: AbortSignal;
 }
 
 export type CliCallOptions = ClaudeCallOptions;
@@ -282,13 +284,14 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
     let stderrData = '';
     let lastHeartbeat = Date.now();
     let isTerminating = false;
+    let settled = false;
 
     const onHeartbeat = () => {
       lastHeartbeat = Date.now();
     };
 
     const gracefulKill = (reason: string) => {
-      if (isTerminating) return;
+      if (isTerminating || child.exitCode !== null || child.signalCode !== null) return;
       isTerminating = true;
       logVerbose('meta', reason);
       child.kill('SIGTERM');
@@ -299,6 +302,18 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
         }
       }, CLI_KILL_GRACE_MS);
     };
+
+    const abortHandler = () => {
+      gracefulKill('收到 AbortSignal，终止子进程');
+    };
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        abortHandler();
+      } else {
+        options.signal.addEventListener('abort', abortHandler, { once: true });
+      }
+    }
 
     const timeoutId = setTimeout(() => {
       console.error(`[${cli.toUpperCase()} CLI] 超时，正在终止...`);
@@ -342,6 +357,7 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
           finalResult = parsedLine.event.text;
         } else if (parsedLine.event?.type === 'assistant_text') {
           result += parsedLine.event.text;
+          options.onTextDelta?.(parsedLine.event.text);
         } else {
           const extractedTexts = collectTextFromValue(parsedLine.raw);
           if (extractedTexts.length > 0) {
@@ -355,8 +371,13 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
     });
 
     child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeoutId);
       clearInterval(heartbeatId);
+      if (options.signal) {
+        options.signal.removeEventListener('abort', abortHandler);
+      }
 
       if (code !== 0 && !result && !finalResult) {
         const errorMsg = stderrData.trim() || `Exit code: ${code}`;
@@ -371,8 +392,13 @@ export async function callClaudeCLI(userMessage: string, agent: AIAgent, history
     });
 
     child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeoutId);
       clearInterval(heartbeatId);
+      if (options.signal) {
+        options.signal.removeEventListener('abort', abortHandler);
+      }
       reject(new Error(`无法启动 ${cli.toUpperCase()} CLI: ${err.message}`));
     });
   });

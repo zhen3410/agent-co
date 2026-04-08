@@ -1,7 +1,9 @@
 import Redis from 'ioredis';
-import { PendingAgentDispatchTask, RedisPersistedState, UserChatSession } from '../infrastructure/chat-session-repository';
+import { InvocationTask } from '../../types';
+import { AgentDispatchReviewMode, PendingAgentDispatchTask, RedisPersistedState, UserChatSession } from '../infrastructure/chat-session-repository';
 import { ChatRuntimeConfig, SessionChainPatch } from './chat-runtime-types';
 import { ChatRuntimePersistenceStore } from './chat-runtime-stores';
+import { normalizeInvocationTaskRecord } from './invocation-task-normalization';
 
 interface ChatRuntimePersistenceDependencies {
   config: Pick<ChatRuntimeConfig, 'redisConfigKey' | 'defaultRedisChatSessionsKey' | 'redisPersistDebounceMs' | 'redisRequired' | 'redisDisabled' | 'envRedisChatSessionsKey'>;
@@ -112,6 +114,7 @@ export function createChatRuntimePersistence(deps: ChatRuntimePersistenceDepende
       }
 
       deps.store.clearUserSessions();
+      const validReviewModes = new Set<AgentDispatchReviewMode>(['none', 'caller_review']);
       for (const [userKey, sessions] of Object.entries(parsed.userChatSessions)) {
         const sessionMap = new Map<string, UserChatSession>();
         for (const session of sessions) {
@@ -128,23 +131,42 @@ export function createChatRuntimePersistence(deps: ChatRuntimePersistenceDepende
             pendingAgentTasks: Array.isArray(session.pendingAgentTasks)
               ? session.pendingAgentTasks
                 .filter(task => task && typeof task.agentName === 'string' && typeof task.prompt === 'string')
-                .map(task => {
+                .map((task): PendingAgentDispatchTask | null => {
                   const dispatchKind = deps.normalizeDispatchKind(task.dispatchKind, null);
                   if (!dispatchKind) {
                     return null;
                   }
-                  return {
+                  const normalizedTask: PendingAgentDispatchTask = {
                     agentName: task.agentName,
                     prompt: task.prompt,
                     includeHistory: task.includeHistory !== false,
                     dispatchKind
                   };
+                  if (typeof task.taskId === 'string' && task.taskId.trim()) {
+                    normalizedTask.taskId = task.taskId;
+                  }
+                  if (typeof task.callerAgentName === 'string' && task.callerAgentName.trim()) {
+                    normalizedTask.callerAgentName = task.callerAgentName;
+                  }
+                  if (typeof task.reviewMode === 'string' && validReviewModes.has(task.reviewMode as AgentDispatchReviewMode)) {
+                    normalizedTask.reviewMode = task.reviewMode as AgentDispatchReviewMode;
+                  }
+                  if (Number.isFinite(Number(task.deadlineAt)) && Number(task.deadlineAt) > 0) {
+                    normalizedTask.deadlineAt = Number(task.deadlineAt);
+                  }
+
+                  return normalizedTask;
                 })
                 .filter((task): task is PendingAgentDispatchTask => task !== null)
               : undefined,
             pendingVisibleMessages: Array.isArray(session.pendingVisibleMessages)
               ? session.pendingVisibleMessages.filter(message => message && typeof message.id === 'string')
               : undefined,
+            invocationTasks: Array.isArray(session.invocationTasks)
+              ? session.invocationTasks
+                .map(task => normalizeInvocationTaskRecord(task, session.id))
+                .filter((task): task is InvocationTask => task !== null)
+              : [],
             ...deps.normalizeSessionChainSettings(session),
             ...deps.normalizeSessionDiscussionSettings(session),
             createdAt: Number(session.createdAt) || Date.now(),

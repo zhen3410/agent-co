@@ -9,7 +9,9 @@ export async function invokeCliProvider(params: InvokeAgentParams): Promise<Agen
     params.history,
     {
       includeHistory: params.includeHistory,
-      extraEnv: params.extraEnv
+      extraEnv: params.extraEnv,
+      onTextDelta: params.onTextDelta,
+      signal: params.signal
     }
   );
 

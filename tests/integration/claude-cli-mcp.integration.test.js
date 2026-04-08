@@ -340,3 +340,41 @@ sleep 5
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('Claude CLI 会把解析出的 assistant 增量透传给 onTextDelta', { concurrency: false }, async () => {
+  const { callClaudeCLI } = require('../../dist/claude-cli.js');
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-claude-delta-'));
+  const fakeClaude = join(tempDir, 'claude');
+  const deltas = [];
+
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"第一段"}]}}\\n'
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"第二段"}]}}\\n'
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${tempDir}:${originalPath || ''}`;
+
+  try {
+    const agent = {
+      name: 'Claude',
+      avatar: '🤖',
+      systemPrompt: '你是测试助手',
+      color: '#3b82f6',
+      cli: 'claude'
+    };
+
+    const response = await callClaudeCLI('请处理任务', agent, [], {
+      onTextDelta(delta) {
+        deltas.push(delta);
+      }
+    });
+
+    assert.equal(response.text, '第一段第二段');
+    assert.deepEqual(deltas, ['第一段', '第二段']);
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

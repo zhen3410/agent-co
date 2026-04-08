@@ -80,6 +80,17 @@ export function parseCliEventLine(line: string): ParsedCliLine {
         };
       }
 
+      if ((raw.type === 'assistant' || raw.type === 'message') && isRecord(raw.message)) {
+        const nestedTextEntries = extractTextEntriesFromContent(raw.message.content);
+        if (nestedTextEntries.length > 0) {
+          return {
+            kind: 'json',
+            raw,
+            event: { type: 'assistant_text', text: nestedTextEntries.join('') }
+          };
+        }
+      }
+
       const topLevelOutputText = asNonEmptyString(raw.output_text);
       if (topLevelOutputText) {
         return {

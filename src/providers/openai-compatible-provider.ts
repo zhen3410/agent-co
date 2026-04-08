@@ -334,7 +334,16 @@ export async function invokeOpenAICompatibleProvider(
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+  const externalAbortHandler = () => controller.abort();
   const stream = typeof params.onTextDelta === 'function';
+
+  if (params.signal) {
+    if (params.signal.aborted) {
+      controller.abort();
+    } else {
+      params.signal.addEventListener('abort', externalAbortHandler, { once: true });
+    }
+  }
 
   try {
     const response = await fetch(new URL('chat/completions', `${connection.baseURL}/`), {
@@ -425,6 +434,9 @@ export async function invokeOpenAICompatibleProvider(
     }
     throw new Error(`API provider 请求异常: ${String(error)}`);
   } finally {
+    if (params.signal) {
+      params.signal.removeEventListener('abort', externalAbortHandler);
+    }
     clearTimeout(timeout);
   }
 }

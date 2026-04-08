@@ -14,6 +14,7 @@ export interface InvokeAgentParams {
   includeHistory: boolean;
   extraEnv?: Record<string, string>;
   onTextDelta?: (delta: string) => void;
+  signal?: AbortSignal;
 }
 
 export interface ApiInvokeTarget {

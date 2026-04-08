@@ -40,8 +40,15 @@ export type AgentExecutionMode = 'cli' | 'api';
 export type AgentCliName = 'claude' | 'codex';
 export type DiscussionMode = 'classic' | 'peer';
 export type DiscussionState = 'active' | 'paused' | 'summarizing';
-export type AgentDispatchKind = 'initial' | 'explicit_chained' | 'implicit_chained' | 'summary';
+export type AgentDispatchKind = 'initial' | 'explicit_chained' | 'implicit_chained' | 'internal_review' | 'summary';
 export type DiscussionIntent = 'question' | 'challenge' | 'rebuttal' | 'evidence' | 'proposal';
+export type InvocationTaskStatus =
+  | 'pending_reply'
+  | 'awaiting_caller_review'
+  | 'completed'
+  | 'failed'
+  | 'timed_out';
+export type InvocationReviewAction = 'accept' | 'follow_up' | 'retry';
 export type DiscussionTriggerReason =
   | 'explicit_mention'
   | 'factual_conflict'
@@ -87,6 +94,33 @@ export interface Message {
   dispatchKind?: AgentDispatchKind;
   discussionIntent?: DiscussionIntent;
   triggerReason?: DiscussionTriggerReason;
+  taskId?: string;
+  parentTaskId?: string;
+  callerAgentName?: string;
+  calleeAgentName?: string;
+  reviewAction?: InvocationReviewAction;
+}
+
+export interface InvocationTask {
+  id: string;
+  sessionId: string;
+  status: InvocationTaskStatus;
+  callerAgentName: string;
+  calleeAgentName: string;
+  prompt: string;
+  originalPrompt: string;
+  createdAt: number;
+  updatedAt: number;
+  deadlineAt?: number;
+  retryCount: number;
+  followupCount: number;
+  parentTaskId?: string;
+  reviewAction?: InvocationReviewAction;
+  lastReplyMessageId?: string;
+  completedAt?: number;
+  failedAt?: number;
+  timedOutAt?: number;
+  failureReason?: string;
 }
 
 // ============================================
@@ -205,6 +239,7 @@ export interface ChatSession extends ChatSessionSummary {
   currentAgent: string | null;
   enabledAgents: string[];
   agentWorkdirs: Record<string, string>;
+  invocationTasks: InvocationTask[];
 }
 
 // ============================================

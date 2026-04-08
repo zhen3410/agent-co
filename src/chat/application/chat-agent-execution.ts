@@ -1,7 +1,7 @@
 import { AgentInvokeResult, Message, RichBlock } from '../../types';
 import { invokeAgent } from '../../agent-invoker';
 import { extractRichBlocks } from '../../rich-extract';
-import type { RunAgentTask } from './chat-service-types';
+import type { RunAgentTask, RunAgentTaskParams } from './chat-service-types';
 import type { ChatRuntime, UserChatSession } from '../runtime/chat-runtime';
 import type { SessionService } from './session-service';
 import type { AgentManager } from '../../agent-manager';
@@ -95,11 +95,25 @@ function buildFallbackMessage(agentName: string, fallbackText: string): Message 
   };
 }
 
+function applyTaskMetadataToVisibleMessages(task: RunAgentTaskParams['task'], visibleMessages: Message[]): Message[] {
+  if (!task.taskId || !task.callerAgentName) {
+    return visibleMessages;
+  }
+
+  const calleeAgentName = task.calleeAgentName || task.agentName;
+  return visibleMessages.map(message => ({
+    ...message,
+    taskId: task.taskId,
+    callerAgentName: task.callerAgentName,
+    calleeAgentName
+  }));
+}
+
 export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): { runAgentTask: RunAgentTask } {
   const { runtime, sessionService, agentManager } = deps;
 
   const runAgentTask: RunAgentTask = async (params) => {
-    const { userKey, session, task, stream, onTextDelta } = params;
+    const { userKey, session, task, stream, onTextDelta, signal } = params;
     const { agentName, prompt, includeHistory } = task;
     const agent = agentManager.getAgent(agentName);
     if (!agent) return [];
@@ -133,7 +147,8 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
         history: session.history,
         includeHistory,
         extraEnv: callbackEnv,
-        onTextDelta
+        onTextDelta,
+        signal
       });
       providerResult = result;
       runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${doneStage} text_len=${result.text.length} blocks=${result.blocks.length}`);
@@ -148,7 +163,10 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
     }
 
     const callbackReplies = runtime.consumeCallbackMessages(session.id, agentName);
-    const visibleMessages = buildAgentVisibleMessages(agentName, providerResult, fallbackMessage, callbackReplies);
+    const visibleMessages = applyTaskMetadataToVisibleMessages(
+      task,
+      buildAgentVisibleMessages(agentName, providerResult, fallbackMessage, callbackReplies)
+    );
 
     if (callbackReplies.length === 0) {
       for (const message of visibleMessages) {
