@@ -51,11 +51,13 @@ export function normalizeInvocationTaskRecord(rawTask: unknown, sessionId: strin
   const deadlineAt = Number(task.deadlineAt);
   const retryCount = Number(task.retryCount);
   const followupCount = Number(task.followupCount);
+  const reviewVersion = Number(task.reviewVersion);
 
   return {
     id: task.id,
     sessionId,
     status: normalizeInvocationTaskStatus(task.status),
+    reviewVersion: Number.isFinite(reviewVersion) && reviewVersion >= 0 ? Math.floor(reviewVersion) : 0,
     callerAgentName: task.callerAgentName,
     calleeAgentName: task.calleeAgentName,
     prompt: task.prompt,

@@ -84,7 +84,8 @@ export function createChatResumeService(deps: ChatResumeServiceDependencies): Ch
         callerAgentName: invocationTask.callerAgentName,
         calleeAgentName: invocationTask.calleeAgentName,
         reviewMode: 'caller_review',
-        deadlineAt: invocationTask.deadlineAt
+        deadlineAt: invocationTask.deadlineAt,
+        invocationTaskReviewVersion: invocationTask.reviewVersion
       };
     }
 
@@ -102,7 +103,8 @@ export function createChatResumeService(deps: ChatResumeServiceDependencies): Ch
       callerAgentName: invocationTask.callerAgentName,
       calleeAgentName: invocationTask.calleeAgentName,
       reviewMode: 'caller_review',
-      deadlineAt: invocationTask.deadlineAt
+      deadlineAt: invocationTask.deadlineAt,
+      invocationTaskReviewVersion: invocationTask.reviewVersion
     };
   }
 
@@ -166,11 +168,13 @@ export function createChatResumeService(deps: ChatResumeServiceDependencies): Ch
         if (bufferedReply) {
           const updatedTask = deps.runtime.updateInvocationTask(userKey, sessionId, invocationTask.id, {
             status: 'awaiting_caller_review',
-            lastReplyMessageId: bufferedReply.id
+            lastReplyMessageId: bufferedReply.id,
+            reviewVersion: (invocationTask.reviewVersion || 0) + 1
           }) || {
             ...invocationTask,
             status: 'awaiting_caller_review' as const,
-            lastReplyMessageId: bufferedReply.id
+            lastReplyMessageId: bufferedReply.id,
+            reviewVersion: (invocationTask.reviewVersion || 0) + 1
           };
           const rebuiltTask = buildAwaitingCallerReviewTask(reviewMessages, updatedTask);
           if (rebuiltTask) {

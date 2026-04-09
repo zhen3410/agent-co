@@ -12,6 +12,7 @@ export interface AgentDispatchTask {
   calleeAgentName?: string;
   reviewMode?: AgentDispatchReviewMode;
   deadlineAt?: number;
+  invocationTaskReviewVersion?: number;
 }
 
 export interface PendingAgentDispatchTask extends AgentDispatchTask {
