@@ -9,6 +9,9 @@ import {
   DependencyStatusLogEntry
 } from '../infrastructure/dependency-log-store';
 import {
+  ActiveChatExecution,
+  ActiveChatExecutionPatch,
+  ActiveChatExecutionStopResult,
   ChatRuntime,
   ChatRuntimeConfig,
   InvocationTaskUpdatePatch,
@@ -129,6 +132,34 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     return sessionState.markInvocationTaskFailed(userKey, sessionId, taskId, reason);
   }
 
+  function registerActiveExecution(execution: ActiveChatExecution): ActiveChatExecution {
+    return execution;
+  }
+
+  function getActiveExecution(_executionId: string): ActiveChatExecution | null {
+    return null;
+  }
+
+  function updateActiveExecution(_executionId: string, _patch: ActiveChatExecutionPatch): ActiveChatExecution | null {
+    return null;
+  }
+
+  function requestExecutionStop(_executionId: string, _stopMode: ActiveChatExecutionStopResult['scope']): ActiveChatExecution | null {
+    return null;
+  }
+
+  function consumeExecutionStopMode(_executionId: string): 'none' {
+    return 'none';
+  }
+
+  function consumeExecutionStopResult(_executionId: string): ActiveChatExecutionStopResult | null {
+    return null;
+  }
+
+  function clearActiveExecution(_executionId: string): boolean {
+    return false;
+  }
+
   return {
     hydrate: persistence.hydrate,
     shutdown: persistence.shutdown,
@@ -167,6 +198,13 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     resolveOverdueInvocationTasks,
     markInvocationTaskCompleted,
     markInvocationTaskFailed,
+    registerActiveExecution,
+    getActiveExecution,
+    updateActiveExecution,
+    requestExecutionStop,
+    consumeExecutionStopMode,
+    consumeExecutionStopResult,
+    clearActiveExecution,
     buildSessionResponse: sessionState.buildSessionResponse,
     buildDetailedSessionResponse: sessionState.buildDetailedSessionResponse,
     parseSessionChainPatch: sessionState.parseSessionChainPatch,

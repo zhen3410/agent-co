@@ -11,6 +11,7 @@ import type { ChatRuntime } from '../runtime/chat-runtime';
 import type {
   ChatService,
   ChatServiceDependencies,
+  StopExecutionRequest,
   StreamMessageCallbacks
 } from './chat-service-types';
 
@@ -258,6 +259,13 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     return { sessionId, messages: session.history };
   }
 
+  async function stopExecution(
+    _context: { userKey: string },
+    _request: StopExecutionRequest
+  ): Promise<{ success: true; stopped: { scope: StopExecutionRequest['scope']; currentAgent: string | null; resumeAvailable: boolean } }> {
+    throw new ChatServiceError('停止执行能力尚未实现', APP_ERROR_CODES.INTERNAL_FAILURE, 501);
+  }
+
   return {
     listAgents,
     sendMessage,
@@ -267,6 +275,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     createBlock,
     getBlockStatus,
     postCallbackMessage,
-    getThreadContext
+    getThreadContext,
+    stopExecution
   };
 }

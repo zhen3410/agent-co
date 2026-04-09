@@ -109,6 +109,35 @@ function getMethodSignature(interfaceNode, methodName) {
   return interfaceNode.members.find(member => ts.isMethodSignature(member) && member.name.getText() === methodName) || null;
 }
 
+function getFunctionReturnedObjectLiteral(filePath, functionName) {
+  const sourceFile = ts.createSourceFile(filePath, read(filePath), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const fnNode = sourceFile.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === functionName);
+  if (!fnNode || !fnNode.body || fnNode.body.statements.length === 0) {
+    return null;
+  }
+
+  const lastStatement = fnNode.body.statements[fnNode.body.statements.length - 1];
+  if (!ts.isReturnStatement(lastStatement) || !lastStatement.expression || !ts.isObjectLiteralExpression(lastStatement.expression)) {
+    return null;
+  }
+
+  return lastStatement.expression;
+}
+
+function getObjectLiteralPropertyNames(objectLiteral) {
+  return objectLiteral.properties
+    .map((property) => {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        return property.name.getText();
+      }
+      if (ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)) {
+        return property.name.getText();
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
 test('chat-service façade 保持稳定的 value exports', () => {
   assert.deepEqual(
     collectValueExports(chatServicePath),
@@ -307,6 +336,36 @@ test('ChatRuntime 停止执行 API 为必填契约', () => {
     const method = getMethodSignature(chatRuntimeInterface, methodName);
     assert.ok(method, `ChatRuntime 应定义 ${methodName} 方法`);
     assert.equal(method.questionToken === undefined, true, `${methodName} 不应为可选方法`);
+  }
+});
+
+test('chat-service 实现层返回 stopExecution façade 方法', () => {
+  const filePath = path.join(applicationDir, 'chat-service.ts');
+  const returnedObject = getFunctionReturnedObjectLiteral(filePath, 'createChatService');
+  assert.ok(returnedObject, 'createChatService 应返回对象字面量 façade');
+
+  const propertyNames = getObjectLiteralPropertyNames(returnedObject);
+  assert.ok(propertyNames.includes('stopExecution'), 'createChatService 返回对象应挂载 stopExecution');
+});
+
+test('chat-runtime 实现层返回 stop contract 方法集合', () => {
+  const filePath = path.join(repoRoot, 'src', 'chat', 'runtime', 'chat-runtime.ts');
+  const returnedObject = getFunctionReturnedObjectLiteral(filePath, 'createChatRuntime');
+  assert.ok(returnedObject, 'createChatRuntime 应返回对象字面量 runtime');
+
+  const propertyNames = getObjectLiteralPropertyNames(returnedObject);
+  const expectedMethods = [
+    'registerActiveExecution',
+    'getActiveExecution',
+    'updateActiveExecution',
+    'requestExecutionStop',
+    'consumeExecutionStopMode',
+    'consumeExecutionStopResult',
+    'clearActiveExecution'
+  ];
+
+  for (const methodName of expectedMethods) {
+    assert.ok(propertyNames.includes(methodName), `createChatRuntime 返回对象应挂载 ${methodName}`);
   }
 });
 
