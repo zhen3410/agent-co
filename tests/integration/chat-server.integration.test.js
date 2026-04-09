@@ -8,6 +8,33 @@ const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
 
+const repoRoot = join(__dirname, '..', '..');
+const distDir = join(repoRoot, 'dist');
+
+function requireBuiltRuntimeModule() {
+  const modulePath = join(distDir, 'chat', 'runtime', 'chat-runtime.js');
+  delete require.cache[require.resolve(modulePath)];
+  return require(modulePath);
+}
+
+function createRuntimeFixture() {
+  const { createChatRuntime } = requireBuiltRuntimeModule();
+  return createChatRuntime({
+    redisUrl: 'redis://127.0.0.1:6379',
+    redisConfigKey: 'test:runtime:config',
+    defaultRedisChatSessionsKey: 'test:runtime:sessions',
+    redisPersistDebounceMs: 100,
+    redisRequired: false,
+    redisDisabled: true,
+    envRedisChatSessionsKey: '',
+    defaultChatSessionId: 'default',
+    defaultChatSessionName: '默认会话',
+    defaultAgentChainMaxHops: 3,
+    dependencyStatusLogLimit: 20,
+    getValidAgentNames: () => ['Alice', 'Bob']
+  });
+}
+
 async function enableAgents(fixture, agentNames) {
   for (const agentName of agentNames) {
     const response = await fixture.request('/api/session-agents', {
@@ -140,6 +167,65 @@ test('chat routes 将 SSE 传输细节抽离到独立 helper', () => {
   assert.equal(chatRoutesSource.includes('X-Accel-Buffering'), false);
   assert.equal(chatRoutesSource.includes('event: ${event}'), false);
   assert.equal(sseHelperSource.includes('text/event-stream'), true);
+});
+
+test('活动执行状态可记录停止范围并触发 abort', () => {
+  const runtime = createRuntimeFixture();
+  const controller = new AbortController();
+  const sessionId = 'session-active-1';
+  const executionId = 'exec-1';
+
+  runtime.registerActiveExecution(sessionId, {
+    executionId,
+    userKey: 'user-1',
+    sessionId,
+    currentAgentName: null,
+    abortController: controller,
+    stopMode: 'none'
+  });
+
+  assert.equal(runtime.getActiveExecution(sessionId)?.executionId, executionId);
+
+  const updated = runtime.updateActiveExecutionAgent(sessionId, executionId, 'Alice');
+  assert.equal(updated?.currentAgentName, 'Alice');
+
+  const stopRequested = runtime.requestExecutionStop(sessionId, 'session');
+  assert.equal(stopRequested?.stopMode, 'session');
+  assert.equal(controller.signal.aborted, true);
+  assert.equal(runtime.consumeExecutionStopMode(sessionId, executionId), 'session');
+  assert.equal(runtime.consumeExecutionStopMode(sessionId, executionId), 'none');
+  assert.deepEqual(runtime.consumeExecutionStopResult(sessionId, executionId), {
+    scope: 'session',
+    currentAgent: 'Alice',
+    resumeAvailable: false
+  });
+});
+
+test('旧 executionId 不能清理新活动执行', () => {
+  const runtime = createRuntimeFixture();
+  const sessionId = 'session-active-2';
+
+  runtime.registerActiveExecution(sessionId, {
+    executionId: 'exec-old',
+    userKey: 'user-1',
+    sessionId,
+    currentAgentName: 'Alice',
+    abortController: new AbortController(),
+    stopMode: 'none'
+  });
+  runtime.registerActiveExecution(sessionId, {
+    executionId: 'exec-new',
+    userKey: 'user-1',
+    sessionId,
+    currentAgentName: 'Bob',
+    abortController: new AbortController(),
+    stopMode: 'none'
+  });
+
+  assert.equal(runtime.clearActiveExecution(sessionId, 'exec-old'), false);
+  assert.equal(runtime.getActiveExecution(sessionId)?.executionId, 'exec-new');
+  assert.equal(runtime.clearActiveExecution(sessionId, 'exec-new'), true);
+  assert.equal(runtime.getActiveExecution(sessionId), null);
 });
 
 async function waitForChatServer(port, timeoutMs = 10000) {

@@ -24,6 +24,7 @@ import { createChatDiscussionState } from './chat-discussion-state';
 import { createChatRuntimePersistence } from './chat-runtime-persistence';
 import { createChatRuntimeDependencies } from './chat-runtime-dependencies';
 import { createChatRuntimeStores } from './chat-runtime-stores';
+import { createChatActiveExecutionState } from './chat-active-execution-state';
 
 export type { UserChatSession, PendingAgentDispatchTask } from '../infrastructure/chat-session-repository';
 export type { DependencyStatusItem, DependencyStatusLogEntry } from '../infrastructure/dependency-log-store';
@@ -85,6 +86,9 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     redisClient,
     dependencyLogs: dependencyLogStore
   });
+  const activeExecutionState = createChatActiveExecutionState({
+    log: (message: string) => dependencyLogStore.appendOperationalLog('info', 'chat-exec', message)
+  });
 
   function addCallbackMessage(sessionId: string, agentName: string, content: string, invokeAgents?: string[]) {
     const msg: Message = {
@@ -131,32 +135,32 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     return sessionState.markInvocationTaskFailed(userKey, sessionId, taskId, reason);
   }
 
-  function registerActiveExecution(_sessionId: string, execution: ActiveChatExecution): ActiveChatExecution {
-    return execution;
+  function registerActiveExecution(sessionId: string, execution: ActiveChatExecution): ActiveChatExecution {
+    return activeExecutionState.registerActiveExecution(sessionId, execution);
   }
 
-  function getActiveExecution(_sessionId: string): ActiveChatExecution | null {
-    return null;
+  function getActiveExecution(sessionId: string): ActiveChatExecution | null {
+    return activeExecutionState.getActiveExecution(sessionId);
   }
 
-  function updateActiveExecutionAgent(_sessionId: string, _executionId: string, _agentName: string | null): ActiveChatExecution | null {
-    return null;
+  function updateActiveExecutionAgent(sessionId: string, executionId: string, agentName: string | null): ActiveChatExecution | null {
+    return activeExecutionState.updateActiveExecutionAgent(sessionId, executionId, agentName);
   }
 
-  function requestExecutionStop(_sessionId: string, _stopMode: ActiveChatExecutionStopResult['scope']): ActiveChatExecution | null {
-    return null;
+  function requestExecutionStop(sessionId: string, stopMode: ActiveChatExecutionStopResult['scope']): ActiveChatExecution | null {
+    return activeExecutionState.requestExecutionStop(sessionId, stopMode);
   }
 
-  function consumeExecutionStopMode(_sessionId: string, _executionId: string): 'none' {
-    return 'none';
+  function consumeExecutionStopMode(sessionId: string, executionId: string): ActiveChatExecution['stopMode'] {
+    return activeExecutionState.consumeExecutionStopMode(sessionId, executionId);
   }
 
-  function consumeExecutionStopResult(_sessionId: string, _executionId: string): ActiveChatExecutionStopResult | null {
-    return null;
+  function consumeExecutionStopResult(sessionId: string, executionId: string): ActiveChatExecutionStopResult | null {
+    return activeExecutionState.consumeExecutionStopResult(sessionId, executionId) ?? null;
   }
 
-  function clearActiveExecution(_sessionId: string, _executionId: string): boolean {
-    return false;
+  function clearActiveExecution(sessionId: string, executionId: string): boolean {
+    return activeExecutionState.clearActiveExecution(sessionId, executionId);
   }
 
   return {

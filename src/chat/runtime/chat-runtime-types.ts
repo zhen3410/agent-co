@@ -13,7 +13,8 @@ export interface ActiveChatExecution {
   executionId: string;
   userKey: string;
   sessionId: string;
-  currentAgent: string | null;
+  currentAgentName: string | null;
+  abortController: AbortController;
   stopMode: ChatExecutionStopMode;
   stopped?: ActiveChatExecutionStopResult;
 }
