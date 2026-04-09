@@ -1,4 +1,4 @@
-import { AIAgentConfig, ChatExecutionStopMode, Message, RichBlock } from '../../types';
+import { AIAgentConfig, ChatExecutionStopMode, ChatExecutionStoppedMetadata, Message, RichBlock } from '../../types';
 import { AgentManager } from '../../agent-manager';
 import { getStatus as getBlockBufferStatus } from '../../block-buffer';
 import { AppErrorCode } from '../../shared/errors/app-error-codes';
@@ -11,11 +11,7 @@ export interface StopExecutionRequest {
   scope: Exclude<ChatExecutionStopMode, 'none'>;
 }
 
-export interface StoppedExecutionMetadata {
-  scope: Exclude<ChatExecutionStopMode, 'none'>;
-  currentAgent: string | null;
-  resumeAvailable: boolean;
-}
+export type StoppedExecutionMetadata = ChatExecutionStoppedMetadata;
 
 export interface AgentDispatchTask {
   agentName: string;

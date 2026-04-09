@@ -10,7 +10,6 @@ import {
 } from '../infrastructure/dependency-log-store';
 import {
   ActiveChatExecution,
-  ActiveChatExecutionPatch,
   ActiveChatExecutionStopResult,
   ChatRuntime,
   ChatRuntimeConfig,
@@ -132,31 +131,31 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     return sessionState.markInvocationTaskFailed(userKey, sessionId, taskId, reason);
   }
 
-  function registerActiveExecution(execution: ActiveChatExecution): ActiveChatExecution {
+  function registerActiveExecution(_sessionId: string, execution: ActiveChatExecution): ActiveChatExecution {
     return execution;
   }
 
-  function getActiveExecution(_executionId: string): ActiveChatExecution | null {
+  function getActiveExecution(_sessionId: string): ActiveChatExecution | null {
     return null;
   }
 
-  function updateActiveExecution(_executionId: string, _patch: ActiveChatExecutionPatch): ActiveChatExecution | null {
+  function updateActiveExecutionAgent(_sessionId: string, _executionId: string, _agentName: string | null): ActiveChatExecution | null {
     return null;
   }
 
-  function requestExecutionStop(_executionId: string, _stopMode: ActiveChatExecutionStopResult['scope']): ActiveChatExecution | null {
+  function requestExecutionStop(_sessionId: string, _stopMode: ActiveChatExecutionStopResult['scope']): ActiveChatExecution | null {
     return null;
   }
 
-  function consumeExecutionStopMode(_executionId: string): 'none' {
+  function consumeExecutionStopMode(_sessionId: string, _executionId: string): 'none' {
     return 'none';
   }
 
-  function consumeExecutionStopResult(_executionId: string): ActiveChatExecutionStopResult | null {
+  function consumeExecutionStopResult(_sessionId: string, _executionId: string): ActiveChatExecutionStopResult | null {
     return null;
   }
 
-  function clearActiveExecution(_executionId: string): boolean {
+  function clearActiveExecution(_sessionId: string, _executionId: string): boolean {
     return false;
   }
 
@@ -200,7 +199,7 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     markInvocationTaskFailed,
     registerActiveExecution,
     getActiveExecution,
-    updateActiveExecution,
+    updateActiveExecutionAgent,
     requestExecutionStop,
     consumeExecutionStopMode,
     consumeExecutionStopResult,

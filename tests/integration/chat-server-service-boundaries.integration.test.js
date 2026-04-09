@@ -280,6 +280,10 @@ test('显式停止结果会携带 stopped 元数据', () => {
   assert.ok(stoppedMember, 'ExecuteAgentTurnResult 应暴露 stopped 元数据字段');
   assert.equal(stoppedMember.questionToken !== undefined, true, 'stopped 字段应为可选');
   assert.equal(stoppedMember.type.getText(), 'StoppedExecutionMetadata', 'stopped 字段应使用 StoppedExecutionMetadata');
+
+  const stoppedTypeAlias = getTypeAliasNode(filePath, 'StoppedExecutionMetadata');
+  assert.ok(stoppedTypeAlias, 'chat-service-types.ts 应通过别名暴露 StoppedExecutionMetadata');
+  assert.equal(stoppedTypeAlias.type.getText(), 'ChatExecutionStoppedMetadata', 'StoppedExecutionMetadata 应复用共享 ChatExecutionStoppedMetadata');
 });
 
 test('stream/SSE 返回契约暴露 stopped 元数据', () => {
@@ -322,21 +326,61 @@ test('ChatRuntime 停止执行 API 为必填契约', () => {
   const chatRuntimeInterface = getInterfaceNode(filePath, 'ChatRuntime');
   assert.ok(chatRuntimeInterface, 'chat-runtime-types.ts 应定义 ChatRuntime interface');
 
-  const requiredMethods = [
+  const expectedMethods = [
     'registerActiveExecution',
     'getActiveExecution',
-    'updateActiveExecution',
+    'updateActiveExecutionAgent',
     'requestExecutionStop',
     'consumeExecutionStopMode',
     'consumeExecutionStopResult',
     'clearActiveExecution'
   ];
 
-  for (const methodName of requiredMethods) {
+  for (const methodName of expectedMethods) {
     const method = getMethodSignature(chatRuntimeInterface, methodName);
     assert.ok(method, `ChatRuntime 应定义 ${methodName} 方法`);
     assert.equal(method.questionToken === undefined, true, `${methodName} 不应为可选方法`);
   }
+
+  assert.deepEqual(
+    getMethodSignature(chatRuntimeInterface, 'registerActiveExecution').parameters.map(parameter => parameter.name.getText()),
+    ['sessionId', 'execution'],
+    'registerActiveExecution 应按 session 维度注册'
+  );
+  assert.deepEqual(
+    getMethodSignature(chatRuntimeInterface, 'getActiveExecution').parameters.map(parameter => parameter.name.getText()),
+    ['sessionId'],
+    'getActiveExecution 应按 session 查询'
+  );
+  assert.deepEqual(
+    getMethodSignature(chatRuntimeInterface, 'updateActiveExecutionAgent').parameters.map(parameter => parameter.name.getText()),
+    ['sessionId', 'executionId', 'agentName'],
+    'updateActiveExecutionAgent 应显式声明 session/execution 保护参数'
+  );
+  assert.deepEqual(
+    getMethodSignature(chatRuntimeInterface, 'requestExecutionStop').parameters.map(parameter => parameter.name.getText()),
+    ['sessionId', 'stopMode'],
+    'requestExecutionStop 应按 session 请求停止'
+  );
+  assert.deepEqual(
+    getMethodSignature(chatRuntimeInterface, 'consumeExecutionStopMode').parameters.map(parameter => parameter.name.getText()),
+    ['sessionId', 'executionId'],
+    'consumeExecutionStopMode 应使用 session + execution 守卫'
+  );
+  assert.deepEqual(
+    getMethodSignature(chatRuntimeInterface, 'consumeExecutionStopResult').parameters.map(parameter => parameter.name.getText()),
+    ['sessionId', 'executionId'],
+    'consumeExecutionStopResult 应使用 session + execution 守卫'
+  );
+  assert.deepEqual(
+    getMethodSignature(chatRuntimeInterface, 'clearActiveExecution').parameters.map(parameter => parameter.name.getText()),
+    ['sessionId', 'executionId'],
+    'clearActiveExecution 应使用 session + execution 守卫'
+  );
+
+  const stopResultAlias = getTypeAliasNode(filePath, 'ActiveChatExecutionStopResult');
+  assert.ok(stopResultAlias, 'chat-runtime-types.ts 应定义 ActiveChatExecutionStopResult');
+  assert.equal(stopResultAlias.type.getText(), 'ChatExecutionStoppedMetadata', 'ActiveChatExecutionStopResult 应复用共享 ChatExecutionStoppedMetadata');
 });
 
 test('chat-service 实现层返回 stopExecution façade 方法', () => {
@@ -357,7 +401,7 @@ test('chat-runtime 实现层返回 stop contract 方法集合', () => {
   const expectedMethods = [
     'registerActiveExecution',
     'getActiveExecution',
-    'updateActiveExecution',
+    'updateActiveExecutionAgent',
     'requestExecutionStop',
     'consumeExecutionStopMode',
     'consumeExecutionStopResult',
@@ -374,4 +418,9 @@ test('共享停止模式 union 保持窄类型', () => {
   const stopModeAlias = getTypeAliasNode(filePath, 'ChatExecutionStopMode');
   assert.ok(stopModeAlias, 'types.ts 应定义 ChatExecutionStopMode');
   assert.equal(stopModeAlias.type.getText(), "'none' | 'current_agent' | 'session'");
+
+  const stoppedMetadata = getInterfaceNode(filePath, 'ChatExecutionStoppedMetadata');
+  assert.ok(stoppedMetadata, 'types.ts 应定义共享 ChatExecutionStoppedMetadata');
+  const fields = stoppedMetadata.members.filter(member => ts.isPropertySignature(member)).map(member => member.name.getText()).sort();
+  assert.deepEqual(fields, ['currentAgent', 'resumeAvailable', 'scope']);
 });
