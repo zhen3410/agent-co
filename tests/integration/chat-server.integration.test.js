@@ -172,29 +172,30 @@ test('chat routes 将 SSE 传输细节抽离到独立 helper', () => {
 test('活动执行状态可记录停止范围并触发 abort', () => {
   const runtime = createRuntimeFixture();
   const controller = new AbortController();
+  const userKey = 'user-1';
   const sessionId = 'session-active-1';
   const executionId = 'exec-1';
 
-  runtime.registerActiveExecution(sessionId, {
+  runtime.registerActiveExecution(userKey, sessionId, {
     executionId,
-    userKey: 'user-1',
+    userKey,
     sessionId,
     currentAgentName: null,
     abortController: controller,
     stopMode: 'none'
   });
 
-  assert.equal(runtime.getActiveExecution(sessionId)?.executionId, executionId);
+  assert.equal(runtime.getActiveExecution(userKey, sessionId)?.executionId, executionId);
 
-  const updated = runtime.updateActiveExecutionAgent(sessionId, executionId, 'Alice');
+  const updated = runtime.updateActiveExecutionAgent(userKey, sessionId, executionId, 'Alice');
   assert.equal(updated?.currentAgentName, 'Alice');
 
-  const stopRequested = runtime.requestExecutionStop(sessionId, 'session');
+  const stopRequested = runtime.requestExecutionStop(userKey, sessionId, 'session');
   assert.equal(stopRequested?.stopMode, 'session');
   assert.equal(controller.signal.aborted, true);
-  assert.equal(runtime.consumeExecutionStopMode(sessionId, executionId), 'session');
-  assert.equal(runtime.consumeExecutionStopMode(sessionId, executionId), 'none');
-  assert.deepEqual(runtime.consumeExecutionStopResult(sessionId, executionId), {
+  assert.equal(runtime.consumeExecutionStopMode(userKey, sessionId, executionId), 'session');
+  assert.equal(runtime.consumeExecutionStopMode(userKey, sessionId, executionId), 'none');
+  assert.deepEqual(runtime.consumeExecutionStopResult(userKey, sessionId, executionId), {
     scope: 'session',
     currentAgent: 'Alice',
     resumeAvailable: false
@@ -203,29 +204,61 @@ test('活动执行状态可记录停止范围并触发 abort', () => {
 
 test('旧 executionId 不能清理新活动执行', () => {
   const runtime = createRuntimeFixture();
+  const userKey = 'user-1';
   const sessionId = 'session-active-2';
 
-  runtime.registerActiveExecution(sessionId, {
+  runtime.registerActiveExecution(userKey, sessionId, {
     executionId: 'exec-old',
-    userKey: 'user-1',
+    userKey,
     sessionId,
     currentAgentName: 'Alice',
     abortController: new AbortController(),
     stopMode: 'none'
   });
-  runtime.registerActiveExecution(sessionId, {
+  runtime.registerActiveExecution(userKey, sessionId, {
     executionId: 'exec-new',
-    userKey: 'user-1',
+    userKey,
     sessionId,
     currentAgentName: 'Bob',
     abortController: new AbortController(),
     stopMode: 'none'
   });
 
-  assert.equal(runtime.clearActiveExecution(sessionId, 'exec-old'), false);
-  assert.equal(runtime.getActiveExecution(sessionId)?.executionId, 'exec-new');
-  assert.equal(runtime.clearActiveExecution(sessionId, 'exec-new'), true);
-  assert.equal(runtime.getActiveExecution(sessionId), null);
+  assert.equal(runtime.clearActiveExecution(userKey, sessionId, 'exec-old'), false);
+  assert.equal(runtime.getActiveExecution(userKey, sessionId)?.executionId, 'exec-new');
+  assert.equal(runtime.clearActiveExecution(userKey, sessionId, 'exec-new'), true);
+  assert.equal(runtime.getActiveExecution(userKey, sessionId), null);
+});
+
+test('不同用户共享默认 sessionId 时活动执行状态互不覆盖', () => {
+  const runtime = createRuntimeFixture();
+  const sessionId = 'default';
+  const userA = 'user-A';
+  const userB = 'user-B';
+
+  runtime.registerActiveExecution(userA, sessionId, {
+    executionId: 'exec-a',
+    userKey: userA,
+    sessionId,
+    currentAgentName: 'Alice',
+    abortController: new AbortController(),
+    stopMode: 'none'
+  });
+  runtime.registerActiveExecution(userB, sessionId, {
+    executionId: 'exec-b',
+    userKey: userB,
+    sessionId,
+    currentAgentName: 'Bob',
+    abortController: new AbortController(),
+    stopMode: 'none'
+  });
+
+  assert.equal(runtime.getActiveExecution(userA, sessionId)?.executionId, 'exec-a');
+  assert.equal(runtime.getActiveExecution(userB, sessionId)?.executionId, 'exec-b');
+
+  runtime.requestExecutionStop(userA, sessionId, 'session');
+  assert.equal(runtime.consumeExecutionStopMode(userA, sessionId, 'exec-a'), 'session');
+  assert.equal(runtime.consumeExecutionStopMode(userB, sessionId, 'exec-b'), 'none');
 });
 
 async function waitForChatServer(port, timeoutMs = 10000) {
@@ -4128,6 +4161,44 @@ test('classic 模式下单 @ 点名不会兼容升级为继续传播', async () 
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'classic');
     assert.equal(historyResponse.body.session.discussionState, 'active');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('classic 模式下 callback invokeAgents 指向未启用 agent 时会被过滤', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-classic-chain-disabled-target-'));
+  createExplicitThenStopClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'classic disabled chained target discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice']);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请开始讨论' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
+    assert.equal(chatResponse.body.aiMessages[0].invokeAgents, undefined);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.deepEqual(historyResponse.body.messages.map(item => item.sender), ['用户', 'Alice']);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

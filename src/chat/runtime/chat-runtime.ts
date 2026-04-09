@@ -135,32 +135,32 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     return sessionState.markInvocationTaskFailed(userKey, sessionId, taskId, reason);
   }
 
-  function registerActiveExecution(sessionId: string, execution: ActiveChatExecution): ActiveChatExecution {
-    return activeExecutionState.registerActiveExecution(sessionId, execution);
+  function registerActiveExecution(userKey: string, sessionId: string, execution: ActiveChatExecution): ActiveChatExecution {
+    return activeExecutionState.registerActiveExecution(userKey, sessionId, execution);
   }
 
-  function getActiveExecution(sessionId: string): ActiveChatExecution | null {
-    return activeExecutionState.getActiveExecution(sessionId);
+  function getActiveExecution(userKey: string, sessionId: string): ActiveChatExecution | null {
+    return activeExecutionState.getActiveExecution(userKey, sessionId);
   }
 
-  function updateActiveExecutionAgent(sessionId: string, executionId: string, agentName: string | null): ActiveChatExecution | null {
-    return activeExecutionState.updateActiveExecutionAgent(sessionId, executionId, agentName);
+  function updateActiveExecutionAgent(userKey: string, sessionId: string, executionId: string, agentName: string | null): ActiveChatExecution | null {
+    return activeExecutionState.updateActiveExecutionAgent(userKey, sessionId, executionId, agentName);
   }
 
-  function requestExecutionStop(sessionId: string, stopMode: ActiveChatExecutionStopResult['scope']): ActiveChatExecution | null {
-    return activeExecutionState.requestExecutionStop(sessionId, stopMode);
+  function requestExecutionStop(userKey: string, sessionId: string, stopMode: ActiveChatExecutionStopResult['scope']): ActiveChatExecution | null {
+    return activeExecutionState.requestExecutionStop(userKey, sessionId, stopMode);
   }
 
-  function consumeExecutionStopMode(sessionId: string, executionId: string): ActiveChatExecution['stopMode'] {
-    return activeExecutionState.consumeExecutionStopMode(sessionId, executionId);
+  function consumeExecutionStopMode(userKey: string, sessionId: string, executionId: string): ActiveChatExecution['stopMode'] {
+    return activeExecutionState.consumeExecutionStopMode(userKey, sessionId, executionId);
   }
 
-  function consumeExecutionStopResult(sessionId: string, executionId: string): ActiveChatExecutionStopResult | null {
-    return activeExecutionState.consumeExecutionStopResult(sessionId, executionId) ?? null;
+  function consumeExecutionStopResult(userKey: string, sessionId: string, executionId: string): ActiveChatExecutionStopResult | null {
+    return activeExecutionState.consumeExecutionStopResult(userKey, sessionId, executionId) ?? null;
   }
 
-  function clearActiveExecution(sessionId: string, executionId: string): boolean {
-    return activeExecutionState.clearActiveExecution(sessionId, executionId);
+  function clearActiveExecution(userKey: string, sessionId: string, executionId: string): boolean {
+    return activeExecutionState.clearActiveExecution(userKey, sessionId, executionId);
   }
 
   return {
