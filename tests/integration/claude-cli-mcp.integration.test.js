@@ -1,9 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const { mkdtempSync, writeFileSync, chmodSync, readFileSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const claudeCliModulePath = require.resolve('../../dist/claude-cli.js');
+const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
 
 test('Claude CLI 在具备 callback 环境时会挂载 agent-co MCP 配置并允许工具调用', { concurrency: false }, async () => {
   const { callClaudeCLI } = require('../../dist/claude-cli.js');
@@ -151,6 +154,72 @@ printf '{"output_text":"ok"}\n'
   } finally {
     process.env.PATH = originalPath;
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('agent-co MCP 的 post_message 工具支持结构化 invokeAgents 参数', { concurrency: false }, async () => {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+    });
+    req.on('end', () => {
+      requests.push({
+        method: req.method,
+        url: req.url,
+        headers: req.headers,
+        body: body ? JSON.parse(body) : null
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    });
+  });
+
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const apiUrl = `http://127.0.0.1:${address.port}`;
+
+  const client = new Client({
+    name: 'mcp-test-client',
+    version: '1.0.0'
+  });
+  const transport = new StdioClientTransport({
+    command: 'node',
+    args: [join(process.cwd(), 'dist', 'agent-co-mcp-server.js')],
+    env: {
+      AGENT_CO_API_URL: apiUrl,
+      AGENT_CO_SESSION_ID: 's_test',
+      AGENT_CO_CALLBACK_TOKEN: 'token123',
+      AGENT_CO_AGENT_NAME: 'Alice'
+    }
+  });
+
+  try {
+    await client.connect(transport);
+
+    const result = await client.callTool({
+      name: 'agent_co_post_message',
+      arguments: {
+        content: '请 Bob 和 Carol 继续补充',
+        invokeAgents: ['Bob', 'Carol']
+      }
+    });
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].method, 'POST');
+    assert.equal(requests[0].url, '/api/callbacks/post-message');
+    assert.deepEqual(requests[0].body, {
+      content: '请 Bob 和 Carol 继续补充',
+      invokeAgents: ['Bob', 'Carol']
+    });
+    assert.equal(requests[0].headers.authorization, 'Bearer token123');
+    assert.equal(requests[0].headers['x-agent-co-session-id'], 's_test');
+    assert.equal(requests[0].headers['x-agent-co-agent'], 'Alice');
+    assert.match(result.content[0].text, /消息已发送到聊天室/);
+  } finally {
+    await transport.close();
+    server.close();
   }
 });
 

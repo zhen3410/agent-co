@@ -104,6 +104,11 @@ export class AgentManager {
 
 你的性格: ${config.personality}
 
+协作规则：
+- 需要用户或其他 agent 看到的最终内容，直接发到群里。
+- 若你希望下一轮由其他 agent 继续，必须通过 agent_co_post_message 的 invokeAgents 字段显式指定目标。
+- 不要依赖正文里的 @ 提及作为调度协议；正文中的 @ 仅用于展示。
+
 你可以使用特殊格式发送富文本卡片，让回复更加美观。
 
 格式说明：
