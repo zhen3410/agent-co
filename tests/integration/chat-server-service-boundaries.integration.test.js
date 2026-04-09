@@ -344,38 +344,38 @@ test('ChatRuntime 停止执行 API 为必填契约', () => {
 
   assert.deepEqual(
     getMethodSignature(chatRuntimeInterface, 'registerActiveExecution').parameters.map(parameter => parameter.name.getText()),
-    ['sessionId', 'execution'],
-    'registerActiveExecution 应按 session 维度注册'
+    ['userKey', 'sessionId', 'execution'],
+    'registerActiveExecution 应按 user+session 维度注册'
   );
   assert.deepEqual(
     getMethodSignature(chatRuntimeInterface, 'getActiveExecution').parameters.map(parameter => parameter.name.getText()),
-    ['sessionId'],
-    'getActiveExecution 应按 session 查询'
+    ['userKey', 'sessionId'],
+    'getActiveExecution 应按 user+session 查询'
   );
   assert.deepEqual(
     getMethodSignature(chatRuntimeInterface, 'updateActiveExecutionAgent').parameters.map(parameter => parameter.name.getText()),
-    ['sessionId', 'executionId', 'agentName'],
-    'updateActiveExecutionAgent 应显式声明 session/execution 保护参数'
+    ['userKey', 'sessionId', 'executionId', 'agentName'],
+    'updateActiveExecutionAgent 应显式声明 user/session/execution 保护参数'
   );
   assert.deepEqual(
     getMethodSignature(chatRuntimeInterface, 'requestExecutionStop').parameters.map(parameter => parameter.name.getText()),
-    ['sessionId', 'stopMode'],
-    'requestExecutionStop 应按 session 请求停止'
+    ['userKey', 'sessionId', 'stopMode'],
+    'requestExecutionStop 应按 user+session 请求停止'
   );
   assert.deepEqual(
     getMethodSignature(chatRuntimeInterface, 'consumeExecutionStopMode').parameters.map(parameter => parameter.name.getText()),
-    ['sessionId', 'executionId'],
-    'consumeExecutionStopMode 应使用 session + execution 守卫'
+    ['userKey', 'sessionId', 'executionId'],
+    'consumeExecutionStopMode 应使用 user + session + execution 守卫'
   );
   assert.deepEqual(
     getMethodSignature(chatRuntimeInterface, 'consumeExecutionStopResult').parameters.map(parameter => parameter.name.getText()),
-    ['sessionId', 'executionId'],
-    'consumeExecutionStopResult 应使用 session + execution 守卫'
+    ['userKey', 'sessionId', 'executionId'],
+    'consumeExecutionStopResult 应使用 user + session + execution 守卫'
   );
   assert.deepEqual(
     getMethodSignature(chatRuntimeInterface, 'clearActiveExecution').parameters.map(parameter => parameter.name.getText()),
-    ['sessionId', 'executionId'],
-    'clearActiveExecution 应使用 session + execution 守卫'
+    ['userKey', 'sessionId', 'executionId'],
+    'clearActiveExecution 应使用 user + session + execution 守卫'
   );
 
   const stopResultAlias = getTypeAliasNode(filePath, 'ActiveChatExecutionStopResult');
