@@ -461,6 +461,61 @@ test('关闭当前对话智能体后，从下一条消息开始失效', async ()
   }
 });
 
+test('聊天页智能体列表不会重新展示已删除的默认内置智能体', async () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'agent-co-chat-removed-default-'));
+  const agentDataFile = path.join(tempDir, 'agents.json');
+  writeFileSync(agentDataFile, JSON.stringify({
+    activeAgents: [
+      {
+        name: 'Codex架构师',
+        avatar: '🏗️',
+        color: '#8b5cf6',
+        personality: '资深架构师，强调高内聚低耦合、可维护性与工程实践。',
+        cli: 'codex'
+      },
+      {
+        name: 'Alice',
+        avatar: '👩‍💻',
+        color: '#22c55e',
+        personality: '你是一个富有创造力的 AI 助手，喜欢用生动的语言回答问题。擅长艺术和设计。',
+        cli: 'claude'
+      },
+      {
+        name: 'Bob',
+        avatar: '🧑‍💻',
+        color: '#f97316',
+        personality: '你是一个务实的 AI 助手，喜欢用简单直接的方式解决问题。擅长工程实践。',
+        cli: 'claude'
+      }
+    ],
+    removedDefaultAgentNames: ['Claude'],
+    pendingAgents: null,
+    pendingRemovedDefaultAgentNames: null,
+    pendingReason: null,
+    updatedAt: Date.now(),
+    pendingUpdatedAt: null
+  }, null, 2), 'utf8');
+
+  const fixture = await createChatServerFixture({
+    env: {
+      AGENT_DATA_FILE: agentDataFile
+    }
+  });
+
+  try {
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200);
+
+    const agentsResponse = await fixture.request('/api/agents');
+    assert.equal(agentsResponse.status, 200);
+    assert.equal(agentsResponse.body.agents.some(agent => agent.name === 'Claude'), false);
+    assert.equal(agentsResponse.body.agents.some(agent => agent.name === 'Codex架构师'), true);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('新建会话会返回链式传播设置字段，并在会话列表中可见', async () => {
   const fixture = await createChatServerFixture();
 

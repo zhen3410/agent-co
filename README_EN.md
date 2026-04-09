@@ -366,6 +366,17 @@ Agent configs are stored in `data/agents.json` with hot reload:
 - `applyMode: "immediate"` — Takes effect immediately
 - `applyMode: "after_chat"` — Takes effect after current session ends
 
+The runtime store in `data/agents.json` may also include these fields so deleted built-in default agents stay deleted across reloads:
+
+- `removedDefaultAgentNames` — built-in default agents explicitly removed from the active config
+- `pendingRemovedDefaultAgentNames` — built-in default agents explicitly removed from the pending config
+
+This means:
+
+- built-in defaults are still auto-seeded for an empty store
+- but once a built-in agent is deleted, reloads will not silently add it back
+- for `after_chat` deletions, the agent remains visible in the active config until pending changes are applied
+
 #### Agent Groups
 
 Groups are stored in `data/groups.json`:
