@@ -139,6 +139,42 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
   interface InvocationReviewLoopResult {
     pendingTasks: PendingAgentDispatchTask[];
     suppressMessage: boolean;
+    visibleMessage?: Message;
+  }
+
+  function buildInvocationReviewVisibleMessage(params: {
+    invocationTaskId: string;
+    callerAgentName: string;
+    calleeAgentName: string;
+    review: { action: InvocationReviewAction; nextPrompt: string };
+    rawText: string;
+    outcome?: 'accepted' | 'queued' | 'failed_limit';
+  }): Message {
+    const { invocationTaskId, callerAgentName, calleeAgentName, review, rawText, outcome = 'queued' } = params;
+    const actionLabel = review.action === 'accept'
+      ? '接受'
+      : review.action === 'follow_up'
+        ? (outcome === 'failed_limit' ? '跟进失败' : '继续追问')
+        : (outcome === 'failed_limit' ? '重试失败' : '要求重试');
+    const reasonText = outcome === 'failed_limit'
+      ? `${review.nextPrompt}（已达到上限，任务失败）`
+      : review.nextPrompt || (review.action === 'accept' ? '已确认当前回复可采纳。' : '');
+    const displayText = `${callerAgentName} 对 ${calleeAgentName} 的调用复核：${actionLabel}。${reasonText}`;
+
+    return {
+      id: generateId(),
+      role: 'assistant',
+      sender: callerAgentName,
+      text: displayText,
+      messageSubtype: 'invocation_review',
+      reviewAction: review.action,
+      reviewRawText: rawText,
+      reviewDisplayText: displayText,
+      timestamp: Date.now(),
+      taskId: invocationTaskId,
+      callerAgentName,
+      calleeAgentName
+    };
   }
 
   function transitionInvocationTaskToTimeoutReview(params: {
@@ -262,6 +298,14 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           pendingTasks: []
         };
       }
+      const visibleReviewMessage = buildInvocationReviewVisibleMessage({
+        invocationTaskId: invocationTask.id,
+        callerAgentName: invocationTask.callerAgentName,
+        calleeAgentName: invocationTask.calleeAgentName,
+        review,
+        rawText: message.text || '',
+        outcome: review.action === 'accept' ? 'accepted' : 'queued'
+      });
 
       if (review.action === 'accept') {
         runtime.updateInvocationTask(userKey, session.id, invocationTask.id, {
@@ -271,7 +315,8 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         });
         return {
           suppressMessage: true,
-          pendingTasks: []
+          pendingTasks: [],
+          visibleMessage: visibleReviewMessage
         };
       }
 
@@ -283,7 +328,15 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         runtime.markInvocationTaskFailed(userKey, session.id, invocationTask.id, 'retry_limit_exceeded');
         return {
           suppressMessage: true,
-          pendingTasks: []
+          pendingTasks: [],
+          visibleMessage: buildInvocationReviewVisibleMessage({
+            invocationTaskId: invocationTask.id,
+            callerAgentName: invocationTask.callerAgentName,
+            calleeAgentName: invocationTask.calleeAgentName,
+            review,
+            rawText: message.text || '',
+            outcome: 'failed_limit'
+          })
         };
       }
       if (review.action === 'follow_up' && !canFollowUpInvocationTask({
@@ -293,7 +346,15 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         runtime.markInvocationTaskFailed(userKey, session.id, invocationTask.id, 'follow_up_limit_exceeded');
         return {
           suppressMessage: true,
-          pendingTasks: []
+          pendingTasks: [],
+          visibleMessage: buildInvocationReviewVisibleMessage({
+            invocationTaskId: invocationTask.id,
+            callerAgentName: invocationTask.callerAgentName,
+            calleeAgentName: invocationTask.calleeAgentName,
+            review,
+            rawText: message.text || '',
+            outcome: 'failed_limit'
+          })
         };
       }
 
@@ -308,6 +369,7 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       });
       return {
         suppressMessage: true,
+        visibleMessage: visibleReviewMessage,
         pendingTasks: [
           buildCalleeReplyTask({
             agentName: invocationTask.calleeAgentName,
@@ -544,6 +606,16 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           sessionService.appendMessage(session, message);
           aiMessages.push(message);
           onMessage?.(message);
+          if (stream) {
+            await new Promise<void>(resolve => setImmediate(resolve));
+          }
+        }
+        if (invocationReviewResult?.visibleMessage) {
+          const visibleReviewMessage = invocationReviewResult.visibleMessage;
+          sawVisibleMessage = true;
+          sessionService.appendMessage(session, visibleReviewMessage);
+          aiMessages.push(visibleReviewMessage);
+          onMessage?.(visibleReviewMessage);
           if (stream) {
             await new Promise<void>(resolve => setImmediate(resolve));
           }
