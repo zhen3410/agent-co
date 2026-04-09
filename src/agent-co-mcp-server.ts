@@ -35,9 +35,10 @@ server.tool(
   'agent_co_post_message',
   '将消息主动发送到聊天室。仅发送希望用户看到的最终输出。',
   {
-    content: z.string().min(1).describe('要发送到聊天室的文本内容')
+    content: z.string().min(1).describe('要发送到聊天室的文本内容'),
+    invokeAgents: z.array(z.string().min(1)).optional().describe('需要继续传播给的下一个智能体名字列表')
   },
-  async ({ content }) => {
+  async ({ content, invokeAgents }) => {
     const configError = ensureConfig();
     if (configError) {
       return { content: [{ type: 'text', text: `❌ ${configError}` }] };
@@ -50,7 +51,7 @@ server.tool(
           ...authHeaders(),
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ content })
+        body: JSON.stringify({ content, invokeAgents })
       });
 
       const text = await response.text();

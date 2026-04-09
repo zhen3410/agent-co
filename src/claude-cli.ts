@@ -150,6 +150,8 @@ function buildPrompt(userMessage: string, agent: AIAgent, history: Message[], in
   if (!includeHistory) {
     parts.push('你当前只收到了用户最新一条消息。请先调用 agent_co_get_context 获取完整会话历史，再继续处理任务。');
     parts.push('当你需要向聊天室展示内容时，调用 agent_co_post_message 发送最终可见消息。');
+    parts.push('若你希望下一轮由其他智能体继续，请在 agent_co_post_message 的 invokeAgents 字段中显式指定目标智能体列表。');
+    parts.push('不要依赖正文里的 @ 提及来触发继续传播；正文中的 @ 仅用于展示。');
     parts.push('不要把思考过程直接输出给用户。');
   }
 
