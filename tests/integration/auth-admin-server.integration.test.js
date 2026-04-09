@@ -1254,6 +1254,66 @@ test('agent admin service 支持延迟生效、显式应用并在删除时清理
   }
 });
 
+test('删除默认内置智能体后不会在重新加载时被自动补回，且延迟删除会在应用前后分别保持/移除', () => {
+  const { createAgentAdminService } = require('../../dist/admin/application/agent-admin-service.js');
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-delete-default-'));
+  const agentsFile = join(tempDir, 'agents.json');
+  const groupsFile = join(tempDir, 'groups.json');
+  const connectionsFile = join(tempDir, 'api-connections.json');
+
+  try {
+    const immediateService = createAgentAdminService({
+      agentDataFile: agentsFile,
+      groupDataFile: groupsFile,
+      modelConnectionDataFile: connectionsFile
+    });
+
+    immediateService.deleteAgent('Codex架构师', 'immediate');
+
+    const reloadedImmediateService = createAgentAdminService({
+      agentDataFile: agentsFile,
+      groupDataFile: groupsFile,
+      modelConnectionDataFile: connectionsFile
+    });
+    const immediateList = reloadedImmediateService.listAgents();
+    assert.equal(immediateList.agents.some(agent => agent.name === 'Codex架构师'), false);
+
+    const delayedService = createAgentAdminService({
+      agentDataFile: agentsFile,
+      groupDataFile: groupsFile,
+      modelConnectionDataFile: connectionsFile
+    });
+
+    delayedService.createAgent({
+      applyMode: 'immediate',
+      agent: {
+        name: 'Planner',
+        avatar: '🗂️',
+        color: '#7c3aed',
+        personality: '擅长整理需求和给出计划。'
+      }
+    });
+
+    delayedService.deleteAgent('Claude', 'after_chat');
+
+    const beforeApply = delayedService.listAgents();
+    assert.equal(beforeApply.agents.some(agent => agent.name === 'Claude'), true);
+    assert.equal(beforeApply.pendingAgents.some(agent => agent.name === 'Claude'), false);
+
+    delayedService.applyPendingAgents();
+
+    const reloadedDelayedService = createAgentAdminService({
+      agentDataFile: agentsFile,
+      groupDataFile: groupsFile,
+      modelConnectionDataFile: connectionsFile
+    });
+    const afterApply = reloadedDelayedService.listAgents();
+    assert.equal(afterApply.agents.some(agent => agent.name === 'Claude'), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 
 test('auth admin runtime 会在 token 规范化后对空白值回退默认 token', () => {
   const { createAuthAdminRuntime } = require('../../dist/admin/runtime/auth-admin-runtime.js');

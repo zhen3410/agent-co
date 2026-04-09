@@ -382,6 +382,17 @@ interface AIAgentConfig {
 - `applyMode: "immediate"` — 立即生效
 - `applyMode: "after_chat"` — 会话结束后生效
 
+`data/agents.json` 的运行时存储结构还会包含以下字段，用于正确处理默认内置智能体的删除与延迟生效：
+
+- `removedDefaultAgentNames` — 当前已生效配置里，被明确删除的默认内置智能体名称列表
+- `pendingRemovedDefaultAgentNames` — 待生效配置里，被明确删除的默认内置智能体名称列表
+
+这样做的目的是：
+
+- 默认智能体仍会在空配置初始化时自动补齐
+- 但一旦某个默认智能体被删除，就不会在重新加载后被自动补回
+- `after_chat` 删除时，应用前仍按当前生效配置展示，应用后才真正移除
+
 #### 智能体分组
 
 分组存储在 `data/groups.json`：

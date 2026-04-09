@@ -7,7 +7,9 @@ export type ApplyMode = 'immediate' | 'after_chat';
 
 export interface AgentStore {
   activeAgents: AIAgentConfig[];
+  removedDefaultAgentNames: string[];
   pendingAgents: AIAgentConfig[] | null;
+  pendingRemovedDefaultAgentNames: string[] | null;
   pendingReason: string | null;
   updatedAt: number;
   pendingUpdatedAt: number | null;
@@ -21,17 +23,42 @@ export function ensureDataDirExists(filePath: string): void {
 export function createDefaultAgentStore(): AgentStore {
   return {
     activeAgents: [...DEFAULT_AGENTS],
+    removedDefaultAgentNames: [],
     pendingAgents: null,
+    pendingRemovedDefaultAgentNames: null,
     pendingReason: null,
     updatedAt: Date.now(),
     pendingUpdatedAt: null
   };
 }
 
-function mergeWithDefaultAgents(agents: AIAgentConfig[]): AIAgentConfig[] {
+function normalizeRemovedDefaultAgentNames(input: unknown): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const allowed = new Set(DEFAULT_AGENTS.map(agent => agent.name));
+  return input
+    .filter((value): value is string => typeof value === 'string')
+    .map(value => value.trim())
+    .filter(value => value && allowed.has(value));
+}
+
+function collectRemovedDefaultAgentNames(agents: AIAgentConfig[]): string[] {
+  const existingNames = new Set(agents.map(agent => agent.name));
+  return DEFAULT_AGENTS
+    .map(agent => agent.name)
+    .filter(name => !existingNames.has(name));
+}
+
+function mergeWithDefaultAgents(agents: AIAgentConfig[], removedDefaultAgentNames: string[] = []): AIAgentConfig[] {
   const merged = new Map<string, AIAgentConfig>();
+  const removedNames = new Set(removedDefaultAgentNames);
 
   for (const agent of DEFAULT_AGENTS) {
+    if (removedNames.has(agent.name)) {
+      continue;
+    }
     merged.set(agent.name, { ...agent });
   }
 
@@ -56,18 +83,22 @@ export function loadAgentStore(filePath: string): AgentStore {
 
   const raw = fs.readFileSync(filePath, 'utf-8');
   const parsed = raw ? JSON.parse(raw) as Partial<AgentStore> : {};
+  const removedDefaultAgentNames = normalizeRemovedDefaultAgentNames(parsed.removedDefaultAgentNames);
+  const pendingRemovedDefaultAgentNames = normalizeRemovedDefaultAgentNames(parsed.pendingRemovedDefaultAgentNames);
 
   const activeAgents = Array.isArray(parsed.activeAgents) && parsed.activeAgents.length > 0
-    ? mergeWithDefaultAgents(parsed.activeAgents)
+    ? mergeWithDefaultAgents(parsed.activeAgents, removedDefaultAgentNames)
     : [...DEFAULT_AGENTS];
 
   const pendingAgents = Array.isArray(parsed.pendingAgents) && parsed.pendingAgents.length > 0
-    ? mergeWithDefaultAgents(parsed.pendingAgents)
+    ? mergeWithDefaultAgents(parsed.pendingAgents, pendingRemovedDefaultAgentNames)
     : null;
 
   return {
     activeAgents,
+    removedDefaultAgentNames,
     pendingAgents,
+    pendingRemovedDefaultAgentNames: pendingAgents ? pendingRemovedDefaultAgentNames : null,
     pendingReason: typeof parsed.pendingReason === 'string' ? parsed.pendingReason : null,
     updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
     pendingUpdatedAt: typeof parsed.pendingUpdatedAt === 'number' ? parsed.pendingUpdatedAt : null
@@ -208,6 +239,7 @@ export function updateAgentStore(
     return {
       ...store,
       pendingAgents: nextAgents,
+      pendingRemovedDefaultAgentNames: collectRemovedDefaultAgentNames(nextAgents),
       pendingReason: '等待当前会话结束后生效',
       pendingUpdatedAt: Date.now()
     };
@@ -215,7 +247,9 @@ export function updateAgentStore(
 
   return {
     activeAgents: nextAgents,
+    removedDefaultAgentNames: collectRemovedDefaultAgentNames(nextAgents),
     pendingAgents: null,
+    pendingRemovedDefaultAgentNames: null,
     pendingReason: null,
     updatedAt: Date.now(),
     pendingUpdatedAt: null
@@ -227,7 +261,9 @@ export function applyPendingAgents(store: AgentStore): AgentStore {
 
   return {
     activeAgents: [...store.pendingAgents],
+    removedDefaultAgentNames: [...(store.pendingRemovedDefaultAgentNames || [])],
     pendingAgents: null,
+    pendingRemovedDefaultAgentNames: null,
     pendingReason: null,
     updatedAt: Date.now(),
     pendingUpdatedAt: null
