@@ -1105,7 +1105,12 @@ test('中断后仅存于 invocationTasks 的 caller review 任务仍可恢复，
       assert.equal(resumeResponse.status, 200);
       assert.equal(resumeResponse.body.success, true);
       assert.equal(resumeResponse.body.resumed, true);
-      assert.deepEqual(resumeResponse.body.aiMessages, []);
+      assert.deepEqual(
+        resumeResponse.body.aiMessages.map(item => [item.sender, item.messageSubtype || null, item.reviewAction || null, item.text]),
+        [
+          ['Alice', 'invocation_review', 'accept', 'Alice 对 Bob 的调用复核：接受。Bob 已给出可执行结果。']
+        ]
+      );
 
       const historyResponse = await fixture.request('/api/history');
       assert.equal(historyResponse.status, 200);
@@ -1217,7 +1222,12 @@ test('中断后仅存于 invocationTasks 的 timeout caller review 任务仍可�
       assert.equal(resumeResponse.status, 200);
       assert.equal(resumeResponse.body.success, true);
       assert.equal(resumeResponse.body.resumed, true);
-      assert.deepEqual(resumeResponse.body.aiMessages, []);
+      assert.deepEqual(
+        resumeResponse.body.aiMessages.map(item => [item.sender, item.messageSubtype || null, item.reviewAction || null, item.text]),
+        [
+          ['Alice', 'invocation_review', 'accept', 'Alice 对 Bob 的调用复核：接受。Bob 已给出可执行结果。']
+        ]
+      );
 
       const historyResponse = await fixture.request('/api/history');
       assert.equal(historyResponse.status, 200);
@@ -1324,9 +1334,12 @@ test('中断后 stale pending_reply caller review payload 会按 invocationTasks
       assert.equal(resumeResponse.status, 200);
       assert.equal(resumeResponse.body.success, true);
       assert.equal(resumeResponse.body.resumed, true);
-      assert.equal(resumeResponse.body.aiMessages.length, 1);
+      assert.equal(resumeResponse.body.aiMessages.length, 2);
       assert.equal(resumeResponse.body.aiMessages[0].sender, 'Bob');
       assert.match(resumeResponse.body.aiMessages[0].text, /canonical pending prompt/);
+      assert.equal(resumeResponse.body.aiMessages[1].sender, 'Alice');
+      assert.equal(resumeResponse.body.aiMessages[1].messageSubtype, 'invocation_review');
+      assert.equal(resumeResponse.body.aiMessages[1].reviewAction, 'accept');
 
       const historyResponse = await fixture.request('/api/history');
       assert.equal(historyResponse.status, 200);
@@ -1443,9 +1456,10 @@ test('中断后若 pending_reply 已有缓冲可见回复，则 resume 不会重
       assert.equal(resumeResponse.body.success, true);
       assert.equal(resumeResponse.body.resumed, true);
       assert.deepEqual(
-        resumeResponse.body.aiMessages.map(item => [item.sender, item.text]),
+        resumeResponse.body.aiMessages.map(item => [item.sender, item.messageSubtype || null, item.reviewAction || null, item.text]),
         [
-          ['Bob', 'buffered visible reply']
+          ['Bob', null, null, 'buffered visible reply'],
+          ['Alice', 'invocation_review', 'accept', 'Alice 对 Bob 的调用复核：接受。Bob 已按纠正后的 prompt 回复。']
         ]
       );
 

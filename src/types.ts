@@ -81,12 +81,16 @@ export interface ApiConnectionSummary {
 // ============================================
 
 export type MessageRole = 'user' | 'assistant';
+export type MessageSubtype = 'invocation_review';
 
 export interface Message {
   id: string;
   role: MessageRole;
   sender: string;  // 用户名或 AI 名字
   text: string;
+  messageSubtype?: MessageSubtype;
+  reviewRawText?: string;
+  reviewDisplayText?: string;
   blocks?: RichBlock[];
   timestamp: number;
   mentions?: string[];  // 被 @ 的智能体名字列表
