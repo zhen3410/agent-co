@@ -1655,6 +1655,122 @@ test('chat-stream 在 API 模式下会先推送 agent_delta，再推送最终 ag
   }
 });
 
+test('chat-stop 在无活动执行时返回 stopped false', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    await fixture.login();
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'session' }
+    });
+
+    assert.equal(stopResponse.status, 200);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: false,
+      scope: 'session'
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('chat-stop scope 非法值会返回校验失败', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    await fixture.login();
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'invalid_scope' }
+    });
+
+    assert.equal(stopResponse.status, 400);
+    assert.deepEqual(stopResponse.body, { error: 'scope 必须是 current_agent 或 session' });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('chat-stop 可停止当前活动执行并返回 scope', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-active-stream-'));
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+sleep 2
+printf '{"output_text":"late reply"}\\n'
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Claude']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Claude 保持执行用于 stop 测试' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let thinkingSeen = false;
+    const thinkingDeadline = Date.now() + 5000;
+
+    while (!thinkingSeen) {
+      assert.ok(Date.now() < thinkingDeadline, 'stream should emit thinking before stop request');
+      const { done, value } = await reader.read();
+      assert.equal(done, false);
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      let eventType = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          const payload = JSON.parse(line.slice(6));
+          if (eventType === 'agent_thinking' && payload.agent === 'Claude') {
+            thinkingSeen = true;
+            break;
+          }
+          eventType = '';
+        }
+      }
+    }
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'session' }
+    });
+    assert.equal(stopResponse.status, 200);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'session'
+    });
+
+    await reader.cancel().catch(() => {});
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('未登录时聊天相关接口会返回 401，登录后可正常聊天', async () => {
   const fixture = await createChatServerFixture();
 

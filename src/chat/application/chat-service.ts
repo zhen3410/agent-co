@@ -195,37 +195,63 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       };
     }
 
-    const undeliveredMessages: Message[] = [];
-    const executionResult = await dispatchOrchestrator.executeAgentTurn({
-      userKey,
-      session,
-      initialTasks: agentsToRespond.map(agentName => ({
-        agentName,
-        prompt: message,
-        includeHistory: mentions.length === 0
-      })),
-      stream: true,
-      shouldContinue: callbacks.shouldContinue,
-      signal: callbacks.signal,
-      onThinking: callbacks.onThinking,
-      onTextDelta: callbacks.onTextDelta,
-      onMessage: (visibleMessage) => {
-        const delivered = callbacks.onMessage(visibleMessage);
-        if (!delivered) {
-          undeliveredMessages.push(visibleMessage);
-        }
+    const executionId = buildMessageId();
+    const executionController = new AbortController();
+    const forwardAbort = () => executionController.abort();
+    if (callbacks.signal) {
+      if (callbacks.signal.aborted) {
+        executionController.abort();
+      } else {
+        callbacks.signal.addEventListener('abort', forwardAbort, { once: true });
       }
+    }
+    runtime.registerActiveExecution(userKey, session.id, {
+      executionId,
+      userKey,
+      sessionId: session.id,
+      currentAgentName: null,
+      abortController: executionController,
+      stopMode: 'none'
     });
-    sessionService.updatePendingExecution(session, executionResult.pendingTasks, undeliveredMessages);
 
-    return {
-      currentAgent: sessionService.getCurrentAgent(userKey, session.id),
-      notice: ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined,
-      hadVisibleMessages: executionResult.aiMessages.length > 0,
-      emptyVisibleMessage: executionResult.aiMessages.length === 0
-        ? `${agentsToRespond.join('、')} 未返回可见消息，请稍后重试或查看日志。`
-        : undefined
-    };
+    const undeliveredMessages: Message[] = [];
+    try {
+      const executionResult = await dispatchOrchestrator.executeAgentTurn({
+        userKey,
+        session,
+        initialTasks: agentsToRespond.map(agentName => ({
+          agentName,
+          prompt: message,
+          includeHistory: mentions.length === 0
+        })),
+        stream: true,
+        shouldContinue: callbacks.shouldContinue,
+        signal: executionController.signal,
+        onThinking: callbacks.onThinking,
+        onTextDelta: callbacks.onTextDelta,
+        onMessage: (visibleMessage) => {
+          const delivered = callbacks.onMessage(visibleMessage);
+          if (!delivered) {
+            undeliveredMessages.push(visibleMessage);
+          }
+        }
+      });
+      sessionService.updatePendingExecution(session, executionResult.pendingTasks, undeliveredMessages);
+
+      return {
+        currentAgent: sessionService.getCurrentAgent(userKey, session.id),
+        notice: ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined,
+        hadVisibleMessages: executionResult.aiMessages.length > 0,
+        emptyVisibleMessage: executionResult.aiMessages.length === 0
+          ? `${agentsToRespond.join('、')} 未返回可见消息，请稍后重试或查看日志。`
+          : undefined
+      };
+    } finally {
+      if (callbacks.signal) {
+        callbacks.signal.removeEventListener('abort', forwardAbort);
+      }
+      runtime.clearActiveExecution(userKey, session.id, executionId);
+    }
   }
 
   function createBlock(payload: { sessionId?: string; block: RichBlock }) {
@@ -260,10 +286,32 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
   }
 
   async function stopExecution(
-    _context: { userKey: string },
-    _request: StopExecutionRequest
-  ): Promise<{ success: true; stopped: { scope: StopExecutionRequest['scope']; currentAgent: string | null; resumeAvailable: boolean } }> {
-    throw new ChatServiceError('停止执行能力尚未实现', APP_ERROR_CODES.INTERNAL_FAILURE, 501);
+    context: { userKey: string },
+    request: StopExecutionRequest
+  ): Promise<{ success: true; stopped: boolean; scope: StopExecutionRequest['scope'] }> {
+    if (request.scope !== 'current_agent' && request.scope !== 'session') {
+      throw new ChatServiceError('scope 必须是 current_agent 或 session', APP_ERROR_CODES.VALIDATION_FAILED);
+    }
+
+    const { userKey } = context;
+    const targetSessionId = (() => {
+      const requestedSessionId = request.sessionId?.trim();
+      if (!requestedSessionId) {
+        return sessionService.resolveChatSession(context).session.id;
+      }
+
+      const targetSession = runtime.ensureUserSessions(userKey).get(requestedSessionId);
+      if (!targetSession) {
+        throw new ChatServiceError('会话不存在', APP_ERROR_CODES.NOT_FOUND);
+      }
+      return targetSession.id;
+    })();
+    const stoppedExecution = runtime.requestExecutionStop(userKey, targetSessionId, request.scope);
+    return {
+      success: true as const,
+      stopped: Boolean(stoppedExecution),
+      scope: request.scope
+    };
   }
 
   return {

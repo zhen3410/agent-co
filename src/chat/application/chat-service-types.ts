@@ -60,7 +60,7 @@ export interface ChatService {
   streamMessage(context: SessionUserContext, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<{ currentAgent: string | null; notice?: string; hadVisibleMessages: boolean; emptyVisibleMessage?: string; stopped?: StoppedExecutionMetadata }>;
   resumePendingChat(context: SessionUserContext): Promise<{ success: true; resumed: boolean; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
   summarizeChat(context: SessionUserContext, sessionId?: string): Promise<{ success: true; aiMessages: Message[]; currentAgent: string | null }>;
-  stopExecution(context: SessionUserContext, request: StopExecutionRequest): Promise<{ success: true; stopped: StoppedExecutionMetadata }>;
+  stopExecution(context: SessionUserContext, request: StopExecutionRequest): Promise<{ success: true; stopped: boolean; scope: StopExecutionRequest['scope'] }>;
   createBlock(payload: { sessionId?: string; block: RichBlock }): { success: true; block: RichBlock };
   getBlockStatus(): ReturnType<typeof getBlockBufferStatus>;
   postCallbackMessage(sessionId: string, agentName: string, content: string, invokeAgents?: string[]): { status: 'ok' };
