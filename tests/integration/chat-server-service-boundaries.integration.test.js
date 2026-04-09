@@ -105,6 +105,10 @@ function hasMethodSignature(interfaceNode, methodName) {
   return interfaceNode.members.some(member => ts.isMethodSignature(member) && member.name.getText() === methodName);
 }
 
+function getMethodSignature(interfaceNode, methodName) {
+  return interfaceNode.members.find(member => ts.isMethodSignature(member) && member.name.getText() === methodName) || null;
+}
+
 test('chat-service façade 保持稳定的 value exports', () => {
   assert.deepEqual(
     collectValueExports(chatServicePath),
@@ -249,14 +253,61 @@ test('显式停止结果会携带 stopped 元数据', () => {
   assert.equal(stoppedMember.type.getText(), 'StoppedExecutionMetadata', 'stopped 字段应使用 StoppedExecutionMetadata');
 });
 
-test('StopExecutionRequest scope 禁止 none', () => {
+test('stream/SSE 返回契约暴露 stopped 元数据', () => {
   const filePath = path.join(applicationDir, 'chat-service-types.ts');
+  const chatServiceInterface = getInterfaceNode(filePath, 'ChatService');
+  assert.ok(chatServiceInterface, 'chat-service-types.ts 应定义 ChatService interface');
+
+  const streamMethod = getMethodSignature(chatServiceInterface, 'streamMessage');
+  assert.ok(streamMethod, 'ChatService 应定义 streamMessage');
+  assert.ok(streamMethod.type && ts.isTypeReferenceNode(streamMethod.type), 'streamMessage 应返回 Promise 类型');
+  assert.equal(streamMethod.type.typeName.getText(), 'Promise', 'streamMessage 返回值应为 Promise');
+  assert.ok(streamMethod.type.typeArguments?.[0] && ts.isTypeLiteralNode(streamMethod.type.typeArguments[0]), 'streamMessage Promise 泛型参数应为对象类型');
+
+  const streamReturnShape = streamMethod.type.typeArguments[0];
+  const stoppedMember = streamReturnShape.members.find(member => ts.isPropertySignature(member) && member.name.getText() === 'stopped');
+  assert.ok(stoppedMember, 'streamMessage 返回类型应包含 stopped 字段');
+  assert.equal(stoppedMember.questionToken !== undefined, true, 'streamMessage.stopped 应为可选');
+  assert.equal(stoppedMember.type.getText(), 'StoppedExecutionMetadata', 'streamMessage.stopped 应使用 StoppedExecutionMetadata');
+});
+
+test('stopExecution 请求契约禁止 none（运行时校验在后续任务实现）', () => {
+  const filePath = path.join(applicationDir, 'chat-service-types.ts');
+  const chatServiceInterface = getInterfaceNode(filePath, 'ChatService');
+  assert.ok(chatServiceInterface, 'chat-service-types.ts 应定义 ChatService interface');
+
+  const stopExecutionMethod = getMethodSignature(chatServiceInterface, 'stopExecution');
+  assert.ok(stopExecutionMethod, 'ChatService 应定义 stopExecution');
+  assert.equal(stopExecutionMethod.parameters[1].type.getText(), 'StopExecutionRequest', 'stopExecution 第二参数应使用 StopExecutionRequest 契约');
+
   const requestInterface = getInterfaceNode(filePath, 'StopExecutionRequest');
   assert.ok(requestInterface, 'chat-service-types.ts 应定义 StopExecutionRequest interface');
 
   const scopeMember = requestInterface.members.find(member => ts.isPropertySignature(member) && member.name.getText() === 'scope');
   assert.ok(scopeMember, 'StopExecutionRequest 应定义 scope');
   assert.equal(scopeMember.type.getText(), "Exclude<ChatExecutionStopMode, 'none'>", 'scope 应禁止 none');
+});
+
+test('ChatRuntime 停止执行 API 为必填契约', () => {
+  const filePath = path.join(repoRoot, 'src', 'chat', 'runtime', 'chat-runtime-types.ts');
+  const chatRuntimeInterface = getInterfaceNode(filePath, 'ChatRuntime');
+  assert.ok(chatRuntimeInterface, 'chat-runtime-types.ts 应定义 ChatRuntime interface');
+
+  const requiredMethods = [
+    'registerActiveExecution',
+    'getActiveExecution',
+    'updateActiveExecution',
+    'requestExecutionStop',
+    'consumeExecutionStopMode',
+    'consumeExecutionStopResult',
+    'clearActiveExecution'
+  ];
+
+  for (const methodName of requiredMethods) {
+    const method = getMethodSignature(chatRuntimeInterface, methodName);
+    assert.ok(method, `ChatRuntime 应定义 ${methodName} 方法`);
+    assert.equal(method.questionToken === undefined, true, `${methodName} 不应为可选方法`);
+  }
 });
 
 test('共享停止模式 union 保持窄类型', () => {
