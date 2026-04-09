@@ -133,6 +133,10 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
     return { ...task };
   }
 
+  function isInvocationTaskTerminalStatus(status: InvocationTask['status']): boolean {
+    return status === 'completed' || status === 'failed';
+  }
+
   function buildSessionResponse(session: UserChatSession): NormalizedUserChatSession {
     const normalized = deps.normalizeSessionChainSettings(session);
     const discussion = deps.normalizeSessionDiscussionSettings(session);
@@ -389,6 +393,9 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
         ...tasks[existingTaskIndex],
         ...normalizedTask,
         sessionId,
+        reviewVersion: typeof normalizedTask.reviewVersion === 'number'
+          ? normalizedTask.reviewVersion
+          : tasks[existingTaskIndex].reviewVersion ?? 0,
         updatedAt: Date.now()
       };
       deps.touchSession(session);
@@ -398,6 +405,7 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
     tasks.push({
       ...normalizedTask,
       sessionId,
+      reviewVersion: normalizedTask.reviewVersion ?? 0,
       createdAt: normalizedTask.createdAt || Date.now(),
       updatedAt: normalizedTask.updatedAt || Date.now()
     });
@@ -413,12 +421,21 @@ export function createChatSessionState(deps: ChatSessionStateDependencies): Chat
     const index = tasks.findIndex(task => task.id === taskId);
     if (index < 0) return null;
 
+    const currentTask = tasks[index];
+    const requestedStatus = typeof patch.status === 'string' ? patch.status : currentTask.status;
+    if (isInvocationTaskTerminalStatus(currentTask.status) && requestedStatus !== currentTask.status) {
+      return cloneInvocationTask(currentTask);
+    }
+
     const nextTask = normalizeInvocationTask({
-      ...tasks[index],
+      ...currentTask,
       ...patch,
-      id: tasks[index].id,
-      sessionId: tasks[index].sessionId,
-      createdAt: tasks[index].createdAt,
+      id: currentTask.id,
+      sessionId: currentTask.sessionId,
+      createdAt: currentTask.createdAt,
+      reviewVersion: typeof patch.reviewVersion === 'number'
+        ? patch.reviewVersion
+        : currentTask.reviewVersion ?? 0,
       updatedAt: Date.now()
     }, sessionId);
     if (!nextTask) return null;

@@ -105,6 +105,7 @@ export interface InvocationTask {
   id: string;
   sessionId: string;
   status: InvocationTaskStatus;
+  reviewVersion?: number;
   callerAgentName: string;
   calleeAgentName: string;
   prompt: string;

@@ -99,6 +99,7 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
     callerAgentName: string;
     calleeAgentName: string;
     deadlineAt?: number;
+    invocationTaskReviewVersion?: number;
   }): PendingAgentDispatchTask {
     return {
       agentName: params.agentName,
@@ -109,7 +110,8 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       callerAgentName: params.callerAgentName,
       calleeAgentName: params.calleeAgentName,
       reviewMode: 'caller_review',
-      deadlineAt: params.deadlineAt
+      deadlineAt: params.deadlineAt,
+      invocationTaskReviewVersion: params.invocationTaskReviewVersion
     };
   }
 
@@ -153,7 +155,8 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
 
     const updatedTask = runtime.updateInvocationTask(params.userKey, params.sessionId, invocationTask.id, {
       status: 'awaiting_caller_review',
-      timedOutAt: params.now
+      timedOutAt: params.now,
+      reviewVersion: (invocationTask.reviewVersion || 0) + 1
     });
     const promptTask = updatedTask || invocationTask;
     return buildInternalReviewTask({
@@ -162,7 +165,8 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       taskId: promptTask.id,
       callerAgentName: promptTask.callerAgentName,
       calleeAgentName: promptTask.calleeAgentName,
-      deadlineAt: promptTask.deadlineAt
+      deadlineAt: promptTask.deadlineAt,
+      invocationTaskReviewVersion: promptTask.reviewVersion
     });
   }
 
@@ -237,10 +241,13 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       const invocationTask = message.taskId
         ? runtime.listInvocationTasks(userKey, session.id).find(item => item.id === message.taskId)
         : null;
-      if (!invocationTask || message.sender !== task.agentName || invocationTask.status !== 'awaiting_caller_review') {
-        if (invocationTask) {
-          runtime.markInvocationTaskFailed(userKey, session.id, invocationTask.id, 'invalid_review_state');
-        }
+      const expectedReviewVersion = typeof task.invocationTaskReviewVersion === 'number'
+        ? task.invocationTaskReviewVersion
+        : null;
+      const reviewVersionMismatch = invocationTask
+        && expectedReviewVersion !== null
+        && (invocationTask.reviewVersion || 0) !== expectedReviewVersion;
+      if (!invocationTask || message.sender !== task.agentName || invocationTask.status !== 'awaiting_caller_review' || reviewVersionMismatch) {
         return {
           suppressMessage: true,
           pendingTasks: []
@@ -347,20 +354,29 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       }
 
       const reviewPrompt = buildInvocationReviewPrompt(invocationTask, message.text || '');
-      runtime.updateInvocationTask(userKey, session.id, invocationTask.id, {
+      const nextReviewVersion = (invocationTask.reviewVersion || 0) + 1;
+      const updatedTask = runtime.updateInvocationTask(userKey, session.id, invocationTask.id, {
         status: 'awaiting_caller_review',
-        lastReplyMessageId: message.id
+        lastReplyMessageId: message.id,
+        reviewVersion: nextReviewVersion
       });
+      const reviewTask = updatedTask || {
+        ...invocationTask,
+        status: 'awaiting_caller_review' as const,
+        lastReplyMessageId: message.id,
+        reviewVersion: nextReviewVersion
+      };
       return {
         suppressMessage: false,
         pendingTasks: [
           buildInternalReviewTask({
-            agentName: invocationTask.callerAgentName,
+            agentName: reviewTask.callerAgentName,
             prompt: reviewPrompt,
-            taskId: invocationTask.id,
-            callerAgentName: invocationTask.callerAgentName,
-            calleeAgentName: invocationTask.calleeAgentName,
-            deadlineAt: invocationTask.deadlineAt
+            taskId: reviewTask.id,
+            callerAgentName: reviewTask.callerAgentName,
+            calleeAgentName: reviewTask.calleeAgentName,
+            deadlineAt: reviewTask.deadlineAt,
+            invocationTaskReviewVersion: reviewTask.reviewVersion
           })
         ]
       };
@@ -482,7 +498,16 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
             }
           }
         }
-        const chainedMentions = chainTargets.filter(name => name !== rawMessage.sender && agentManager.hasAgent(name));
+        const chainedMentions = chainTargets.filter((name) => {
+          if (name === rawMessage.sender || !agentManager.hasAgent(name)) {
+            return false;
+          }
+          if (discussionMode === 'peer' && task.reviewMode === 'caller_review' && task.callerAgentName === name) {
+            runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${rawMessage.sender || task.agentName} stage=chain_skip reason=caller_review_back_edge target=${name}`);
+            return false;
+          }
+          return true;
+        });
 
         let displayText = rawMessage.text || '';
         if (rawMessage.invokeAgents && rawMessage.invokeAgents.length > 0 && !agentManager.extractChainInvocations(displayText).length) {

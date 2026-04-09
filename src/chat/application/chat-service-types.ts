@@ -17,6 +17,7 @@ export interface AgentDispatchTask {
   calleeAgentName?: string;
   reviewMode?: AgentDispatchReviewMode;
   deadlineAt?: number;
+  invocationTaskReviewVersion?: number;
 }
 
 export interface PendingAgentDispatchTask extends RuntimePendingAgentDispatchTask {
@@ -25,6 +26,7 @@ export interface PendingAgentDispatchTask extends RuntimePendingAgentDispatchTas
   calleeAgentName?: string;
   reviewMode?: AgentDispatchReviewMode;
   deadlineAt?: number;
+  invocationTaskReviewVersion?: number;
 }
 
 export interface ChatServiceDependencies {
