@@ -543,6 +543,8 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
 
       for (const rawMessage of visibleMessages) {
         const { mentions: referenceMentions } = collectEligibleMentions(rawMessage.text || '', session);
+        const enabledAgents = sessionService.getEnabledAgents(session);
+        const enabledSet = new Set(enabledAgents);
 
         let chainTargets: string[];
         if (rawMessage.invokeAgents && rawMessage.invokeAgents.length > 0) {
@@ -562,6 +564,10 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         }
         const chainedMentions = chainTargets.filter((name) => {
           if (name === rawMessage.sender || !agentManager.hasAgent(name)) {
+            return false;
+          }
+          if (!enabledSet.has(name)) {
+            runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${rawMessage.sender || task.agentName} stage=chain_skip reason=agent_disabled target=${name}`);
             return false;
           }
           if (discussionMode === 'peer' && task.reviewMode === 'caller_review' && task.callerAgentName === name) {
