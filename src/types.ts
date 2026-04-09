@@ -49,6 +49,7 @@ export type InvocationTaskStatus =
   | 'failed'
   | 'timed_out';
 export type InvocationReviewAction = 'accept' | 'follow_up' | 'retry';
+export type ChatExecutionStopMode = 'none' | 'current_agent' | 'session';
 export type DiscussionTriggerReason =
   | 'explicit_mention'
   | 'factual_conflict'

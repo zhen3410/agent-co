@@ -69,6 +69,42 @@ function collectValueExports(filePath) {
   return [...exports].sort();
 }
 
+function getInterfaceNode(filePath, interfaceName) {
+  const sourceFile = ts.createSourceFile(filePath, read(filePath), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let found = null;
+
+  function visit(node) {
+    if (ts.isInterfaceDeclaration(node) && node.name.text === interfaceName) {
+      found = node;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return found;
+}
+
+function getTypeAliasNode(filePath, aliasName) {
+  const sourceFile = ts.createSourceFile(filePath, read(filePath), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let found = null;
+
+  function visit(node) {
+    if (ts.isTypeAliasDeclaration(node) && node.name.text === aliasName) {
+      found = node;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return found;
+}
+
+function hasMethodSignature(interfaceNode, methodName) {
+  return interfaceNode.members.some(member => ts.isMethodSignature(member) && member.name.getText() === methodName);
+}
+
 test('chat-service façade 保持稳定的 value exports', () => {
   assert.deepEqual(
     collectValueExports(chatServicePath),
@@ -193,4 +229,39 @@ test('chat summary helper keeps manual-summary dispatch behavior stable', async 
     dispatchKind: 'summary'
   });
   assert.deepEqual(events.at(-1), ['end', 'user-1::session-1']);
+});
+
+test('ChatService 暴露 stopExecution 能力', () => {
+  const filePath = path.join(applicationDir, 'chat-service-types.ts');
+  const chatServiceInterface = getInterfaceNode(filePath, 'ChatService');
+  assert.ok(chatServiceInterface, 'chat-service-types.ts 应定义 ChatService interface');
+  assert.equal(hasMethodSignature(chatServiceInterface, 'stopExecution'), true, 'ChatService 应包含 stopExecution 方法签名');
+});
+
+test('显式停止结果会携带 stopped 元数据', () => {
+  const filePath = path.join(applicationDir, 'chat-service-types.ts');
+  const executeAgentTurnResult = getInterfaceNode(filePath, 'ExecuteAgentTurnResult');
+  assert.ok(executeAgentTurnResult, 'chat-service-types.ts 应定义 ExecuteAgentTurnResult interface');
+
+  const stoppedMember = executeAgentTurnResult.members.find(member => ts.isPropertySignature(member) && member.name.getText() === 'stopped');
+  assert.ok(stoppedMember, 'ExecuteAgentTurnResult 应暴露 stopped 元数据字段');
+  assert.equal(stoppedMember.questionToken !== undefined, true, 'stopped 字段应为可选');
+  assert.equal(stoppedMember.type.getText(), 'StoppedExecutionMetadata', 'stopped 字段应使用 StoppedExecutionMetadata');
+});
+
+test('StopExecutionRequest scope 禁止 none', () => {
+  const filePath = path.join(applicationDir, 'chat-service-types.ts');
+  const requestInterface = getInterfaceNode(filePath, 'StopExecutionRequest');
+  assert.ok(requestInterface, 'chat-service-types.ts 应定义 StopExecutionRequest interface');
+
+  const scopeMember = requestInterface.members.find(member => ts.isPropertySignature(member) && member.name.getText() === 'scope');
+  assert.ok(scopeMember, 'StopExecutionRequest 应定义 scope');
+  assert.equal(scopeMember.type.getText(), "Exclude<ChatExecutionStopMode, 'none'>", 'scope 应禁止 none');
+});
+
+test('共享停止模式 union 保持窄类型', () => {
+  const filePath = path.join(repoRoot, 'src', 'types.ts');
+  const stopModeAlias = getTypeAliasNode(filePath, 'ChatExecutionStopMode');
+  assert.ok(stopModeAlias, 'types.ts 应定义 ChatExecutionStopMode');
+  assert.equal(stopModeAlias.type.getText(), "'none' | 'current_agent' | 'session'");
 });
