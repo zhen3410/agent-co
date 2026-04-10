@@ -434,6 +434,24 @@ body.context-panel-open .main-layout {
   padding: 8px 13px;
 }
 
+.btn-stop-action {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: rgba(254, 226, 226, 0.7);
+  color: #b91c1c;
+}
+
+.btn-stop-action:hover:not(:disabled) {
+  background: rgba(254, 202, 202, 0.84);
+  border-color: rgba(220, 38, 38, 0.45);
+  color: #991b1b;
+}
+
+.btn-stop-action:disabled {
+  opacity: 0.58;
+  cursor: wait;
+  transform: none;
+}
+
 .btn-session {
   padding: 10px 14px;
 }
@@ -2069,6 +2087,11 @@ body.composer-drawer-open .mobile-composer-trigger {
 
   .btn-clear {
     padding: 6px 10px;
+  }
+
+  .btn-stop-action {
+    padding: 6px 8px;
+    font-size: 11px;
   }
 
   .btn-mobile-session {

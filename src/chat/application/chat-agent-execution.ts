@@ -129,7 +129,7 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
   const { runtime, sessionService, agentManager } = deps;
 
   const runAgentTask: RunAgentTask = async (params) => {
-    const { userKey, session, task, stream, onTextDelta, signal } = params;
+    const { userKey, session, task, stream, executionId, onTextDelta, signal } = params;
     const { agentName, prompt, includeHistory } = task;
     const agent = agentManager.getAgent(agentName);
     if (!agent) return [];
@@ -176,11 +176,20 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
       runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${doneStage} text_len=${result.text.length} blocks=${result.blocks.length}`);
     } catch (error: unknown) {
       const err = error as Error;
-      console.log(`[${logTag}] AI 调用失败: ${err.message}`);
-      runtime.appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=${errorStage} error=${err.message}`);
       if (signal?.aborted) {
-        runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${errorStage}_aborted`);
+        const activeExecution = executionId
+          ? runtime.getActiveExecution(userKey, session.id)
+          : null;
+        const abortScope = activeExecution && activeExecution.executionId === executionId
+          ? activeExecution.stopMode
+          : 'none';
+        const abortReason = abortScope === 'none'
+          ? 'signal_aborted'
+          : `explicit_stop scope=${abortScope}`;
+        runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${agentName} stage=${errorStage}_aborted reason=${abortReason}`);
       } else {
+        console.log(`[${logTag}] AI 调用失败: ${err.message}`);
+        runtime.appendOperationalLog('error', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${agentName} stage=${errorStage} error=${err.message}`);
         const fallbackText = isApiMode
           ? `API 调用失败：${err.message}`
           : buildCliErrorVisibleText(err.message);
@@ -209,7 +218,8 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
     }
 
     if (visibleMessages.length === 0) {
-      runtime.appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=empty_visible_message`);
+      const emptyReason = signal?.aborted ? 'aborted' : 'no_visible_message';
+      runtime.appendOperationalLog(signal?.aborted ? 'info' : 'error', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${agentName} stage=empty_visible_message reason=${emptyReason}`);
     }
 
     return visibleMessages;

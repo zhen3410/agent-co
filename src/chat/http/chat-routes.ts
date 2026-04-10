@@ -30,6 +30,16 @@ export interface ChatRoutesDependencies {
   userKey: string;
 }
 
+function normalizeStopScope(scope: unknown): 'current_agent' | 'session' {
+  const normalized = normalizeBodyText(scope);
+  if (normalized !== 'current_agent' && normalized !== 'session') {
+    throw new AppError('scope 必须是 current_agent 或 session', {
+      code: APP_ERROR_CODES.VALIDATION_FAILED
+    });
+  }
+  return normalized;
+}
+
 function sendServiceError(res: http.ServerResponse, error: unknown): void {
   sendHttpError(res, error);
 }
@@ -116,6 +126,25 @@ export async function handleChatRoutes(
   if (requestUrl.pathname === '/api/chat-resume' && method === 'POST') {
     try {
       sendJson(res, 200, await deps.chatService.resumePendingChat({ userKey: deps.userKey }));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
+  if (requestUrl.pathname === '/api/chat-stop' && method === 'POST') {
+    try {
+      const body = await parseBody<{ sessionId?: string; scope?: unknown }>(req);
+      const sessionId = typeof body.sessionId === 'undefined'
+        ? undefined
+        : normalizeSessionId(body.sessionId);
+      sendJson(res, 200, await deps.chatService.stopExecution(
+        { userKey: deps.userKey },
+        {
+          sessionId,
+          scope: normalizeStopScope(body.scope)
+        }
+      ));
     } catch (error) {
       sendServiceError(res, error);
     }

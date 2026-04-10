@@ -1,4 +1,4 @@
-import { Message, DiscussionMode, DiscussionState, AgentDispatchKind, InvocationTask } from '../../types';
+import { Message, DiscussionMode, DiscussionState, AgentDispatchKind, InvocationTask, ChatExecutionStopMode, ChatExecutionStoppedMetadata } from '../../types';
 import { UserChatSession, PendingAgentDispatchTask } from '../infrastructure/chat-session-repository';
 import { DependencyStatusItem, DependencyStatusLogEntry } from '../infrastructure/dependency-log-store';
 
@@ -6,6 +6,18 @@ export type NormalizedUserChatSession = UserChatSession & Required<Pick<UserChat
 export type DetailedNormalizedUserChatSession = NormalizedUserChatSession & { enabledAgents: string[]; agentWorkdirs: Record<string, string> };
 export type SessionChainPatch = Partial<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent' | 'discussionMode'>>;
 export type InvocationTaskUpdatePatch = Partial<Omit<InvocationTask, 'id' | 'sessionId' | 'createdAt'>>;
+
+export type ActiveChatExecutionStopResult = ChatExecutionStoppedMetadata;
+
+export interface ActiveChatExecution {
+  executionId: string;
+  userKey: string;
+  sessionId: string;
+  currentAgentName: string | null;
+  abortController: AbortController;
+  stopMode: ChatExecutionStopMode;
+  stopped?: ActiveChatExecutionStopResult;
+}
 
 export interface ChatSessionSummary {
   id: string;
@@ -78,6 +90,13 @@ export interface ChatRuntime {
   resolveOverdueInvocationTasks(userKey: string, sessionId: string, now?: number): InvocationTask[];
   markInvocationTaskCompleted(userKey: string, sessionId: string, taskId: string): InvocationTask | null;
   markInvocationTaskFailed(userKey: string, sessionId: string, taskId: string, reason?: string): InvocationTask | null;
+  registerActiveExecution(userKey: string, sessionId: string, execution: ActiveChatExecution): ActiveChatExecution;
+  getActiveExecution(userKey: string, sessionId: string): ActiveChatExecution | null;
+  updateActiveExecutionAgent(userKey: string, sessionId: string, executionId: string, agentName: string | null): ActiveChatExecution | null;
+  requestExecutionStop(userKey: string, sessionId: string, stopMode: Exclude<ChatExecutionStopMode, 'none'>): ActiveChatExecution | null;
+  consumeExecutionStopMode(userKey: string, sessionId: string, executionId: string): ChatExecutionStopMode;
+  consumeExecutionStopResult(userKey: string, sessionId: string, executionId: string): ActiveChatExecutionStopResult | null;
+  clearActiveExecution(userKey: string, sessionId: string, executionId: string): boolean;
   buildSessionResponse(session: UserChatSession): NormalizedUserChatSession;
   buildDetailedSessionResponse(session: UserChatSession): DetailedNormalizedUserChatSession;
   parseSessionChainPatch(patch: unknown): SessionChainPatch;

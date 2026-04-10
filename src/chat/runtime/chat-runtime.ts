@@ -9,6 +9,8 @@ import {
   DependencyStatusLogEntry
 } from '../infrastructure/dependency-log-store';
 import {
+  ActiveChatExecution,
+  ActiveChatExecutionStopResult,
   ChatRuntime,
   ChatRuntimeConfig,
   InvocationTaskUpdatePatch,
@@ -22,6 +24,7 @@ import { createChatDiscussionState } from './chat-discussion-state';
 import { createChatRuntimePersistence } from './chat-runtime-persistence';
 import { createChatRuntimeDependencies } from './chat-runtime-dependencies';
 import { createChatRuntimeStores } from './chat-runtime-stores';
+import { createChatActiveExecutionState } from './chat-active-execution-state';
 
 export type { UserChatSession, PendingAgentDispatchTask } from '../infrastructure/chat-session-repository';
 export type { DependencyStatusItem, DependencyStatusLogEntry } from '../infrastructure/dependency-log-store';
@@ -83,6 +86,9 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     redisClient,
     dependencyLogs: dependencyLogStore
   });
+  const activeExecutionState = createChatActiveExecutionState({
+    log: (message: string) => dependencyLogStore.appendOperationalLog('info', 'chat-exec', message)
+  });
 
   function addCallbackMessage(sessionId: string, agentName: string, content: string, invokeAgents?: string[]) {
     const msg: Message = {
@@ -129,6 +135,34 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     return sessionState.markInvocationTaskFailed(userKey, sessionId, taskId, reason);
   }
 
+  function registerActiveExecution(userKey: string, sessionId: string, execution: ActiveChatExecution): ActiveChatExecution {
+    return activeExecutionState.registerActiveExecution(userKey, sessionId, execution);
+  }
+
+  function getActiveExecution(userKey: string, sessionId: string): ActiveChatExecution | null {
+    return activeExecutionState.getActiveExecution(userKey, sessionId);
+  }
+
+  function updateActiveExecutionAgent(userKey: string, sessionId: string, executionId: string, agentName: string | null): ActiveChatExecution | null {
+    return activeExecutionState.updateActiveExecutionAgent(userKey, sessionId, executionId, agentName);
+  }
+
+  function requestExecutionStop(userKey: string, sessionId: string, stopMode: ActiveChatExecutionStopResult['scope']): ActiveChatExecution | null {
+    return activeExecutionState.requestExecutionStop(userKey, sessionId, stopMode);
+  }
+
+  function consumeExecutionStopMode(userKey: string, sessionId: string, executionId: string): ActiveChatExecution['stopMode'] {
+    return activeExecutionState.consumeExecutionStopMode(userKey, sessionId, executionId);
+  }
+
+  function consumeExecutionStopResult(userKey: string, sessionId: string, executionId: string): ActiveChatExecutionStopResult | null {
+    return activeExecutionState.consumeExecutionStopResult(userKey, sessionId, executionId) ?? null;
+  }
+
+  function clearActiveExecution(userKey: string, sessionId: string, executionId: string): boolean {
+    return activeExecutionState.clearActiveExecution(userKey, sessionId, executionId);
+  }
+
   return {
     hydrate: persistence.hydrate,
     shutdown: persistence.shutdown,
@@ -167,6 +201,13 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     resolveOverdueInvocationTasks,
     markInvocationTaskCompleted,
     markInvocationTaskFailed,
+    registerActiveExecution,
+    getActiveExecution,
+    updateActiveExecutionAgent,
+    requestExecutionStop,
+    consumeExecutionStopMode,
+    consumeExecutionStopResult,
+    clearActiveExecution,
     buildSessionResponse: sessionState.buildSessionResponse,
     buildDetailedSessionResponse: sessionState.buildDetailedSessionResponse,
     parseSessionChainPatch: sessionState.parseSessionChainPatch,
