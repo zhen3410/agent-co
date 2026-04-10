@@ -2136,18 +2136,20 @@
     function layoutGraphNodes(nodes) {
       const spacingX = 140;
       const spacingY = 90;
-      const columnHeights = {};
       const normalized = Array.isArray(nodes) ? nodes : [];
       const depths = normalized.map(node => node.depth ?? 0);
       const minDepth = depths.length === 0 ? 0 : Math.min(0, ...depths);
       const depthShift = minDepth < 0 ? -minDepth : 0;
+      const columnHeights = {};
       const layoutNodes = normalized.map(node => {
         const depth = node.depth ?? 0;
-        const column = node.column ?? 0;
+        const column = Math.max(1, node.column ?? 1);
         const adjustedDepth = depth + depthShift;
         const x = adjustedDepth * spacingX;
-        const y = columnHeights[column] || 0;
-        columnHeights[column] = y + spacingY;
+        const baseY = (column - 1) * spacingY;
+        const columnKey = `${adjustedDepth}-${column}`;
+        const y = columnHeights[columnKey] ?? baseY;
+        columnHeights[columnKey] = y + spacingY;
         return {
           ...node,
           x,
