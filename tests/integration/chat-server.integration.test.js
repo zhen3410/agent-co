@@ -74,6 +74,45 @@ async function requestRaw(url, options = {}) {
   };
 }
 
+async function postJsonViaHttp(port, path, body, cookieHeader = '') {
+  const payload = JSON.stringify(body || {});
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+        ...(cookieHeader ? { Cookie: cookieHeader } : {})
+      }
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        if (text) {
+          try {
+            json = JSON.parse(text);
+          } catch {
+            json = null;
+          }
+        }
+        resolve({
+          status: res.statusCode || 0,
+          body: json,
+          text
+        });
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 async function createOpenAICompatibleStub(handler) {
   const requests = [];
   const server = http.createServer(async (req, res) => {
@@ -442,7 +481,13 @@ async function createRedisBackedChatServerFixture(options = {}) {
   }
 
   return {
+    port,
     request,
+    getCookieHeader() {
+      return Array.from(cookieJar.entries())
+        .map(([key, value]) => `${key}=${value}`)
+        .join('; ');
+    },
     async login(username = 'admin', password = 'Admin1234!@#') {
       return request('/api/login', {
         method: 'POST',
@@ -628,6 +673,25 @@ async function sleep(ms) {
   process.exit(1);
 });
 EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
+function createInvocationResumeStopClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+agent_name="\${AGENT_CO_AGENT_NAME:-AI}"
+dispatch_kind="\${AGENT_CO_DISPATCH_KIND:-initial}"
+if [ "$agent_name" = "Bob" ]; then
+  sleep 4
+  printf '{"output_text":"Bob 来自 invocation 的回复"}\\n'
+elif [ "$agent_name" = "Claude" ]; then
+  printf '{"output_text":"Claude 来自 invocation 的回复"}\\n'
+elif [ "$agent_name" = "Alice" ] && [ "$dispatch_kind" = "internal_review" ]; then
+  printf '{"output_text":"accept: Alice 已完成调用复核"}\\n'
+else
+  printf '{"output_text":"%s 已完成"}\\n' "$agent_name"
+fi
 `, 'utf8');
   chmodSync(fakeClaude, 0o755);
 }
@@ -1127,44 +1191,13 @@ async function drainStreamUntilClosed(reader, timeoutMs = 5000) {
 
 async function waitForChatStopAccepted(fixture, scope, timeoutMs = 3000) {
   return waitForCondition(async () => {
-    const stopResponse = await fixture.request('/api/chat-stop', {
-      method: 'POST',
-      body: { scope }
-    });
+    const stopResponse = await postJsonViaHttp(fixture.port, '/api/chat-stop', { scope }, fixture.getCookieHeader());
     assert.equal(stopResponse.status, 200);
     if (!stopResponse.body?.stopped) {
       return null;
     }
     return stopResponse;
-  }, timeoutMs, 100);
-}
-
-async function seedResumableChainByDisconnectingCurrentTask(fixture, message) {
-  const abortController = new AbortController();
-  const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Cookie: fixture.getCookieHeader()
-    },
-    body: JSON.stringify({ message }),
-    signal: abortController.signal
-  });
-  assert.equal(streamResponse.status, 200);
-
-  const reader = streamResponse.body.getReader();
-  await waitForAgentThinkingEvent(reader, 'Alice');
-  abortController.abort();
-  await reader.cancel().catch(() => {});
-
-  return waitForCondition(async () => {
-    const history = await fixture.request('/api/history');
-    const pendingTasks = history.body?.session?.pendingAgentTasks;
-    if (!Array.isArray(pendingTasks) || pendingTasks.length === 0) {
-      return null;
-    }
-    return history;
-  }, 6000, 120);
+  }, timeoutMs, 30);
 }
 
 test('统一 agent 调用入口在 api 模式下会调用 OpenAI-compatible provider 并解析结果', async () => {
@@ -2106,9 +2139,97 @@ test('显式停止整个执行时会清空剩余链路', async () => {
 
 test('恢复后的链路也可被显式停止当前任务', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-resume-stop-current-agent-'));
-  createStopScopeSemanticsClaudeScript(tempDir);
+  createInvocationResumeStopClaudeScript(tempDir);
+  const now = Date.now();
+  const bobTaskId = 'resume-stop-inv-bob';
+  const claudeTaskId = 'resume-stop-inv-claude';
 
-  const fixture = await createChatServerFixture({
+  const fixture = await createRedisBackedChatServerFixture({
+    redisState: {
+      version: 1,
+      userChatSessions: {
+        'user:admin': [{
+          id: 'default',
+          name: '默认会话',
+          history: [{
+            id: 'resume-stop-user',
+            role: 'user',
+            sender: '用户',
+            text: '@Alice 发起调用并等待后续执行',
+            timestamp: now - 3000
+          }, {
+            id: 'resume-stop-alice',
+            role: 'assistant',
+            sender: 'Alice',
+            text: '请 @@Bob 与 @@Claude 分别补充',
+            timestamp: now - 2500
+          }],
+          currentAgent: 'Alice',
+          enabledAgents: ['Alice', 'Bob', 'Claude'],
+          agentWorkdirs: {},
+          pendingAgentTasks: [{
+            agentName: 'Bob',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            includeHistory: true,
+            dispatchKind: 'explicit_chained',
+            taskId: bobTaskId,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Bob',
+            reviewMode: 'caller_review',
+            deadlineAt: now + 5 * 60 * 1000
+          }, {
+            agentName: 'Claude',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            includeHistory: true,
+            dispatchKind: 'explicit_chained',
+            taskId: claudeTaskId,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Claude',
+            reviewMode: 'caller_review',
+            deadlineAt: now + 5 * 60 * 1000
+          }],
+          pendingVisibleMessages: [],
+          invocationTasks: [{
+            id: bobTaskId,
+            sessionId: 'default',
+            status: 'pending_reply',
+            reviewVersion: 0,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Bob',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            originalPrompt: '请 @@Bob 与 @@Claude 分别补充',
+            createdAt: now - 2600,
+            updatedAt: now - 2600,
+            deadlineAt: now + 5 * 60 * 1000,
+            retryCount: 0,
+            followupCount: 0
+          }, {
+            id: claudeTaskId,
+            sessionId: 'default',
+            status: 'pending_reply',
+            reviewVersion: 0,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Claude',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            originalPrompt: '请 @@Bob 与 @@Claude 分别补充',
+            createdAt: now - 2550,
+            updatedAt: now - 2550,
+            deadlineAt: now + 5 * 60 * 1000,
+            retryCount: 0,
+            followupCount: 0
+          }],
+          agentChainMaxHops: 4,
+          agentChainMaxCallsPerAgent: 1,
+          discussionMode: 'classic',
+          discussionState: 'active',
+          createdAt: now - 3500,
+          updatedAt: now - 2400
+        }]
+      },
+      userActiveChatSession: {
+        'user:admin': 'default'
+      }
+    },
     env: {
       PATH: `${tempDir}:${process.env.PATH || ''}`
     }
@@ -2116,21 +2237,24 @@ test('恢复后的链路也可被显式停止当前任务', async () => {
 
   try {
     await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob']);
-
-    const pendingHistory = await seedResumableChainByDisconnectingCurrentTask(
-      fixture,
-      '@Alice @Bob 先制造可恢复链路，再在恢复中停止当前任务'
-    );
+    const historyBefore = await fixture.request('/api/history');
+    assert.equal(historyBefore.status, 200);
     assert.deepEqual(
-      pendingHistory.body.session.pendingAgentTasks.map(item => item.agentName),
-      ['Alice', 'Bob']
+      historyBefore.body.session.pendingAgentTasks.map(item => [item.agentName, item.taskId]),
+      [['Bob', bobTaskId], ['Claude', claudeTaskId]]
     );
 
-    const resumePromise = fixture.request('/api/chat-resume', {
+    const resumePromise = fetch(`http://127.0.0.1:${fixture.port}/api/chat-resume`, {
       method: 'POST',
-      body: {}
-    });
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({})
+    }).then(async (response) => ({
+      status: response.status,
+      body: await response.json()
+    }));
 
     const stopResponse = await waitForChatStopAccepted(fixture, 'current_agent', 1800);
     assert.deepEqual(stopResponse.body, {
@@ -2150,8 +2274,16 @@ test('恢复后的链路也可被显式停止当前任务', async () => {
     assert.equal(Array.isArray(historyAfterStop.body.session.pendingAgentTasks), true);
     assert.deepEqual(
       historyAfterStop.body.session.pendingAgentTasks.map(item => item.agentName),
-      ['Bob']
+      ['Claude']
     );
+    assert.equal(historyAfterStop.body.session.pendingAgentTasks[0].taskId, claudeTaskId);
+    const bobInvocationTaskAfterStop = historyAfterStop.body.session.invocationTasks.find(item => item.id === bobTaskId);
+    const claudeInvocationTaskAfterStop = historyAfterStop.body.session.invocationTasks.find(item => item.id === claudeTaskId);
+    assert.ok(bobInvocationTaskAfterStop);
+    assert.ok(claudeInvocationTaskAfterStop);
+    assert.equal(bobInvocationTaskAfterStop.status, 'failed');
+    assert.equal(bobInvocationTaskAfterStop.failureReason, 'explicit_stop_current_agent_on_resume');
+    assert.equal(claudeInvocationTaskAfterStop.status, 'pending_reply');
 
     const nextResumeResponse = await fixture.request('/api/chat-resume', {
       method: 'POST',
@@ -2161,8 +2293,8 @@ test('恢复后的链路也可被显式停止当前任务', async () => {
     assert.equal(nextResumeResponse.body.success, true);
     assert.equal(nextResumeResponse.body.resumed, true);
     assert.equal(nextResumeResponse.body.aiMessages.length, 1);
-    assert.equal(nextResumeResponse.body.aiMessages[0].sender, 'Bob');
-    assert.equal(nextResumeResponse.body.aiMessages[0].text, 'Bob 已在恢复链路中执行');
+    assert.equal(nextResumeResponse.body.aiMessages[0].sender, 'Claude');
+    assert.equal(nextResumeResponse.body.aiMessages[0].text, 'Claude 来自 invocation 的回复');
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -2171,9 +2303,97 @@ test('恢复后的链路也可被显式停止当前任务', async () => {
 
 test('恢复中的 session stop 会清空剩余可恢复链路', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-resume-stop-session-'));
-  createStopScopeSemanticsClaudeScript(tempDir);
+  createInvocationResumeStopClaudeScript(tempDir);
+  const now = Date.now();
+  const bobTaskId = 'resume-stop-session-inv-bob';
+  const claudeTaskId = 'resume-stop-session-inv-claude';
 
-  const fixture = await createChatServerFixture({
+  const fixture = await createRedisBackedChatServerFixture({
+    redisState: {
+      version: 1,
+      userChatSessions: {
+        'user:admin': [{
+          id: 'default',
+          name: '默认会话',
+          history: [{
+            id: 'resume-stop-session-user',
+            role: 'user',
+            sender: '用户',
+            text: '@Alice 发起调用并等待后续执行',
+            timestamp: now - 3000
+          }, {
+            id: 'resume-stop-session-alice',
+            role: 'assistant',
+            sender: 'Alice',
+            text: '请 @@Bob 与 @@Claude 分别补充',
+            timestamp: now - 2500
+          }],
+          currentAgent: 'Alice',
+          enabledAgents: ['Alice', 'Bob', 'Claude'],
+          agentWorkdirs: {},
+          pendingAgentTasks: [{
+            agentName: 'Bob',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            includeHistory: true,
+            dispatchKind: 'explicit_chained',
+            taskId: bobTaskId,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Bob',
+            reviewMode: 'caller_review',
+            deadlineAt: now + 5 * 60 * 1000
+          }, {
+            agentName: 'Claude',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            includeHistory: true,
+            dispatchKind: 'explicit_chained',
+            taskId: claudeTaskId,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Claude',
+            reviewMode: 'caller_review',
+            deadlineAt: now + 5 * 60 * 1000
+          }],
+          pendingVisibleMessages: [],
+          invocationTasks: [{
+            id: bobTaskId,
+            sessionId: 'default',
+            status: 'pending_reply',
+            reviewVersion: 0,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Bob',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            originalPrompt: '请 @@Bob 与 @@Claude 分别补充',
+            createdAt: now - 2600,
+            updatedAt: now - 2600,
+            deadlineAt: now + 5 * 60 * 1000,
+            retryCount: 0,
+            followupCount: 0
+          }, {
+            id: claudeTaskId,
+            sessionId: 'default',
+            status: 'pending_reply',
+            reviewVersion: 0,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Claude',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            originalPrompt: '请 @@Bob 与 @@Claude 分别补充',
+            createdAt: now - 2550,
+            updatedAt: now - 2550,
+            deadlineAt: now + 5 * 60 * 1000,
+            retryCount: 0,
+            followupCount: 0
+          }],
+          agentChainMaxHops: 4,
+          agentChainMaxCallsPerAgent: 1,
+          discussionMode: 'classic',
+          discussionState: 'active',
+          createdAt: now - 3500,
+          updatedAt: now - 2400
+        }]
+      },
+      userActiveChatSession: {
+        'user:admin': 'default'
+      }
+    },
     env: {
       PATH: `${tempDir}:${process.env.PATH || ''}`
     }
@@ -2181,21 +2401,25 @@ test('恢复中的 session stop 会清空剩余可恢复链路', async () => {
 
   try {
     await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob']);
-
-    const pendingHistory = await seedResumableChainByDisconnectingCurrentTask(
-      fixture,
-      '@Alice @Bob 先制造可恢复链路，再在恢复中停止整个 session'
-    );
+    const historyBefore = await fixture.request('/api/history');
+    assert.equal(historyBefore.status, 200);
     assert.deepEqual(
-      pendingHistory.body.session.pendingAgentTasks.map(item => item.agentName),
-      ['Alice', 'Bob']
+      historyBefore.body.session.pendingAgentTasks.map(item => [item.agentName, item.taskId]),
+      [['Bob', bobTaskId], ['Claude', claudeTaskId]]
     );
+    const stoppedTaskIds = [bobTaskId, claudeTaskId];
 
-    const resumePromise = fixture.request('/api/chat-resume', {
+    const resumePromise = fetch(`http://127.0.0.1:${fixture.port}/api/chat-resume`, {
       method: 'POST',
-      body: {}
-    });
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({})
+    }).then(async (response) => ({
+      status: response.status,
+      body: await response.json()
+    }));
 
     const stopResponse = await waitForChatStopAccepted(fixture, 'session', 1800);
     assert.deepEqual(stopResponse.body, {
@@ -2213,6 +2437,11 @@ test('恢复中的 session stop 会清空剩余可恢复链路', async () => {
     const historyAfterStop = await fixture.request('/api/history');
     assert.equal(historyAfterStop.status, 200);
     assert.equal(Array.isArray(historyAfterStop.body.session.pendingAgentTasks), false);
+    const invocationTasksAfterStop = historyAfterStop.body.session.invocationTasks
+      .filter(item => stoppedTaskIds.includes(item.id));
+    assert.equal(invocationTasksAfterStop.length, 2);
+    assert.ok(invocationTasksAfterStop.every(item => item.status === 'failed'));
+    assert.ok(invocationTasksAfterStop.every(item => item.failureReason === 'explicit_stop_session_on_resume'));
 
     const nextResumeResponse = await fixture.request('/api/chat-resume', {
       method: 'POST',

@@ -26,6 +26,42 @@ interface ReconciledPendingInvocationReviewTasks {
 }
 
 export function createChatResumeService(deps: ChatResumeServiceDependencies): ChatResumeService {
+  function collectPendingInvocationTaskIds(tasks: PendingAgentDispatchTask[]): Set<string> {
+    return new Set(
+      tasks
+        .filter((task) => task.reviewMode === 'caller_review' && typeof task.taskId === 'string' && task.taskId.length > 0)
+        .map(task => task.taskId as string)
+    );
+  }
+
+  function reconcileStoppedInvocationTasks(params: {
+    userKey: string;
+    sessionId: string;
+    scope: 'current_agent' | 'session';
+    pendingTasksToPersist: PendingAgentDispatchTask[];
+  }): void {
+    const { userKey, sessionId, scope, pendingTasksToPersist } = params;
+    const activeInvocationTasks = deps.runtime.listActiveInvocationTasks(userKey, sessionId);
+    if (activeInvocationTasks.length === 0) {
+      return;
+    }
+
+    if (scope === 'session') {
+      for (const invocationTask of activeInvocationTasks) {
+        deps.runtime.markInvocationTaskFailed(userKey, sessionId, invocationTask.id, 'explicit_stop_session_on_resume');
+      }
+      return;
+    }
+
+    const pendingInvocationTaskIds = collectPendingInvocationTaskIds(pendingTasksToPersist);
+    for (const invocationTask of activeInvocationTasks) {
+      if (pendingInvocationTaskIds.has(invocationTask.id)) {
+        continue;
+      }
+      deps.runtime.markInvocationTaskFailed(userKey, sessionId, invocationTask.id, 'explicit_stop_current_agent_on_resume');
+    }
+  }
+
   function buildInvocationReviewPrompt(task: {
     calleeAgentName: string;
     originalPrompt: string;
@@ -262,6 +298,14 @@ export function createChatResumeService(deps: ChatResumeServiceDependencies): Ch
       const pendingTasksToPersist = shouldPersistDeferredAndRemaining
         ? [...reconciled.deferredTasks, ...executionResult.pendingTasks]
         : [];
+      if (executionResult.stopped?.scope === 'current_agent' || executionResult.stopped?.scope === 'session') {
+        reconcileStoppedInvocationTasks({
+          userKey,
+          sessionId: session.id,
+          scope: executionResult.stopped.scope,
+          pendingTasksToPersist
+        });
+      }
       deps.sessionService.updatePendingExecution(session, pendingTasksToPersist);
       const resumedMessages = [...pendingVisibleMessages, ...executionResult.aiMessages];
 
