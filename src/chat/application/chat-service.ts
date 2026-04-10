@@ -219,6 +219,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       const executionResult = await dispatchOrchestrator.executeAgentTurn({
         userKey,
         session,
+        executionId,
         initialTasks: agentsToRespond.map(agentName => ({
           agentName,
           prompt: message,
