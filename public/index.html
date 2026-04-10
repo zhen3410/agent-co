@@ -2029,6 +2029,176 @@
       `).join('');
     }
 
+    const MINI_GRAPH_CORE_LIMIT = 8;
+
+    function selectCoreGraph(callGraph) {
+      if (!callGraph || !Array.isArray(callGraph.nodes)) {
+        return null;
+      }
+
+      const focusNode = callGraph.nodes.find(node => node.id === callGraph.focusNodeId);
+      const selected = [];
+      const seen = new Set();
+
+      if (focusNode) {
+        selected.push(focusNode);
+        seen.add(focusNode.id);
+      }
+
+      const filler = callGraph.nodes.filter(node => !seen.has(node.id)).slice(0, MINI_GRAPH_CORE_LIMIT - selected.length);
+      for (const node of filler) {
+        selected.push(node);
+        seen.add(node.id);
+      }
+
+      const selectedIds = new Set(selected.map(node => node.id));
+      const edges = Array.isArray(callGraph.edges)
+        ? callGraph.edges.filter(edge => selectedIds.has(edge.from) && selectedIds.has(edge.to))
+        : [];
+
+      return {
+        focusNodeId: callGraph.focusNodeId,
+        nodes: selected,
+        edges
+      };
+    }
+
+    function assignGraphDepths(nodes, edges = [], focusNodeId) {
+      if (!Array.isArray(nodes)) {
+        return { depthMap: {}, columnCounter: {}, layoutNodes: [], incoming: new Map() };
+      }
+
+      const depthMap = {};
+      const incoming = new Map();
+      for (const edge of edges) {
+        const targets = incoming.get(edge.to) || [];
+        targets.push(edge.from);
+        incoming.set(edge.to, targets);
+      }
+
+      const queue = [];
+      if (focusNodeId) {
+        depthMap[focusNodeId] = 0;
+        queue.push(focusNodeId);
+      }
+
+      while (queue.length > 0) {
+        const current = queue.shift();
+        let depth = depthMap[current] ?? 0;
+        depth += 1;
+        for (const edge of edges) {
+          if (edge.from !== current) continue;
+          if (depthMap[edge.to] !== undefined) continue;
+          depthMap[edge.to] = depth;
+          queue.push(edge.to);
+        }
+      }
+
+      const columnCounter = {};
+      const layoutNodes = nodes.map(node => {
+        const depth = depthMap[node.id] ?? 0;
+        const columnIndex = (columnCounter[depth] || 0) + 1;
+        columnCounter[depth] = columnIndex;
+        return {
+          ...node,
+          depth,
+          column: columnIndex
+        };
+      });
+
+      return { depthMap, columnCounter, layoutNodes, incoming };
+    }
+
+    function layoutGraphNodes(nodes) {
+      const spacingX = 140;
+      const spacingY = 90;
+      const columnHeights = {};
+      const layoutNodes = (Array.isArray(nodes) ? nodes : []).map(node => {
+        const depth = node.depth ?? 0;
+        const column = node.column ?? 0;
+        const x = depth * spacingX;
+        const y = columnHeights[column] || 0;
+        columnHeights[column] = y + spacingY;
+        return {
+          ...node,
+          x,
+          y
+        };
+      });
+      const width = Math.max(0, ...layoutNodes.map(node => node.x)) + spacingX;
+      const height = Math.max(0, ...layoutNodes.map(node => node.y)) + spacingY;
+      return { layoutNodes, width, height, spacingX, spacingY };
+    }
+
+    function buildGraphEdgePaths(layoutNodes, edges = []) {
+      const nodeMap = new Map((Array.isArray(layoutNodes) ? layoutNodes : []).map(node => [node.id, node]));
+      return edges.map(edge => {
+        const from = nodeMap.get(edge.from);
+        const to = nodeMap.get(edge.to);
+        if (!from || !to) return null;
+        const loopback = from.id === to.id;
+        const highlightCycle = edge.isCycleEdge === true;
+        const startX = from.x + 24;
+        const startY = from.y + 24;
+        const endX = to.x + 24;
+        const endY = to.y + 24;
+        const path = loopback
+          ? `M${startX} ${startY} c 16 -12 40 -12 40 0`
+          : `M${startX} ${startY} L${endX} ${endY}`;
+        return {
+          edgeId: edge.id,
+          path,
+          loopback,
+          highlightCycle
+        };
+      }).filter(Boolean);
+    }
+
+    function renderMessageGraphSvg(graphView) {
+      const nodes = Array.isArray(graphView?.nodes) ? graphView.nodes : [];
+      const edges = Array.isArray(graphView?.edges) ? graphView.edges : [];
+      const edgeMarkup = edges.map(edge => {
+        const d = escapeHtml(edge.path || 'M0 0 L0 0');
+        return `<path class="message__graph-edge" data-edge-id="${escapeHtml(edge.edgeId || edge.id || '')}" d="${d}"></path>`;
+      }).join('');
+      const nodeMarkup = nodes.map(node => {
+        const cx = typeof node.x === 'number' ? node.x : 0;
+        const cy = typeof node.y === 'number' ? node.y : 0;
+        return `<circle class="message__graph-node" data-node-id="${escapeHtml(node.id || '')}" cx="${cx}" cy="${cy}" r="6"></circle>`;
+      }).join('');
+      return `
+        <svg class="message__graph-svg" viewBox="0 0 400 220" role="presentation" xmlns="http://www.w3.org/2000/svg">
+          ${edgeMarkup}
+          ${nodeMarkup}
+        </svg>
+      `;
+    }
+
+    function renderMessageGraphCanvas(callGraph) {
+      const pointerBindings = ['pointerdown', 'pointermove', 'pointerup'];
+      const graphView = selectCoreGraph(callGraph);
+      const depthInfo = graphView && graphView.nodes.length > 0
+        ? assignGraphDepths(graphView.nodes, graphView.edges, graphView.focusNodeId)
+        : null;
+      const layoutInfo = depthInfo ? layoutGraphNodes(depthInfo.layoutNodes) : { layoutNodes: [], width: 0, height: 0 };
+      const edgePaths = graphView ? buildGraphEdgePaths(layoutInfo.layoutNodes, graphView.edges) : [];
+      return `
+        <div
+          class="message__graph-canvas-wrap"
+          data-graph-canvas
+          onpointerdown="${pointerBindings[0]}()"
+          onpointermove="${pointerBindings[1]}()"
+          onpointerup="${pointerBindings[2]}()"
+        >
+          <div class="message__graph-toolbar">
+            <button type="button" class="message__graph-btn" data-action="expand-call-graph">展开</button>
+            <button type="button" class="message__graph-btn" data-action="reset-call-graph-view">重置</button>
+          </div>
+          ${renderMessageGraphSvg({ nodes: layoutInfo.layoutNodes, edges: edgePaths })}
+        </div>
+      `;
+    }
+
     function renderMessageGraphSummary(callGraph) {
       if (!callGraph) return '';
 

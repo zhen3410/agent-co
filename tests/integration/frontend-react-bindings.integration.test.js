@@ -838,6 +838,74 @@ test('React 页面通过事件代理支持消息调用图单开展开/收起', (
   ], 'missing delegated call-graph toggle contract');
 });
 
+test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assertContainsAll(html, [
+    'renderMessageGraphCanvas(',
+    'renderMessageGraphSvg(',
+    'message__graph-canvas-wrap',
+    'message__graph-svg',
+    'data-node-id'
+  ], 'missing mini-graph canvas/svg markup contract inside call-graph panel');
+});
+
+test('React 页面在迷你图工具栏提供展开与重置操作', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assertContainsAll(html, [
+    'data-action="expand-call-graph"',
+    'data-action="reset-call-graph-view"'
+  ], 'missing expand/reset toolbar contract for mini-graph');
+});
+
+test('renderMessageGraphCanvas 绑定迷你图拖拽事件', () => {
+  const html = readPublicFile('public', 'index.html');
+  const canvasBody = getFunctionBody(html, 'renderMessageGraphCanvas');
+
+  assertContainsAll(canvasBody, [
+    'pointerdown',
+    'pointermove',
+    'pointerup'
+  ], 'missing canvas pointer drag handlers for mini-graph panning');
+});
+
+test('React 页面为调用图迷你图提供纯布局 helper 合约', () => {
+  const html = readPublicFile('public', 'index.html');
+  const selectBody = getFunctionBody(html, 'selectCoreGraph');
+  const assignBody = getFunctionBody(html, 'assignGraphDepths');
+  const layoutBody = getFunctionBody(html, 'layoutGraphNodes');
+  const edgeBody = getFunctionBody(html, 'buildGraphEdgePaths');
+
+  assertContainsAll(selectBody, [
+    'const focusNode',
+    'MINI_GRAPH_CORE_LIMIT',
+    'slice(0,',
+    'focusNodeId'
+  ], 'missing selectCoreGraph focus/core limit contract');
+
+  assertContainsAll(assignBody, [
+    'const incoming',
+    'depthMap',
+    'depth += 1',
+    'column:'
+  ], 'missing assignGraphDepths column/depth contract');
+
+  assertContainsAll(layoutBody, [
+    'spacingX',
+    'spacingY',
+    'layoutNodes',
+    'columnHeights'
+  ], 'missing layoutGraphNodes spacing contract');
+
+  assertContainsAll(edgeBody, [
+    'loopback',
+    'edge.isCycleEdge',
+    'M${',
+    'L${'
+  ], 'missing buildGraphEdgePaths path/loop contract');
+});
+
 test('React 页面会在当前会话设置中支持“不限制”语义并从会话数据同步状态', () => {
   const html = readPublicFile('public', 'index.html');
   const sessionSettingsCardBody = getArrowComponentBody(html, 'SessionSettingsCard');
