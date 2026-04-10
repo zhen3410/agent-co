@@ -847,6 +847,8 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
     'renderMessageGraphCanvas(',
     'renderMessageGraphSvg(',
     'message__graph-canvas-wrap',
+    'message__graph-toolbar',
+    'message__graph-btn',
     'message__graph-svg',
     'data-node-id'
   ], 'missing mini-graph canvas/svg markup contract inside call-graph panel');
@@ -858,11 +860,19 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
   assert.ok(html.includes('message__graph-edge--loopback'), 'should render loopback class on mini-graph edge paths');
   assert.ok(svgBody.includes('viewBoxWidth'), 'svg helper should use computed viewBox width');
   assert.ok(svgBody.includes('viewBoxHeight'), 'svg helper should use computed viewBox height');
+  assert.ok(svgBody.includes('data-message-id'), 'svg helper should expose the message id attribute');
 });
 
 test('迷你图样式包含 loopback 线条', () => {
   const css = readPublicFile('public', 'styles.css');
   assert.ok(css.includes('.message__graph-edge--loopback'), 'should style .message__graph-edge--loopback');
+});
+
+test('迷你图 canvas 与工具栏样式存在', () => {
+  const css = readPublicFile('public', 'styles.css');
+  assert.ok(css.includes('.message__graph-canvas-wrap {'), 'should style .message__graph-canvas-wrap');
+  assert.ok(css.includes('.message__graph-toolbar {'), 'should style .message__graph-toolbar');
+  assert.ok(css.includes('.message__graph-btn {'), 'should style .message__graph-btn');
 });
 
 test('React 页面在迷你图工具栏提供展开与重置操作', () => {

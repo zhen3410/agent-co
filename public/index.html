@@ -2237,13 +2237,14 @@
       }).filter(Boolean);
     }
 
-    function renderMessageGraphSvg(graphView) {
+    function renderMessageGraphSvg(graphView, messageId = '') {
       const nodes = Array.isArray(graphView?.nodes) ? graphView.nodes : [];
       const edges = Array.isArray(graphView?.edges) ? graphView.edges : [];
       const width = typeof graphView?.width === 'number' && graphView.width > 0 ? graphView.width : 400;
       const height = typeof graphView?.height === 'number' && graphView.height > 0 ? graphView.height : 220;
       const viewBoxWidth = Math.max(width, 1);
       const viewBoxHeight = Math.max(height, 1);
+      const messageAttr = messageId ? ` data-message-id="${escapeHtml(messageId)}"` : '';
       const edgeMarkup = edges.map(edge => {
         const d = escapeHtml(edge.path || 'M0 0 L0 0');
         const classes = ['message__graph-edge'];
@@ -2257,7 +2258,7 @@
         return `<circle class="message__graph-node" data-node-id="${escapeHtml(node.id || '')}" cx="${cx}" cy="${cy}" r="6"></circle>`;
       }).join('');
       return `
-        <svg class="message__graph-svg" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="${viewBoxWidth}" height="${viewBoxHeight}" role="presentation" xmlns="http://www.w3.org/2000/svg">
+        <svg class="message__graph-svg" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="${viewBoxWidth}" height="${viewBoxHeight}" role="presentation" xmlns="http://www.w3.org/2000/svg"${messageAttr}>
           ${edgeMarkup}
           ${nodeMarkup}
         </svg>
@@ -2284,7 +2285,12 @@
             <button type="button" class="message__graph-btn" data-action="expand-call-graph">展开</button>
             <button type="button" class="message__graph-btn" data-action="reset-call-graph-view">重置</button>
           </div>
-          ${renderMessageGraphSvg({ nodes: layoutInfo.layoutNodes, edges: edgePaths })}
+          ${renderMessageGraphSvg({
+            nodes: layoutInfo.layoutNodes,
+            edges: edgePaths,
+            width: layoutInfo.width,
+            height: layoutInfo.height
+          }, messageId)}
         </div>
       `;
     }
