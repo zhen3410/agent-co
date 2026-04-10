@@ -14,6 +14,22 @@ export interface ChatAgentExecutionDependencies {
   agentManager: AgentManager;
 }
 
+export function buildSessionScopedAgentPrompt(basePrompt: string, enabledAgents: string[]): string {
+  const scopedAgents = Array.isArray(enabledAgents) ? enabledAgents.filter(Boolean) : [];
+  const enabledList = scopedAgents.length > 0 ? scopedAgents.join('、') : '（无已启用智能体）';
+
+  return [
+    (basePrompt || '').trim(),
+    '',
+    '【当前会话启用的智能体】',
+    enabledList,
+    '【继续传播约束】',
+    '如果你希望下一轮由其他智能体继续，只能通过 invokeAgents 调度上述已启用智能体。',
+    '不要调度未启用的智能体，也不要在 invokeAgents 中填写不在上述名单内的名字。',
+    '如果你认为需要某个未启用角色，请先在群里明确说明该角色当前未启用，并给出替代方案。'
+  ].filter(Boolean).join('\n');
+}
+
 function buildMessageId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
@@ -117,9 +133,15 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
     const { agentName, prompt, includeHistory } = task;
     const agent = agentManager.getAgent(agentName);
     if (!agent) return [];
+    const enabledAgents = sessionService.getEnabledAgents(session);
 
     const runtimeWorkdir = sessionService.getAgentWorkdir(userKey, session.id, agentName) || agent.workdir;
-    const runtimeAgent = runtimeWorkdir ? { ...agent, workdir: runtimeWorkdir } : agent;
+    const scopedSystemPrompt = buildSessionScopedAgentPrompt(agent.systemPrompt, enabledAgents);
+    const runtimeAgent = {
+      ...agent,
+      systemPrompt: scopedSystemPrompt,
+      ...(runtimeWorkdir ? { workdir: runtimeWorkdir } : {})
+    };
     const logTag = stream ? 'ChatStream' : 'Chat';
     const isApiMode = runtimeAgent.executionMode === 'api';
     const startStage = isApiMode ? 'api_start' : 'cli_start';

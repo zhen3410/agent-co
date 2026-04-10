@@ -1952,8 +1952,59 @@
       return result;
     }
 
+    function getInvocationReviewActionMeta(reviewAction) {
+      const normalizedAction = typeof reviewAction === 'string' ? reviewAction.trim().toLowerCase() : '';
+      switch (normalizedAction) {
+        case 'accept':
+          return { label: '已接受', tone: 'success' };
+        case 'follow_up':
+          return { label: '需跟进', tone: 'info' };
+        case 'retry':
+          return { label: '需重试', tone: 'warning' };
+        default:
+          return { label: '待确认', tone: 'info' };
+      }
+    }
+
+    function renderInvocationReviewMessageContent(msg, colorStyle = '') {
+      const reviewDisplayText = msg.reviewDisplayText || msg.text || '无评审摘要';
+      const callerAgentName = msg.callerAgentName || '未知调用方';
+      const calleeAgentName = msg.calleeAgentName || '未知被调用方';
+      const reviewRawText = msg.reviewRawText || '';
+      const actionMeta = getInvocationReviewActionMeta(msg.reviewAction);
+      const reviewSummaryHtml = window.ChatMarkdown.renderMarkdownHtml(reviewDisplayText, {
+        role: msg.role || 'assistant',
+        enableMentions: true
+      });
+
+      const rawDetailsMarkup = reviewRawText
+        ? `
+          <details class="invocation-review-raw">
+            <summary>展开/收起原始评审文本</summary>
+            <pre>${escapeHtml(reviewRawText)}</pre>
+          </details>
+        `
+        : '';
+
+      return `
+        <div class="message__sender" ${colorStyle}>${escapeHtml(msg.sender || 'AI')}</div>
+        <div class="invocation-review-card card card--${escapeHtml(actionMeta.tone)}" data-review-action="${escapeHtml(msg.reviewAction || 'pending')}">
+          <div class="invocation-review-card__header">
+            <span class="invocation-review-card__action">${escapeHtml(actionMeta.label)}</span>
+          </div>
+          <div class="message__text message__text--markdown">${reviewSummaryHtml}</div>
+          <div class="invocation-review-card__meta">
+            <div><strong>调用方：</strong>${escapeHtml(callerAgentName)}</div>
+            <div><strong>被调方：</strong>${escapeHtml(calleeAgentName)}</div>
+          </div>
+          ${rawDetailsMarkup}
+        </div>
+      `;
+    }
+
     function renderMessage(msg, options = {}) {
       const isUser = msg.role === 'user';
+      const isInvocationReview = msg.messageSubtype === 'invocation_review';
       const roleClass = isUser ? 'message--user' : 'message--assistant';
       const senderColor = getSenderColor(msg.sender, msg.role);
       const avatar = getSenderAvatar(msg.sender, msg.role);
@@ -1973,11 +2024,15 @@
       if (isUser) {
         content = `<div class="message__text message__text--markdown">${renderedMarkdown}</div>`;
       } else {
-        content = `
-          <div class="message__sender" ${colorStyle}>${escapeHtml(msg.sender || 'AI')}</div>
-          <div class="message__text message__text--markdown">${renderedMarkdown}</div>
-          <div class="message__blocks">${renderBlocks(msg.blocks)}</div>
-        `;
+        if (isInvocationReview) {
+          content = renderInvocationReviewMessageContent(msg, colorStyle);
+        } else {
+          content = `
+            <div class="message__sender" ${colorStyle}>${escapeHtml(msg.sender || 'AI')}</div>
+            <div class="message__text message__text--markdown">${renderedMarkdown}</div>
+            <div class="message__blocks">${renderBlocks(msg.blocks)}</div>
+          `;
+        }
       }
 
       return `
