@@ -2186,7 +2186,7 @@
         return {
           edgeId: edge.id,
           path,
-          loopback,
+          loopback: loopback || highlightCycle,
           highlightCycle
         };
       }).filter(Boolean);
