@@ -508,20 +508,21 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           : undefined
       });
 
-      if (signal?.aborted && visibleMessages.length === 0) {
-        const stopMode = consumeExplicitStopMode();
-        if (stopMode === 'current_agent' || stopMode === 'session') {
-          if (stopMode === 'session') {
-            queue.length = 0;
-          }
-          stopped = consumeStoppedMetadata(stopMode, task.agentName);
-          streamStopped = true;
-          runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=stream_stop_during_task reason=explicit_stop scope=${stopMode}`);
-        } else {
-          queue.unshift(task);
-          streamStopped = true;
-          runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=stream_stop_during_task reason=client_disconnect`);
+      const stopMode = consumeExplicitStopMode();
+      if (stopMode === 'current_agent' || stopMode === 'session') {
+        if (stopMode === 'session') {
+          queue.length = 0;
         }
+        stopped = consumeStoppedMetadata(stopMode, task.agentName);
+        streamStopped = true;
+        runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${task.agentName} stage=stream_stop_during_task reason=explicit_stop scope=${stopMode} visible_messages=${visibleMessages.length}`);
+        break;
+      }
+
+      if (signal?.aborted && visibleMessages.length === 0) {
+        queue.unshift(task);
+        streamStopped = true;
+        runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${task.agentName} stage=stream_stop_during_task reason=client_disconnect`);
         break;
       }
 
@@ -667,7 +668,7 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         if (!canContinue()) {
           streamStopped = true;
           queue.unshift(...pendingMentionsToQueue);
-          runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=stream_stop_after_message reason=client_disconnect`);
+          runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${task.agentName} stage=stream_stop_after_message reason=client_disconnect`);
           break;
         }
 

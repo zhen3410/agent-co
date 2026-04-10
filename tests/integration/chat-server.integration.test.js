@@ -570,6 +570,68 @@ fi
   chmodSync(fakeClaude, 0o755);
 }
 
+function createStopAfterVisibleOutputClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
+
+async function post(content, invokeAgents) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content, invokeAgents })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+async function sleep(ms) {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+(async () => {
+  if (agentName === 'Alice') {
+    await post('Alice 已发出可见接力请求：请 @@Bob 继续补充', ['Bob']);
+    await sleep(2600);
+    process.stdout.write('{"output_text":"callback sent"}\\n');
+    return;
+  }
+
+  if (agentName === 'Bob') {
+    await post('Bob 不应被显式停止后的当前任务派生触发');
+    process.stdout.write('{"output_text":"callback sent"}\\n');
+    return;
+  }
+
+  if (agentName === 'Claude') {
+    await post('Claude 是原队列中的后续任务，应在恢复时继续执行');
+    process.stdout.write('{"output_text":"callback sent"}\\n');
+    return;
+  }
+
+  await post(\`\${agentName} 已完成\`);
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
 function createReviewLoopClaudeScript(tempDir, mode) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env node
@@ -1966,6 +2028,78 @@ test('显式停止整个执行时会清空剩余链路', async () => {
   }
 });
 
+test('显式停止当前智能体后即使该任务已产出可见输出也不会派生新链路', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-visible-output-current-agent-'));
+  createStopAfterVisibleOutputClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob', 'Claude']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Claude 当前任务先产出可见输出再停止' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'current_agent' }
+    });
+    assert.equal(stopResponse.status, 200);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'current_agent'
+    });
+
+    await drainStreamUntilClosed(reader, 7000);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), true);
+    assert.deepEqual(
+      historyResponse.body.session.pendingAgentTasks.map(item => item.agentName),
+      ['Claude']
+    );
+
+    const assistantTexts = historyResponse.body.messages
+      .filter(item => item.role === 'assistant')
+      .map(item => item.text);
+    assert.ok(!assistantTexts.some(text => text.includes('Alice 已发出可见接力请求')));
+    assert.ok(!assistantTexts.some(text => text.includes('Bob 不应被显式停止后的当前任务派生触发')));
+    assert.ok(!assistantTexts.some(text => text.includes('Claude 是原队列中的后续任务')));
+
+    const resumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.equal(resumeResponse.body.aiMessages.length, 1);
+    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Claude');
+    assert.equal(resumeResponse.body.aiMessages[0].text, 'Claude 是原队列中的后续任务，应在恢复时继续执行');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('客户端断流仍保留当前任务以便恢复', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-stream-disconnect-requeue-current-'));
   createStopScopeSemanticsClaudeScript(tempDir);
@@ -3178,6 +3312,7 @@ EOF
       }
     }
 
+    await new Promise(resolve => setTimeout(resolve, 260));
     controller.abort();
     await reader.cancel().catch(() => {});
 
