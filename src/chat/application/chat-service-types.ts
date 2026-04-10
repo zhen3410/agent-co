@@ -54,6 +54,14 @@ export interface StreamMessageCallbacks {
   onMessage(message: Message): boolean;
 }
 
+export interface StreamMessageResult {
+  currentAgent: string | null;
+  notice?: string;
+  hadVisibleMessages: boolean;
+  emptyVisibleMessage?: string;
+  stopped?: StoppedExecutionMetadata;
+}
+
 export interface ActiveExecutionRegistration {
   executionId: string;
   abortController: AbortController;
@@ -71,7 +79,7 @@ export interface ResumePendingChatResult {
 export interface ChatService {
   listAgents(): AIAgentConfig[];
   sendMessage(context: SessionUserContext, body: { message: string; sender?: string }): Promise<{ success: true; userMessage: Message; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
-  streamMessage(context: SessionUserContext, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<{ currentAgent: string | null; notice?: string; hadVisibleMessages: boolean; emptyVisibleMessage?: string; stopped?: StoppedExecutionMetadata }>;
+  streamMessage(context: SessionUserContext, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<StreamMessageResult>;
   resumePendingChat(context: SessionUserContext): Promise<ResumePendingChatResult>;
   summarizeChat(context: SessionUserContext, sessionId?: string): Promise<{ success: true; aiMessages: Message[]; currentAgent: string | null }>;
   stopExecution(context: SessionUserContext, request: StopExecutionRequest): Promise<{ success: true; stopped: boolean; scope: StopExecutionRequest['scope'] }>;

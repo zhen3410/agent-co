@@ -1172,6 +1172,43 @@ async function waitForAgentMessageEvent(reader, expectedSender, timeoutMs = 5000
   throw new Error(`stream ended before receiving ${expectedSender} agent_message event`);
 }
 
+async function collectSseEventsUntilClosed(reader, timeoutMs = 5000) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let pendingEventType = '';
+  const events = [];
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const { done, value } = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('stream did not close before timeout')), remainingMs))
+    ]);
+    if (done) {
+      return events;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        pendingEventType = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        events.push({
+          event: pendingEventType,
+          payload: JSON.parse(line.slice(6))
+        });
+        pendingEventType = '';
+      }
+    }
+  }
+
+  throw new Error('stream did not close before timeout');
+}
+
 async function drainStreamUntilClosed(reader, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
 
@@ -2079,6 +2116,55 @@ test('显式停止当前智能体时只丢弃当前任务并保留后续链路',
   }
 });
 
+test('显式停止当前智能体时 SSE 会发送 execution_stopped 事件', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-sse-current-agent-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Bob 显式停止当前智能体时应发送 execution_stopped' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+
+    const stopResponse = await waitForChatStopAccepted(fixture, 'current_agent', 1800);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'current_agent'
+    });
+
+    const events = await collectSseEventsUntilClosed(reader, 7000);
+    const stoppedEvent = events.find(item => item.event === 'execution_stopped');
+    assert.ok(stoppedEvent, 'stream should emit execution_stopped event');
+    assert.deepEqual(stoppedEvent.payload, {
+      scope: 'current_agent',
+      currentAgent: 'Alice',
+      resumeAvailable: true
+    });
+    assert.equal(events.some(item => item.event === 'done'), false);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('显式停止整个执行时会清空剩余链路', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-session-'));
   createStopScopeSemanticsClaudeScript(tempDir);
@@ -2131,6 +2217,55 @@ test('显式停止整个执行时会清空剩余链路', async () => {
     assert.equal(resumeResponse.body.success, true);
     assert.equal(resumeResponse.body.resumed, false);
     assert.deepEqual(resumeResponse.body.aiMessages, []);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('显式停止整个执行时 SSE 会标记 resumeAvailable false', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-sse-session-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Bob 显式停止整个执行时应发送 execution_stopped' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+
+    const stopResponse = await waitForChatStopAccepted(fixture, 'session', 1800);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'session'
+    });
+
+    const events = await collectSseEventsUntilClosed(reader, 7000);
+    const stoppedEvent = events.find(item => item.event === 'execution_stopped');
+    assert.ok(stoppedEvent, 'stream should emit execution_stopped event');
+    assert.deepEqual(stoppedEvent.payload, {
+      scope: 'session',
+      currentAgent: 'Alice',
+      resumeAvailable: false
+    });
+    assert.equal(events.some(item => item.event === 'done'), false);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
