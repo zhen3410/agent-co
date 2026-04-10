@@ -295,13 +295,15 @@ test('stream/SSE 返回契约暴露 stopped 元数据', () => {
   assert.ok(streamMethod, 'ChatService 应定义 streamMessage');
   assert.ok(streamMethod.type && ts.isTypeReferenceNode(streamMethod.type), 'streamMessage 应返回 Promise 类型');
   assert.equal(streamMethod.type.typeName.getText(), 'Promise', 'streamMessage 返回值应为 Promise');
-  assert.ok(streamMethod.type.typeArguments?.[0] && ts.isTypeLiteralNode(streamMethod.type.typeArguments[0]), 'streamMessage Promise 泛型参数应为对象类型');
+  assert.ok(streamMethod.type.typeArguments?.[0] && ts.isTypeReferenceNode(streamMethod.type.typeArguments[0]), 'streamMessage Promise 泛型参数应复用命名结果类型');
+  assert.equal(streamMethod.type.typeArguments[0].typeName.getText(), 'StreamMessageResult', 'streamMessage 返回值应使用 StreamMessageResult');
 
-  const streamReturnShape = streamMethod.type.typeArguments[0];
-  const stoppedMember = streamReturnShape.members.find(member => ts.isPropertySignature(member) && member.name.getText() === 'stopped');
-  assert.ok(stoppedMember, 'streamMessage 返回类型应包含 stopped 字段');
-  assert.equal(stoppedMember.questionToken !== undefined, true, 'streamMessage.stopped 应为可选');
-  assert.equal(stoppedMember.type.getText(), 'StoppedExecutionMetadata', 'streamMessage.stopped 应使用 StoppedExecutionMetadata');
+  const streamResultInterface = getInterfaceNode(filePath, 'StreamMessageResult');
+  assert.ok(streamResultInterface, 'chat-service-types.ts 应定义 StreamMessageResult interface');
+  const stoppedMember = streamResultInterface.members.find(member => ts.isPropertySignature(member) && member.name.getText() === 'stopped');
+  assert.ok(stoppedMember, 'StreamMessageResult 应包含 stopped 字段');
+  assert.equal(stoppedMember.questionToken !== undefined, true, 'StreamMessageResult.stopped 应为可选');
+  assert.equal(stoppedMember.type.getText(), 'StoppedExecutionMetadata', 'StreamMessageResult.stopped 应使用 StoppedExecutionMetadata');
 });
 
 test('stopExecution 请求契约禁止 none（运行时校验在后续任务实现）', () => {
