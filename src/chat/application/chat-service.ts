@@ -9,6 +9,7 @@ import { createChatResumeService } from './chat-resume-service';
 import { createChatSummaryService } from './chat-summary-service';
 import type { ChatRuntime } from '../runtime/chat-runtime';
 import type {
+  ActiveExecutionRegistration,
   ChatService,
   ChatServiceDependencies,
   StopExecutionRequest,
@@ -36,6 +37,27 @@ function buildSendContext(runtime: ChatRuntime, userKey: string, sessionId: stri
   return `${userKey}::${sessionId}`;
 }
 
+function registerChatExecution(runtime: ChatRuntime, userKey: string, sessionId: string): ActiveExecutionRegistration {
+  const executionId = buildMessageId();
+  const abortController = new AbortController();
+  runtime.registerActiveExecution(userKey, sessionId, {
+    executionId,
+    userKey,
+    sessionId,
+    currentAgentName: null,
+    abortController,
+    stopMode: 'none'
+  });
+
+  return {
+    executionId,
+    abortController,
+    clear: () => {
+      runtime.clearActiveExecution(userKey, sessionId, executionId);
+    }
+  };
+}
+
 export function createChatService(deps: ChatServiceDependencies): ChatService {
   const { sessionService, runtime, agentManager } = deps;
   const agentExecution = createChatAgentExecution({
@@ -56,6 +78,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     runtime,
     sessionService,
     executeAgentTurn: dispatchOrchestrator.executeAgentTurn,
+    registerActiveExecution: (userKey, sessionId) => registerChatExecution(runtime, userKey, sessionId),
     createError: createChatServiceError
   });
   const summaryService = createChatSummaryService({
@@ -195,8 +218,8 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       };
     }
 
-    const executionId = buildMessageId();
-    const executionController = new AbortController();
+    const execution = registerChatExecution(runtime, userKey, session.id);
+    const { executionId, abortController: executionController } = execution;
     const forwardAbort = () => executionController.abort();
     if (callbacks.signal) {
       if (callbacks.signal.aborted) {
@@ -205,14 +228,6 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
         callbacks.signal.addEventListener('abort', forwardAbort, { once: true });
       }
     }
-    runtime.registerActiveExecution(userKey, session.id, {
-      executionId,
-      userKey,
-      sessionId: session.id,
-      currentAgentName: null,
-      abortController: executionController,
-      stopMode: 'none'
-    });
 
     const undeliveredMessages: Message[] = [];
     try {
@@ -251,7 +266,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       if (callbacks.signal) {
         callbacks.signal.removeEventListener('abort', forwardAbort);
       }
-      runtime.clearActiveExecution(userKey, session.id, executionId);
+      execution.clear();
     }
   }
 

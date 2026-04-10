@@ -1125,6 +1125,48 @@ async function drainStreamUntilClosed(reader, timeoutMs = 5000) {
   throw new Error('stream did not close before timeout');
 }
 
+async function waitForChatStopAccepted(fixture, scope, timeoutMs = 3000) {
+  return waitForCondition(async () => {
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope }
+    });
+    assert.equal(stopResponse.status, 200);
+    if (!stopResponse.body?.stopped) {
+      return null;
+    }
+    return stopResponse;
+  }, timeoutMs, 100);
+}
+
+async function seedResumableChainByDisconnectingCurrentTask(fixture, message) {
+  const abortController = new AbortController();
+  const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: fixture.getCookieHeader()
+    },
+    body: JSON.stringify({ message }),
+    signal: abortController.signal
+  });
+  assert.equal(streamResponse.status, 200);
+
+  const reader = streamResponse.body.getReader();
+  await waitForAgentThinkingEvent(reader, 'Alice');
+  abortController.abort();
+  await reader.cancel().catch(() => {});
+
+  return waitForCondition(async () => {
+    const history = await fixture.request('/api/history');
+    const pendingTasks = history.body?.session?.pendingAgentTasks;
+    if (!Array.isArray(pendingTasks) || pendingTasks.length === 0) {
+      return null;
+    }
+    return history;
+  }, 6000, 120);
+}
+
 test('统一 agent 调用入口在 api 模式下会调用 OpenAI-compatible provider 并解析结果', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-invoker-api-success-'));
   const stub = await createOpenAICompatibleStub((req, res) => {
@@ -2056,6 +2098,130 @@ test('显式停止整个执行时会清空剩余链路', async () => {
     assert.equal(resumeResponse.body.success, true);
     assert.equal(resumeResponse.body.resumed, false);
     assert.deepEqual(resumeResponse.body.aiMessages, []);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('恢复后的链路也可被显式停止当前任务', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-resume-stop-current-agent-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const pendingHistory = await seedResumableChainByDisconnectingCurrentTask(
+      fixture,
+      '@Alice @Bob 先制造可恢复链路，再在恢复中停止当前任务'
+    );
+    assert.deepEqual(
+      pendingHistory.body.session.pendingAgentTasks.map(item => item.agentName),
+      ['Alice', 'Bob']
+    );
+
+    const resumePromise = fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+
+    const stopResponse = await waitForChatStopAccepted(fixture, 'current_agent', 1800);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'current_agent'
+    });
+
+    const resumeResponse = await resumePromise;
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.deepEqual(resumeResponse.body.aiMessages, []);
+
+    const historyAfterStop = await fixture.request('/api/history');
+    assert.equal(historyAfterStop.status, 200);
+    assert.equal(Array.isArray(historyAfterStop.body.session.pendingAgentTasks), true);
+    assert.deepEqual(
+      historyAfterStop.body.session.pendingAgentTasks.map(item => item.agentName),
+      ['Bob']
+    );
+
+    const nextResumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(nextResumeResponse.status, 200);
+    assert.equal(nextResumeResponse.body.success, true);
+    assert.equal(nextResumeResponse.body.resumed, true);
+    assert.equal(nextResumeResponse.body.aiMessages.length, 1);
+    assert.equal(nextResumeResponse.body.aiMessages[0].sender, 'Bob');
+    assert.equal(nextResumeResponse.body.aiMessages[0].text, 'Bob 已在恢复链路中执行');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('恢复中的 session stop 会清空剩余可恢复链路', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-resume-stop-session-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const pendingHistory = await seedResumableChainByDisconnectingCurrentTask(
+      fixture,
+      '@Alice @Bob 先制造可恢复链路，再在恢复中停止整个 session'
+    );
+    assert.deepEqual(
+      pendingHistory.body.session.pendingAgentTasks.map(item => item.agentName),
+      ['Alice', 'Bob']
+    );
+
+    const resumePromise = fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+
+    const stopResponse = await waitForChatStopAccepted(fixture, 'session', 1800);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'session'
+    });
+
+    const resumeResponse = await resumePromise;
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.deepEqual(resumeResponse.body.aiMessages, []);
+
+    const historyAfterStop = await fixture.request('/api/history');
+    assert.equal(historyAfterStop.status, 200);
+    assert.equal(Array.isArray(historyAfterStop.body.session.pendingAgentTasks), false);
+
+    const nextResumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(nextResumeResponse.status, 200);
+    assert.equal(nextResumeResponse.body.success, true);
+    assert.equal(nextResumeResponse.body.resumed, false);
+    assert.deepEqual(nextResumeResponse.body.aiMessages, []);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

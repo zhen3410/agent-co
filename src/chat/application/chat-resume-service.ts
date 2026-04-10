@@ -2,12 +2,13 @@ import { InvocationTask, Message } from '../../types';
 import { APP_ERROR_CODES } from '../../shared/errors/app-error-codes';
 import { SessionService, SessionUserContext } from './session-service';
 import {
+  ActiveExecutionRegistration,
   ChatResumeService,
   ChatServiceErrorFactory,
+  ExecuteAgentTurnParams,
   ExecuteAgentTurnResult,
   PendingAgentDispatchTask
 } from './chat-service-types';
-import { ExecuteAgentTurnParams } from './chat-service-types';
 import { ChatRuntime } from '../runtime/chat-runtime';
 
 export interface ChatResumeServiceDependencies {
@@ -15,6 +16,7 @@ export interface ChatResumeServiceDependencies {
   runtime: ChatRuntime;
   sessionService: SessionService;
   executeAgentTurn(params: ExecuteAgentTurnParams): Promise<ExecuteAgentTurnResult>;
+  registerActiveExecution(userKey: string, sessionId: string): ActiveExecutionRegistration;
   createError: ChatServiceErrorFactory;
 }
 
@@ -240,22 +242,35 @@ export function createChatResumeService(deps: ChatResumeServiceDependencies): Ch
         };
       }
 
-      const { aiMessages, pendingTasks: remainingTasks } = await deps.executeAgentTurn({
-        userKey,
-        session,
-        initialTasks: [],
-        pendingTasks: reconciledPendingTasks,
-        stream: false
-      });
-      deps.sessionService.updatePendingExecution(session, [...reconciled.deferredTasks, ...remainingTasks]);
-      const resumedMessages = [...pendingVisibleMessages, ...aiMessages];
+      const execution = deps.registerActiveExecution(userKey, session.id);
+      let executionResult: ExecuteAgentTurnResult;
+      try {
+        executionResult = await deps.executeAgentTurn({
+          userKey,
+          session,
+          executionId: execution.executionId,
+          initialTasks: [],
+          pendingTasks: reconciledPendingTasks,
+          stream: false,
+          signal: execution.abortController.signal
+        });
+      } finally {
+        execution.clear();
+      }
+
+      const shouldPersistDeferredAndRemaining = executionResult.stopped?.scope !== 'session';
+      const pendingTasksToPersist = shouldPersistDeferredAndRemaining
+        ? [...reconciled.deferredTasks, ...executionResult.pendingTasks]
+        : [];
+      deps.sessionService.updatePendingExecution(session, pendingTasksToPersist);
+      const resumedMessages = [...pendingVisibleMessages, ...executionResult.aiMessages];
 
       return {
         success: true as const,
         resumed: true,
         aiMessages: resumedMessages,
         currentAgent: deps.sessionService.getCurrentAgent(userKey, session.id),
-        notice: remainingTasks.length > 0 ? '仍有未完成链路，可再次继续执行。' : undefined
+        notice: pendingTasksToPersist.length > 0 ? '仍有未完成链路，可再次继续执行。' : undefined
       };
     }
   };

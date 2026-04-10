@@ -54,11 +54,25 @@ export interface StreamMessageCallbacks {
   onMessage(message: Message): boolean;
 }
 
+export interface ActiveExecutionRegistration {
+  executionId: string;
+  abortController: AbortController;
+  clear(): void;
+}
+
+export interface ResumePendingChatResult {
+  success: true;
+  resumed: boolean;
+  aiMessages: Message[];
+  currentAgent: string | null;
+  notice?: string;
+}
+
 export interface ChatService {
   listAgents(): AIAgentConfig[];
   sendMessage(context: SessionUserContext, body: { message: string; sender?: string }): Promise<{ success: true; userMessage: Message; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
   streamMessage(context: SessionUserContext, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<{ currentAgent: string | null; notice?: string; hadVisibleMessages: boolean; emptyVisibleMessage?: string; stopped?: StoppedExecutionMetadata }>;
-  resumePendingChat(context: SessionUserContext): Promise<{ success: true; resumed: boolean; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
+  resumePendingChat(context: SessionUserContext): Promise<ResumePendingChatResult>;
   summarizeChat(context: SessionUserContext, sessionId?: string): Promise<{ success: true; aiMessages: Message[]; currentAgent: string | null }>;
   stopExecution(context: SessionUserContext, request: StopExecutionRequest): Promise<{ success: true; stopped: boolean; scope: StopExecutionRequest['scope'] }>;
   createBlock(payload: { sessionId?: string; block: RichBlock }): { success: true; block: RichBlock };
@@ -114,7 +128,7 @@ export interface ChatSummaryService {
 }
 
 export interface ChatResumeService {
-  resumePendingChat(context: SessionUserContext): Promise<{ success: true; resumed: boolean; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
+  resumePendingChat(context: SessionUserContext): Promise<ResumePendingChatResult>;
 }
 
 export interface ChatServiceErrorDescriptor {
