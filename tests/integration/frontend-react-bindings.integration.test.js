@@ -841,6 +841,7 @@ test('React 页面通过事件代理支持消息调用图单开展开/收起', (
 test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', () => {
   const html = readPublicFile('public', 'index.html');
   const panelBody = getFunctionBody(html, 'renderMessageGraphPanel');
+  const svgBody = getFunctionBody(html, 'renderMessageGraphSvg');
 
   assertContainsAll(html, [
     'renderMessageGraphCanvas(',
@@ -855,6 +856,8 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
     'message__graph-mini'
   ], 'missing mini-graph wiring inside renderMessageGraphPanel');
   assert.ok(html.includes('message__graph-edge--loopback'), 'should render loopback class on mini-graph edge paths');
+  assert.ok(svgBody.includes('viewBoxWidth'), 'svg helper should use computed viewBox width');
+  assert.ok(svgBody.includes('viewBoxHeight'), 'svg helper should use computed viewBox height');
 });
 
 test('迷你图样式包含 loopback 线条', () => {

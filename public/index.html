@@ -2240,6 +2240,10 @@
     function renderMessageGraphSvg(graphView) {
       const nodes = Array.isArray(graphView?.nodes) ? graphView.nodes : [];
       const edges = Array.isArray(graphView?.edges) ? graphView.edges : [];
+      const width = typeof graphView?.width === 'number' && graphView.width > 0 ? graphView.width : 400;
+      const height = typeof graphView?.height === 'number' && graphView.height > 0 ? graphView.height : 220;
+      const viewBoxWidth = Math.max(width, 1);
+      const viewBoxHeight = Math.max(height, 1);
       const edgeMarkup = edges.map(edge => {
         const d = escapeHtml(edge.path || 'M0 0 L0 0');
         const classes = ['message__graph-edge'];
@@ -2253,7 +2257,7 @@
         return `<circle class="message__graph-node" data-node-id="${escapeHtml(node.id || '')}" cx="${cx}" cy="${cy}" r="6"></circle>`;
       }).join('');
       return `
-        <svg class="message__graph-svg" viewBox="0 0 400 220" role="presentation" xmlns="http://www.w3.org/2000/svg">
+        <svg class="message__graph-svg" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="${viewBoxWidth}" height="${viewBoxHeight}" role="presentation" xmlns="http://www.w3.org/2000/svg">
           ${edgeMarkup}
           ${nodeMarkup}
         </svg>
