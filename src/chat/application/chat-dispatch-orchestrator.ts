@@ -549,6 +549,10 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           if (name === rawMessage.sender || !agentManager.hasAgent(name)) {
             return false;
           }
+          if (!sessionService.isAgentEnabled(session, name)) {
+            runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${rawMessage.sender || task.agentName} stage=chain_skip reason=disabled_target target=${name}`);
+            return false;
+          }
           if (discussionMode === 'peer' && task.reviewMode === 'caller_review' && task.callerAgentName === name) {
             runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${rawMessage.sender || task.agentName} stage=chain_skip reason=caller_review_back_edge target=${name}`);
             return false;
