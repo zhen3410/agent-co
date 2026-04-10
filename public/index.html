@@ -2070,27 +2070,51 @@
 
       const depthMap = {};
       const incoming = new Map();
+      const outgoing = new Map();
+
       for (const edge of edges) {
-        const targets = incoming.get(edge.to) || [];
-        targets.push(edge.from);
-        incoming.set(edge.to, targets);
+        const forward = outgoing.get(edge.from) || [];
+        forward.push(edge.to);
+        outgoing.set(edge.from, forward);
+
+        const backward = incoming.get(edge.to) || [];
+        backward.push(edge.from);
+        incoming.set(edge.to, backward);
       }
 
       const queue = [];
+      const seedDepth = (id, depth) => {
+        if (depthMap[id] === undefined) {
+          depthMap[id] = depth;
+          queue.push(id);
+        }
+      };
+
       if (focusNodeId) {
-        depthMap[focusNodeId] = 0;
-        queue.push(focusNodeId);
+        seedDepth(focusNodeId, 0);
       }
 
       while (queue.length > 0) {
         const current = queue.shift();
-        let depth = depthMap[current] ?? 0;
+        const currentDepth = depthMap[current] ?? 0;
+        let depth = currentDepth;
         depth += 1;
-        for (const edge of edges) {
-          if (edge.from !== current) continue;
-          if (depthMap[edge.to] !== undefined) continue;
-          depthMap[edge.to] = depth;
-          queue.push(edge.to);
+
+        const forward = outgoing.get(current) || [];
+        for (const target of forward) {
+          seedDepth(target, depth);
+        }
+
+        const backward = incoming.get(current) || [];
+        const prevDepth = currentDepth - 1;
+        for (const source of backward) {
+          seedDepth(source, prevDepth);
+        }
+      }
+
+      for (const node of nodes) {
+        if (depthMap[node.id] === undefined) {
+          depthMap[node.id] = 0;
         }
       }
 
@@ -2113,10 +2137,15 @@
       const spacingX = 140;
       const spacingY = 90;
       const columnHeights = {};
-      const layoutNodes = (Array.isArray(nodes) ? nodes : []).map(node => {
+      const normalized = Array.isArray(nodes) ? nodes : [];
+      const depths = normalized.map(node => node.depth ?? 0);
+      const minDepth = depths.length === 0 ? 0 : Math.min(0, ...depths);
+      const depthShift = minDepth < 0 ? -minDepth : 0;
+      const layoutNodes = normalized.map(node => {
         const depth = node.depth ?? 0;
         const column = node.column ?? 0;
-        const x = depth * spacingX;
+        const adjustedDepth = depth + depthShift;
+        const x = adjustedDepth * spacingX;
         const y = columnHeights[column] || 0;
         columnHeights[column] = y + spacingY;
         return {
