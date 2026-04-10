@@ -2036,29 +2036,74 @@
         return null;
       }
 
-      const focusNode = callGraph.nodes.find(node => node.id === callGraph.focusNodeId);
-      const selected = [];
+      const nodeIndex = new Map();
+      callGraph.nodes.forEach((node, index) => {
+        nodeIndex.set(node.id, index);
+      });
+
+      const neighborMap = new Map();
+      const addNeighbor = (id, target) => {
+        if (!target || id === target) return;
+        const neighbors = neighborMap.get(id) || new Set();
+        neighbors.add(target);
+        neighborMap.set(id, neighbors);
+      };
+
+      if (Array.isArray(callGraph.edges)) {
+        for (const edge of callGraph.edges) {
+          addNeighbor(edge.from, edge.to);
+          addNeighbor(edge.to, edge.from);
+        }
+      }
+
+      const limit = MINI_GRAPH_CORE_LIMIT;
+      const focusId = callGraph.focusNodeId;
+      const ordered = [];
       const seen = new Set();
+      const enqueue = [];
 
-      if (focusNode) {
-        selected.push(focusNode);
-        seen.add(focusNode.id);
+      const enqueueNeighbors = (rootId) => {
+        const neighbors = Array.from(neighborMap.get(rootId) || []);
+        neighbors.sort((a, b) => (nodeIndex.get(a) ?? Infinity) - (nodeIndex.get(b) ?? Infinity));
+        for (const neighbor of neighbors) {
+          if (seen.has(neighbor)) continue;
+          enqueue.push(neighbor);
+          seen.add(neighbor);
+        }
+      };
+
+      if (focusId && nodeIndex.has(focusId)) {
+        ordered.push(callGraph.nodes[nodeIndex.get(focusId)]);
+        seen.add(focusId);
+        enqueueNeighbors(focusId);
       }
 
-      const filler = callGraph.nodes.filter(node => !seen.has(node.id)).slice(0, MINI_GRAPH_CORE_LIMIT - selected.length);
-      for (const node of filler) {
-        selected.push(node);
-        seen.add(node.id);
+      while (enqueue.length > 0 && ordered.length < limit) {
+        const nextId = enqueue.shift();
+        if (!nextId) continue;
+        const node = callGraph.nodes[nodeIndex.get(nextId)];
+        if (!node) continue;
+        ordered.push(node);
+        enqueueNeighbors(nextId);
       }
 
-      const selectedIds = new Set(selected.map(node => node.id));
+      if (ordered.length < limit) {
+        for (const node of callGraph.nodes) {
+          if (ordered.length >= limit) break;
+          if (seen.has(node.id)) continue;
+          ordered.push(node);
+          seen.add(node.id);
+        }
+      }
+
+      const selectedIds = new Set(ordered.map(node => node.id));
       const edges = Array.isArray(callGraph.edges)
         ? callGraph.edges.filter(edge => selectedIds.has(edge.from) && selectedIds.has(edge.to))
         : [];
 
       return {
-        focusNodeId: callGraph.focusNodeId,
-        nodes: selected,
+        focusNodeId: focusId,
+        nodes: ordered,
         edges
       };
     }
@@ -2213,7 +2258,6 @@
     }
 
     function renderMessageGraphCanvas(callGraph, messageId = '') {
-      const pointerBindings = ['pointerdown', 'pointermove', 'pointerup'];
       const graphView = selectCoreGraph(callGraph);
       const depthInfo = graphView && graphView.nodes.length > 0
         ? assignGraphDepths(graphView.nodes, graphView.edges, graphView.focusNodeId)
@@ -2225,9 +2269,9 @@
         <div
           class="message__graph-canvas-wrap"
           data-graph-canvas${messageAttr}
-          onpointerdown="${pointerBindings[0]}()"
-          onpointermove="${pointerBindings[1]}()"
-          onpointerup="${pointerBindings[2]}()"
+          onpointerdown="handleMiniGraphPointerDown(event)"
+          onpointermove="handleMiniGraphPointerMove(event)"
+          onpointerup="handleMiniGraphPointerUp(event)"
         >
           <div class="message__graph-toolbar">
             <button type="button" class="message__graph-btn" data-action="expand-call-graph">展开</button>
@@ -2236,6 +2280,20 @@
           ${renderMessageGraphSvg({ nodes: layoutInfo.layoutNodes, edges: edgePaths })}
         </div>
       `;
+    }
+
+    function handleMiniGraphPointerDown(event) {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+    }
+
+    function handleMiniGraphPointerMove(event) {
+      event?.preventDefault && event.preventDefault();
+    }
+
+    function handleMiniGraphPointerUp(event) {
+      event?.preventDefault && event.preventDefault();
     }
 
     function renderMessageGraphSummary(callGraph) {

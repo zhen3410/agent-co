@@ -884,10 +884,11 @@ test('React 页面为调用图迷你图提供纯布局 helper 合约', () => {
   const edgeBody = getFunctionBody(html, 'buildGraphEdgePaths');
 
   assertContainsAll(selectBody, [
-    'const focusNode',
+    'nodeIndex',
     'MINI_GRAPH_CORE_LIMIT',
-    'slice(0,',
-    'focusNodeId'
+    'focusNodeId',
+    'neighborMap',
+    'enqueue'
   ], 'missing selectCoreGraph focus/core limit contract');
 
   assertContainsAll(assignBody, [
@@ -910,6 +911,38 @@ test('React 页面为调用图迷你图提供纯布局 helper 合约', () => {
     'M${',
     'L${'
   ], 'missing buildGraphEdgePaths path/loop contract');
+});
+
+test('selectCoreGraph 构建焦点邻居核心图', () => {
+  const html = readPublicFile('public', 'index.html');
+  const selectBody = getFunctionBody(html, 'selectCoreGraph');
+  const safeSelectBody = selectBody.replace('function selectCoreGraph', 'function selectCoreGraphFn');
+  const selectCoreGraph = eval(`const MINI_GRAPH_CORE_LIMIT = 8; ${safeSelectBody}; selectCoreGraphFn;`);
+  const callGraph = {
+    focusNodeId: 'node:focus',
+    nodes: [
+      { id: 'node:focus', label: 'focus' },
+      { id: 'node:a', label: 'A' },
+      { id: 'node:b', label: 'B' },
+      { id: 'node:c', label: 'C' },
+      { id: 'node:d', label: 'D' }
+    ],
+    edges: [
+      { id: 'edge:1', from: 'node:focus', to: 'node:a' },
+      { id: 'edge:2', from: 'node:b', to: 'node:focus' },
+      { id: 'edge:3', from: 'node:focus', to: 'node:c' },
+      { id: 'edge:4', from: 'node:d', to: 'node:b' }
+    ]
+  };
+
+  const core = selectCoreGraph(callGraph);
+  assert.ok(core);
+  assert.equal(core.focusNodeId, 'node:focus');
+  assert.equal(core.nodes[0].id, 'node:focus');
+  assert.ok(core.nodes.some(node => node.id === 'node:a'));
+  assert.ok(core.nodes.some(node => node.id === 'node:b'));
+  assert.ok(core.nodes.some(node => node.id === 'node:c'));
+  assert.ok(core.edges.every(edge => core.nodes.some(node => node.id === edge.from) && core.nodes.some(node => node.id === edge.to)));
 });
 
 test('React 页面会在当前会话设置中支持“不限制”语义并从会话数据同步状态', () => {
