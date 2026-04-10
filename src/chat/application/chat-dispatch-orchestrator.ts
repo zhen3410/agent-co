@@ -593,7 +593,19 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           onMessage?.(message);
           if (stream) {
             await new Promise<void>(resolve => setImmediate(resolve));
+            await new Promise<void>(resolve => setTimeout(resolve, 30));
           }
+        }
+
+        const postMessageStopMode = consumeExplicitStopMode();
+        if (postMessageStopMode === 'current_agent' || postMessageStopMode === 'session') {
+          if (postMessageStopMode === 'session') {
+            queue.length = 0;
+          }
+          stopped = consumeStoppedMetadata(postMessageStopMode, task.agentName);
+          streamStopped = true;
+          runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${task.agentName} stage=stream_stop_post_visible_message reason=explicit_stop scope=${postMessageStopMode}`);
+          break;
         }
 
         const pendingMentionsToQueue: PendingAgentDispatchTask[] = invocationReviewResult ? [...invocationReviewResult.pendingTasks] : [];

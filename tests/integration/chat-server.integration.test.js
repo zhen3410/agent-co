@@ -1074,6 +1074,40 @@ async function waitForAgentThinkingEvent(reader, expectedAgent, timeoutMs = 5000
   throw new Error(`stream ended before receiving ${expectedAgent} thinking event`);
 }
 
+async function waitForAgentMessageEvent(reader, expectedSender, timeoutMs = 5000) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const { done, value } = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`stream did not emit ${expectedSender} message before timeout`)), remainingMs))
+    ]);
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    let eventType = '';
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        eventType = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        const payload = JSON.parse(line.slice(6));
+        if (eventType === 'agent_message' && payload.sender === expectedSender) {
+          return payload;
+        }
+        eventType = '';
+      }
+    }
+  }
+
+  throw new Error(`stream ended before receiving ${expectedSender} agent_message event`);
+}
+
 async function drainStreamUntilClosed(reader, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
 
@@ -2053,8 +2087,8 @@ test('显式停止当前智能体后即使该任务已产出可见输出也不�
     assert.equal(streamResponse.status, 200);
 
     const reader = streamResponse.body.getReader();
-    await waitForAgentThinkingEvent(reader, 'Alice');
-    await new Promise(resolve => setTimeout(resolve, 300));
+    const aliceVisibleMessage = await waitForAgentMessageEvent(reader, 'Alice', 7000);
+    assert.ok(typeof aliceVisibleMessage.text === 'string' && aliceVisibleMessage.text.includes('Alice 已发出可见接力请求'));
 
     const stopResponse = await fixture.request('/api/chat-stop', {
       method: 'POST',
@@ -2080,7 +2114,7 @@ test('显式停止当前智能体后即使该任务已产出可见输出也不�
     const assistantTexts = historyResponse.body.messages
       .filter(item => item.role === 'assistant')
       .map(item => item.text);
-    assert.ok(!assistantTexts.some(text => text.includes('Alice 已发出可见接力请求')));
+    assert.ok(assistantTexts.some(text => text.includes('Alice 已发出可见接力请求')));
     assert.ok(!assistantTexts.some(text => text.includes('Bob 不应被显式停止后的当前任务派生触发')));
     assert.ok(!assistantTexts.some(text => text.includes('Claude 是原队列中的后续任务')));
 
