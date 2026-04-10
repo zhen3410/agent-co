@@ -281,6 +281,22 @@
                 </div>
                 <div className="header-actions">
                   <span className="status" id="status">已连接</span>
+                  <button
+                    className="btn-clear btn-stop-action stop-current"
+                    id="stopCurrentBtn"
+                    style={{ display: 'none' }}
+                    onClick={() => window.requestChatStop && window.requestChatStop('current')}
+                  >
+                    停止当前智能体
+                  </button>
+                  <button
+                    className="btn-clear btn-stop-action stop-session"
+                    id="stopSessionBtn"
+                    style={{ display: 'none' }}
+                    onClick={() => window.requestChatStop && window.requestChatStop('session')}
+                  >
+                    停止本次执行
+                  </button>
                   <button className="btn-clear btn-mobile-session" onClick={() => window.openMobileControlHub && window.openMobileControlHub('sessions')}>控制</button>
                   <button className="btn-clear btn-desktop-context" data-tab="sessions" onClick={() => window.toggleContextPanel && window.toggleContextPanel('sessions')}>会话</button>
                   <button className="btn-clear btn-desktop-context" data-tab="agents" onClick={() => window.toggleContextPanel && window.toggleContextPanel('agents')}>智能体</button>
@@ -489,6 +505,7 @@
     let history = [];
     let agents = [];
     let isLoading = false;
+    let isStopRequestInFlight = false;
     let currentAgent = null;
     let currentAgentWillExpire = false;
     let chatSessions = [];
@@ -512,6 +529,8 @@
     let userInputEl;
     let sendBtnEl;
     let statusEl;
+    let stopCurrentBtnEl;
+    let stopSessionBtnEl;
     let agentsListEl;
     let currentAgentBarEl;
     let currentAgentNameEl;
@@ -570,6 +589,8 @@
       userInputEl = document.getElementById('userInput');
       sendBtnEl = document.getElementById('sendBtn');
       statusEl = document.getElementById('status');
+      stopCurrentBtnEl = document.getElementById('stopCurrentBtn');
+      stopSessionBtnEl = document.getElementById('stopSessionBtn');
       agentsListEl = document.getElementById('agentsList');
       currentAgentBarEl = document.getElementById('currentAgentBar');
       currentAgentNameEl = document.getElementById('currentAgentName');
@@ -2176,6 +2197,50 @@
         const loadingEl = messagesEl.querySelector('.message--loading');
         if (loadingEl) loadingEl.remove();
       }
+      syncStopActionButtons();
+    }
+
+    function syncStopActionButtons() {
+      const showStopActions = isLoading;
+      const stopDisabled = !showStopActions || isStopRequestInFlight;
+      [stopCurrentBtnEl, stopSessionBtnEl].forEach((el) => {
+        if (!el) return;
+        el.style.display = showStopActions ? 'inline-flex' : 'none';
+        el.disabled = stopDisabled;
+      });
+    }
+
+    async function requestChatStop(scope) {
+      if (!isLoading) return;
+      if (isStopRequestInFlight) return;
+
+      isStopRequestInFlight = true;
+      syncStopActionButtons();
+      statusEl.textContent = scope === 'current' ? '正在停止当前智能体...' : '正在停止本次执行...';
+
+      try {
+        const response = await fetch('/api/chat-stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ scope })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || `HTTP ${response.status}`);
+        }
+        statusEl.textContent = '停止请求已发送...';
+      } catch (error) {
+        statusEl.textContent = '停止失败';
+        addMessage({
+          role: 'assistant',
+          sender: '系统',
+          text: `❌ 停止失败: ${error.message}`
+        });
+      } finally {
+        isStopRequestInFlight = false;
+        syncStopActionButtons();
+      }
     }
 
     function scrollToBottom() {
@@ -2227,6 +2292,7 @@
       sendBtnEl.disabled = true;
       sendBtnEl.textContent = '...';
       statusEl.textContent = '继续执行剩余链路...';
+      syncStopActionButtons();
 
       try {
         const response = await fetch('/api/chat-resume', {
@@ -2265,6 +2331,7 @@
         isLoading = false;
         sendBtnEl.disabled = false;
         sendBtnEl.textContent = '发送';
+        syncStopActionButtons();
       }
     }
 
@@ -2362,11 +2429,14 @@
       sendBtnEl.disabled = true;
       sendBtnEl.textContent = '...';
       statusEl.textContent = '发送中...';
+      syncStopActionButtons();
 
       const thinkingAgents = new Set();
       let streamReceivedAgentMessage = false;
       let streamReceivedAgentDelta = false;
       let streamReceivedError = false;
+      let streamStoppedByUser = false;
+      let streamResumeAvailable = false;
 
       try {
         const response = await fetch('/api/chat-stream', {
@@ -2427,6 +2497,20 @@
                   updateCurrentAgentUI();
                 } else if (eventType === 'notice') {
                   showSystemNotice(data.notice);
+                } else if (eventType === 'execution_stopped') {
+                  streamStoppedByUser = true;
+                  streamResumeAvailable = data.resumeAvailable === true;
+                  thinkingAgents.clear();
+                  document.querySelectorAll('.message--thinking').forEach(el => el.remove());
+                  currentAgent = data.currentAgent || null;
+                  currentAgentWillExpire = false;
+                  updateCurrentAgentUI();
+                  statusEl.textContent = streamResumeAvailable ? '执行已停止，可继续剩余执行' : '执行已停止';
+                  if (streamResumeAvailable) {
+                    showResumeChainNotice();
+                  } else {
+                    clearResumeChainNotice();
+                  }
                 } else if (eventType === 'error') {
                   streamReceivedError = true;
                   statusEl.textContent = '连接失败';
@@ -2446,7 +2530,7 @@
         }
 
         if (!streamReceivedAgentMessage && !streamReceivedError) {
-          if (!streamReceivedAgentDelta) {
+          if (!streamStoppedByUser && !streamReceivedAgentDelta) {
             statusEl.textContent = '连接失败';
             addMessage({
               role: 'assistant',
@@ -2458,30 +2542,36 @@
 
       } catch (error) {
         console.error('发送失败:', error);
-        if (!streamReceivedAgentMessage) {
-          if (!streamReceivedAgentDelta) {
-            statusEl.textContent = '流式连接失败，尝试降级...';
-            const recovered = await recoverViaDirectChat(text);
-            if (!recovered) {
-              statusEl.textContent = '连接失败';
-              addMessage({
-                role: 'assistant',
-                sender: '系统',
-                text: `❌ 发送失败: ${error.message}`
-              });
+        if (!streamStoppedByUser) {
+          if (!streamReceivedAgentMessage) {
+            if (!streamReceivedAgentDelta) {
+              statusEl.textContent = '流式连接失败，尝试降级...';
+              const recovered = await recoverViaDirectChat(text);
+              if (!recovered) {
+                statusEl.textContent = '连接失败';
+                addMessage({
+                  role: 'assistant',
+                  sender: '系统',
+                  text: `❌ 发送失败: ${error.message}`
+                });
+              }
+            } else {
+              statusEl.textContent = '连接中断';
+              showResumeChainNotice();
             }
           } else {
             statusEl.textContent = '连接中断';
             showResumeChainNotice();
           }
-        } else {
-          statusEl.textContent = '连接中断';
+        } else if (streamResumeAvailable) {
           showResumeChainNotice();
         }
       } finally {
         isLoading = false;
+        isStopRequestInFlight = false;
         sendBtnEl.disabled = false;
         sendBtnEl.textContent = '发送';
+        syncStopActionButtons();
         streamingAgentTexts.clear();
         document.querySelectorAll('.message--streaming').forEach(el => el.classList.remove('message--streaming'));
         document.querySelectorAll('.message--thinking').forEach(el => el.remove());
@@ -2632,6 +2722,7 @@
     window.clearHistory = clearHistory;
     window.sendMessage = sendMessage;
     window.resumePendingChain = resumePendingChain;
+    window.requestChatStop = requestChatStop;
     window.switchAgent = switchAgent;
     window.applyAgentWorkdir = applyAgentWorkdir;
     window.toggleSessionAgent = toggleSessionAgent;
@@ -2791,6 +2882,7 @@
       renderMobileWorkdirMirror();
       bindDomEvents();
       resizeUserInput();
+      syncStopActionButtons();
       if (window.ChatComposer && typeof window.ChatComposer.initComposer === 'function') {
         window.ChatComposer.initComposer({
           input: userInputEl,
