@@ -840,6 +840,7 @@ test('React 页面通过事件代理支持消息调用图单开展开/收起', (
 
 test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', () => {
   const html = readPublicFile('public', 'index.html');
+  const panelBody = getFunctionBody(html, 'renderMessageGraphPanel');
 
   assertContainsAll(html, [
     'renderMessageGraphCanvas(',
@@ -848,6 +849,11 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
     'message__graph-svg',
     'data-node-id'
   ], 'missing mini-graph canvas/svg markup contract inside call-graph panel');
+
+  assertContainsAll(panelBody, [
+    'renderMessageGraphCanvas(',
+    'message__graph-mini'
+  ], 'missing mini-graph wiring inside renderMessageGraphPanel');
 });
 
 test('React 页面在迷你图工具栏提供展开与重置操作', () => {

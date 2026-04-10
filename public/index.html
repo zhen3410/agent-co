@@ -2142,9 +2142,16 @@
         const startY = from.y + 24;
         const endX = to.x + 24;
         const endY = to.y + 24;
-        const path = loopback
-          ? `M${startX} ${startY} c 16 -12 40 -12 40 0`
-          : `M${startX} ${startY} L${endX} ${endY}`;
+        let path;
+        if (loopback) {
+          path = `M${startX} ${startY} c 16 -12 40 -12 40 0`;
+        } else if (highlightCycle) {
+          const midX = (startX + endX) / 2;
+          const midY = Math.min(startY, endY) - 40;
+          path = `M${startX} ${startY} Q${midX} ${midY} ${endX} ${endY}`;
+        } else {
+          path = `M${startX} ${startY} L${endX} ${endY}`;
+        }
         return {
           edgeId: edge.id,
           path,
@@ -2174,7 +2181,7 @@
       `;
     }
 
-    function renderMessageGraphCanvas(callGraph) {
+    function renderMessageGraphCanvas(callGraph, messageId = '') {
       const pointerBindings = ['pointerdown', 'pointermove', 'pointerup'];
       const graphView = selectCoreGraph(callGraph);
       const depthInfo = graphView && graphView.nodes.length > 0
@@ -2182,10 +2189,11 @@
         : null;
       const layoutInfo = depthInfo ? layoutGraphNodes(depthInfo.layoutNodes) : { layoutNodes: [], width: 0, height: 0 };
       const edgePaths = graphView ? buildGraphEdgePaths(layoutInfo.layoutNodes, graphView.edges) : [];
+      const messageAttr = messageId ? ` data-message-id="${escapeHtml(messageId)}"` : '';
       return `
         <div
           class="message__graph-canvas-wrap"
-          data-graph-canvas
+          data-graph-canvas${messageAttr}
           onpointerdown="${pointerBindings[0]}()"
           onpointermove="${pointerBindings[1]}()"
           onpointerup="${pointerBindings[2]}()"
@@ -2219,7 +2227,7 @@
       `;
     }
 
-    function renderMessageGraphPanel(callGraph) {
+    function renderMessageGraphPanel(callGraph, messageId = '') {
       if (!callGraph) return '';
 
       const participantText = Array.isArray(callGraph.summary.participantNames) && callGraph.summary.participantNames.length > 0
@@ -2227,6 +2235,7 @@
         : '参与者未知';
       const cycleText = callGraph.hasCycle ? ` · 含 ${escapeHtml(String(callGraph.summary.cycleCount || 1))} 个环` : '';
       const truncatedText = callGraph.truncated ? ` · 已折叠 ${escapeHtml(String(callGraph.summary.truncatedNodeCount || 0))} 个节点` : '';
+      const miniGraphMarkup = renderMessageGraphCanvas(callGraph, messageId);
 
       return `
         <div class="message__graph-panel" hidden>
@@ -2234,6 +2243,9 @@
             ${escapeHtml(String(callGraph.summary.nodeCount))} 节点 · ${escapeHtml(String(callGraph.summary.edgeCount))} 边 · ${participantText}${cycleText}${truncatedText}
           </div>
           <div class="message__graph-details-title">查看结构详情</div>
+          <div class="message__graph-mini">
+            ${miniGraphMarkup}
+          </div>
           <div class="message__graph-details">
             ${renderGraphDetailGroups(callGraph)}
           </div>
@@ -2263,14 +2275,14 @@
         content = `
           <div class="message__text message__text--markdown">${renderedMarkdown}</div>
           ${renderMessageGraphSummary(msg.callGraph)}
-          ${renderMessageGraphPanel(msg.callGraph)}
+          ${renderMessageGraphPanel(msg.callGraph, msg.id)}
         `;
       } else {
         if (isInvocationReview) {
           content = `
             ${renderInvocationReviewMessageContent(msg, colorStyle)}
             ${renderMessageGraphSummary(msg.callGraph)}
-            ${renderMessageGraphPanel(msg.callGraph)}
+            ${renderMessageGraphPanel(msg.callGraph, msg.id)}
           `;
         } else {
           content = `
@@ -2278,7 +2290,7 @@
             <div class="message__text message__text--markdown">${renderedMarkdown}</div>
             <div class="message__blocks">${renderBlocks(msg.blocks)}</div>
             ${renderMessageGraphSummary(msg.callGraph)}
-            ${renderMessageGraphPanel(msg.callGraph)}
+            ${renderMessageGraphPanel(msg.callGraph, msg.id)}
           `;
         }
       }
