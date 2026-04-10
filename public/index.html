@@ -2002,6 +2002,75 @@
       `;
     }
 
+    function renderGraphDetailGroups(callGraph) {
+      if (!callGraph || !Array.isArray(callGraph.nodes) || callGraph.nodes.length === 0) {
+        return '<div class="message__graph-empty">暂无可展示的调用图详情</div>';
+      }
+
+      const sourceNodes = callGraph.nodes.filter(node => node.kind === 'message' && node.subtype === 'user');
+      const executionNodes = callGraph.nodes.filter(node => node.kind === 'execution');
+      const focusNodes = callGraph.nodes.filter(node => node.isFocus);
+      const cycleEdges = callGraph.edges.filter(edge => edge.isCycleEdge);
+
+      const groups = [
+        { title: '触发源', items: sourceNodes.map(node => `${node.label}${node.actorName ? ` · ${node.actorName}` : ''}`) },
+        { title: '执行', items: executionNodes.map(node => `${node.label}${node.status ? ` · ${node.status}` : ''}`) },
+        { title: '当前消息', items: focusNodes.map(node => `${node.label}${node.actorName ? ` · ${node.actorName}` : ''}`) },
+        { title: '环回关系', items: cycleEdges.map(edge => `${edge.from.replace(/^execution:/, '')} → ${edge.to.replace(/^execution:/, '')}`) }
+      ].filter(group => group.items.length > 0);
+
+      return groups.map(group => `
+        <section class="message__graph-group">
+          <h4>${escapeHtml(group.title)}</h4>
+          <ul>
+            ${group.items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
+          </ul>
+        </section>
+      `).join('');
+    }
+
+    function renderMessageGraphSummary(callGraph) {
+      if (!callGraph) return '';
+
+      const cycleBadge = callGraph.hasCycle
+        ? '<span class="message__graph-badge message__graph-badge--cycle">含环</span>'
+        : '';
+      const truncatedBadge = callGraph.truncated
+        ? '<span class="message__graph-badge">已裁剪</span>'
+        : '';
+
+      return `
+        <div class="message__graph-summary">
+          <span class="message__graph-badge">调用图 ${escapeHtml(String(callGraph.summary.nodeCount))} 节点</span>
+          ${cycleBadge}
+          ${truncatedBadge}
+          <button class="message__graph-toggle" type="button" data-action="toggle-call-graph">展开</button>
+        </div>
+      `;
+    }
+
+    function renderMessageGraphPanel(callGraph) {
+      if (!callGraph) return '';
+
+      const participantText = Array.isArray(callGraph.summary.participantNames) && callGraph.summary.participantNames.length > 0
+        ? `参与者 ${escapeHtml(callGraph.summary.participantNames.join(' / '))}`
+        : '参与者未知';
+      const cycleText = callGraph.hasCycle ? ` · 含 ${escapeHtml(String(callGraph.summary.cycleCount || 1))} 个环` : '';
+      const truncatedText = callGraph.truncated ? ` · 已折叠 ${escapeHtml(String(callGraph.summary.truncatedNodeCount || 0))} 个节点` : '';
+
+      return `
+        <div class="message__graph-panel" hidden>
+          <div class="message__graph-meta">
+            ${escapeHtml(String(callGraph.summary.nodeCount))} 节点 · ${escapeHtml(String(callGraph.summary.edgeCount))} 边 · ${participantText}${cycleText}${truncatedText}
+          </div>
+          <div class="message__graph-details-title">查看结构详情</div>
+          <div class="message__graph-details">
+            ${renderGraphDetailGroups(callGraph)}
+          </div>
+        </div>
+      `;
+    }
+
     function renderMessage(msg, options = {}) {
       const isUser = msg.role === 'user';
       const isInvocationReview = msg.messageSubtype === 'invocation_review';
@@ -2020,23 +2089,32 @@
         role: msg.role || 'assistant',
         enableMentions: true
       });
-
       if (isUser) {
-        content = `<div class="message__text message__text--markdown">${renderedMarkdown}</div>`;
+        content = `
+          <div class="message__text message__text--markdown">${renderedMarkdown}</div>
+          ${renderMessageGraphSummary(msg.callGraph)}
+          ${renderMessageGraphPanel(msg.callGraph)}
+        `;
       } else {
         if (isInvocationReview) {
-          content = renderInvocationReviewMessageContent(msg, colorStyle);
+          content = `
+            ${renderInvocationReviewMessageContent(msg, colorStyle)}
+            ${renderMessageGraphSummary(msg.callGraph)}
+            ${renderMessageGraphPanel(msg.callGraph)}
+          `;
         } else {
           content = `
             <div class="message__sender" ${colorStyle}>${escapeHtml(msg.sender || 'AI')}</div>
             <div class="message__text message__text--markdown">${renderedMarkdown}</div>
             <div class="message__blocks">${renderBlocks(msg.blocks)}</div>
+            ${renderMessageGraphSummary(msg.callGraph)}
+            ${renderMessageGraphPanel(msg.callGraph)}
           `;
         }
       }
 
       return `
-        <div class="message ${roleClass}${extraClass}"${extraAttrs} ${colorStyle}>
+        <div class="message ${roleClass}${extraClass}"${extraAttrs} ${colorStyle} data-message-id="${escapeHtml(msg.id || '')}">
           <div class="message__avatar">${avatar}</div>
           <div class="message__content">${content}</div>
         </div>
@@ -2924,6 +3002,32 @@
       });
 
       agentWorkdirLevel3El.addEventListener('change', onChatWorkdirLevel3Change);
+
+      messagesEl.addEventListener('click', (event) => {
+        const target = event.target.closest('[data-action="toggle-call-graph"]');
+        if (!target) return;
+
+        const messageEl = target.closest('[data-message-id]');
+        const panel = messageEl ? messageEl.querySelector('.message__graph-panel') : null;
+        if (!panel) return;
+
+        const willOpen = panel.hasAttribute('hidden');
+
+        document.querySelectorAll('.message__graph-panel').forEach((el) => {
+          el.setAttribute('hidden', '');
+        });
+        document.querySelectorAll('[data-action="toggle-call-graph"]').forEach((button) => {
+          button.textContent = '展开';
+        });
+
+        if (!willOpen) {
+          panel.setAttribute('hidden', '');
+          return;
+        }
+
+        panel.removeAttribute('hidden');
+        target.textContent = '收起';
+      });
     }
 
     // ============================================

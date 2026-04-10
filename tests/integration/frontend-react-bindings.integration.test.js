@@ -801,6 +801,43 @@ test('React 页面按后端 reviewAction 枚举映射评审状态标签（accept
   ], 'missing backend reviewAction mapping contract');
 });
 
+test('React 页面为消息调用图提供摘要、展开面板与分组详情渲染钩子', () => {
+  const html = readPublicFile('public', 'index.html');
+  const summaryBody = getFunctionBody(html, 'renderMessageGraphSummary');
+  const panelBody = getFunctionBody(html, 'renderMessageGraphPanel');
+
+  assertContainsAll(html, [
+    'renderMessageGraphSummary(',
+    'renderMessageGraphPanel('
+  ], 'missing call-graph rendering hook in message cards');
+  assertContainsAll(summaryBody, [
+    'message__graph-summary',
+    'message__graph-badge',
+    'data-action="toggle-call-graph"',
+    '调用图',
+    '含环'
+  ], 'missing call-graph summary contract');
+  assertContainsAll(panelBody, [
+    'message__graph-panel',
+    'message__graph-meta',
+    'message__graph-details',
+    'renderGraphDetailGroups(callGraph)',
+    '查看结构详情'
+  ], 'missing call-graph panel contract');
+});
+
+test('React 页面通过事件代理支持消息调用图单开展开/收起', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assertContainsAll(html, [
+    'messagesEl.addEventListener(\'click\'',
+    'data-action="toggle-call-graph"',
+    'message__graph-panel',
+    'panel.setAttribute(\'hidden\', \'\');',
+    'target.textContent = \'收起\';'
+  ], 'missing delegated call-graph toggle contract');
+});
+
 test('React 页面会在当前会话设置中支持“不限制”语义并从会话数据同步状态', () => {
   const html = readPublicFile('public', 'index.html');
   const sessionSettingsCardBody = getArrowComponentBody(html, 'SessionSettingsCard');
