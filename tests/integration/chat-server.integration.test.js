@@ -554,6 +554,22 @@ EOF
   chmodSync(fakeClaude, 0o755);
 }
 
+function createStopScopeSemanticsClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+agent_name="\${AGENT_CO_AGENT_NAME:-AI}"
+if [ "$agent_name" = "Alice" ]; then
+  sleep 3
+  printf '{"output_text":"Alice 慢回复，断流恢复后应继续执行"}\\n'
+elif [ "$agent_name" = "Bob" ]; then
+  printf '{"output_text":"Bob 已在恢复链路中执行"}\\n'
+else
+  printf '{"output_text":"%s 已完成"}\\n' "$agent_name"
+fi
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
 function createReviewLoopClaudeScript(tempDir, mode) {
   const fakeClaude = join(tempDir, 'claude');
   writeFileSync(fakeClaude, `#!/usr/bin/env node
@@ -960,6 +976,57 @@ async function waitForCondition(check, timeoutMs = 3000, intervalMs = 80) {
     await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
   throw new Error('condition not met before timeout');
+}
+
+async function waitForAgentThinkingEvent(reader, expectedAgent, timeoutMs = 5000) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const { done, value } = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`stream did not emit ${expectedAgent} thinking before timeout`)), remainingMs))
+    ]);
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    let eventType = '';
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        eventType = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        const payload = JSON.parse(line.slice(6));
+        if (eventType === 'agent_thinking' && payload.agent === expectedAgent) {
+          return;
+        }
+        eventType = '';
+      }
+    }
+  }
+
+  throw new Error(`stream ended before receiving ${expectedAgent} thinking event`);
+}
+
+async function drainStreamUntilClosed(reader, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const { done } = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('stream did not close before timeout')), remainingMs))
+    ]);
+    if (done) {
+      return;
+    }
+  }
+
+  throw new Error('stream did not close before timeout');
 }
 
 test('统一 agent 调用入口在 api 模式下会调用 OpenAI-compatible provider 并解析结果', async () => {
@@ -1765,6 +1832,194 @@ printf '{"output_text":"late reply"}\\n'
     });
 
     await reader.cancel().catch(() => {});
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('显式停止当前智能体时只丢弃当前任务并保留后续链路', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-current-agent-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Bob 显式停止当前智能体并保留后续链路' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'current_agent' }
+    });
+    assert.equal(stopResponse.status, 200);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'current_agent'
+    });
+
+    await drainStreamUntilClosed(reader, 6000);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), true);
+    assert.deepEqual(
+      historyResponse.body.session.pendingAgentTasks.map(item => item.agentName),
+      ['Bob']
+    );
+
+    const assistantSenders = historyResponse.body.messages
+      .filter(item => item.role === 'assistant')
+      .map(item => item.sender);
+    assert.ok(!assistantSenders.includes('Alice'));
+    assert.ok(!assistantSenders.includes('Bob'));
+
+    const resumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.equal(resumeResponse.body.aiMessages.length, 1);
+    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Bob');
+    assert.equal(resumeResponse.body.aiMessages[0].text, 'Bob 已在恢复链路中执行');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('显式停止整个执行时会清空剩余链路', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-session-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Bob 显式停止整个执行并清空队列' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'session' }
+    });
+    assert.equal(stopResponse.status, 200);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'session'
+    });
+
+    await drainStreamUntilClosed(reader, 6000);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), false);
+
+    const resumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, false);
+    assert.deepEqual(resumeResponse.body.aiMessages, []);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('客户端断流仍保留当前任务以便恢复', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-stream-disconnect-requeue-current-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice']);
+
+    const abortController = new AbortController();
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice 客户端断流后应可恢复当前任务' }),
+      signal: abortController.signal
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+
+    abortController.abort();
+    await reader.cancel().catch(() => {});
+
+    const historyWithPending = await waitForCondition(async () => {
+      const history = await fixture.request('/api/history');
+      if (!Array.isArray(history.body?.session?.pendingAgentTasks)) return null;
+      if (history.body.session.pendingAgentTasks.length === 0) return null;
+      return history;
+    }, 6000, 120);
+
+    assert.deepEqual(
+      historyWithPending.body.session.pendingAgentTasks.map(item => item.agentName),
+      ['Alice']
+    );
+
+    const resumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.equal(resumeResponse.body.aiMessages.length, 1);
+    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Alice');
+    assert.equal(resumeResponse.body.aiMessages[0].text, 'Alice 慢回复，断流恢复后应继续执行');
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

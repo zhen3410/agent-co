@@ -77,6 +77,7 @@ export interface RunAgentTaskParams {
   session: UserChatSession;
   task: AgentDispatchTask;
   stream: boolean;
+  executionId?: string;
   onTextDelta?: (delta: string) => void;
   signal?: AbortSignal;
 }
@@ -88,6 +89,7 @@ export interface ExecuteAgentTurnParams {
   session: UserChatSession;
   initialTasks: AgentDispatchTask[];
   stream: boolean;
+  executionId?: string;
   onThinking?: (agentName: string) => void;
   onTextDelta?: (agentName: string, delta: string) => void;
   onMessage?: (message: Message) => void;

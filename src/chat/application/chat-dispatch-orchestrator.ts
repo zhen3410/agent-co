@@ -396,8 +396,38 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
     let chainedCalls = 0;
     let streamStopped = false;
     let sawVisibleMessage = false;
+    let stopped: ExecuteAgentTurnResult['stopped'];
 
     const canContinue = () => shouldContinue ? shouldContinue() : true;
+    const resolveExecutionId = (): string | null => {
+      if (params.executionId) {
+        return params.executionId;
+      }
+      return runtime.getActiveExecution(userKey, session.id)?.executionId || null;
+    };
+    const consumeExplicitStopMode = (): 'none' | 'current_agent' | 'session' => {
+      const executionId = resolveExecutionId();
+      if (!executionId) {
+        return 'none';
+      }
+      const stopMode = runtime.consumeExecutionStopMode(userKey, session.id, executionId);
+      return stopMode === 'current_agent' || stopMode === 'session' ? stopMode : 'none';
+    };
+    const consumeStoppedMetadata = (scope: 'current_agent' | 'session', currentAgent: string): NonNullable<ExecuteAgentTurnResult['stopped']> => {
+      const executionId = resolveExecutionId();
+      const stoppedResult = executionId
+        ? runtime.consumeExecutionStopResult(userKey, session.id, executionId)
+        : null;
+      if (stoppedResult) {
+        return stoppedResult;
+      }
+
+      return {
+        scope,
+        currentAgent,
+        resumeAvailable: scope === 'current_agent' && queue.length > 0
+      };
+    };
 
     while (true) {
       if (queue.length === 0) {
@@ -459,6 +489,11 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       if (runtime.isChainedDispatchKind(task.dispatchKind)) {
         chainedCalls += 1;
       }
+
+      const executionId = resolveExecutionId();
+      if (executionId) {
+        runtime.updateActiveExecutionAgent(userKey, session.id, executionId, task.agentName);
+      }
       onThinking?.(task.agentName);
 
       const visibleMessages = await runAgentTask({
@@ -466,6 +501,7 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         session,
         task,
         stream,
+        executionId: executionId || undefined,
         signal,
         onTextDelta: onTextDelta
           ? (delta) => onTextDelta(task.agentName, delta)
@@ -473,9 +509,19 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       });
 
       if (signal?.aborted && visibleMessages.length === 0) {
-        queue.unshift(task);
-        streamStopped = true;
-        runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=stream_stop_during_task reason=client_disconnect`);
+        const stopMode = consumeExplicitStopMode();
+        if (stopMode === 'current_agent' || stopMode === 'session') {
+          if (stopMode === 'session') {
+            queue.length = 0;
+          }
+          stopped = consumeStoppedMetadata(stopMode, task.agentName);
+          streamStopped = true;
+          runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=stream_stop_during_task reason=explicit_stop scope=${stopMode}`);
+        } else {
+          queue.unshift(task);
+          streamStopped = true;
+          runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${task.agentName} stage=stream_stop_during_task reason=client_disconnect`);
+        }
         break;
       }
 
@@ -651,10 +697,14 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       }
     }
 
-    return {
+    const result: ExecuteAgentTurnResult = {
       aiMessages,
       pendingTasks: streamStopped ? queue.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' })) : []
     };
+    if (stopped) {
+      result.stopped = stopped;
+    }
+    return result;
   }
 
   return {
