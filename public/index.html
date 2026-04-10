@@ -2242,7 +2242,10 @@
       const edges = Array.isArray(graphView?.edges) ? graphView.edges : [];
       const edgeMarkup = edges.map(edge => {
         const d = escapeHtml(edge.path || 'M0 0 L0 0');
-        return `<path class="message__graph-edge" data-edge-id="${escapeHtml(edge.edgeId || edge.id || '')}" d="${d}"></path>`;
+        const classes = ['message__graph-edge'];
+        if (edge.loopback) classes.push('message__graph-edge--loopback');
+        if (edge.highlightCycle) classes.push('message__graph-edge--cycle');
+        return `<path class="${classes.join(' ')}" data-edge-id="${escapeHtml(edge.edgeId || edge.id || '')}" data-loopback="${edge.loopback ? '1' : '0'}" d="${d}"></path>`;
       }).join('');
       const nodeMarkup = nodes.map(node => {
         const cx = typeof node.x === 'number' ? node.x : 0;

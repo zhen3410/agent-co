@@ -841,6 +841,37 @@ body.context-panel-open .main-layout {
   margin-top: 4px;
 }
 
+.message__graph-mini {
+  margin-bottom: 10px;
+}
+
+.message__graph-svg {
+  width: 100%;
+  height: auto;
+  min-height: 140px;
+}
+
+.message__graph-edge {
+  fill: none;
+  stroke: rgba(15, 23, 42, 0.45);
+  stroke-width: 1.2;
+}
+
+.message__graph-edge--loopback {
+  stroke: var(--accent);
+  stroke-dasharray: 4 3;
+}
+
+.message__graph-edge--cycle {
+  stroke-width: 1.6;
+}
+
+.message__graph-node {
+  fill: var(--accent);
+  stroke: #fff;
+  stroke-width: 2;
+}
+
 .message__text--markdown p,
 .message__text--markdown ul,
 .message__text--markdown h1,

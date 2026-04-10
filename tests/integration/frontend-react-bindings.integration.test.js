@@ -854,6 +854,12 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
     'renderMessageGraphCanvas(',
     'message__graph-mini'
   ], 'missing mini-graph wiring inside renderMessageGraphPanel');
+  assert.ok(html.includes('message__graph-edge--loopback'), 'should render loopback class on mini-graph edge paths');
+});
+
+test('迷你图样式包含 loopback 线条', () => {
+  const css = readPublicFile('public', 'styles.css');
+  assert.ok(css.includes('.message__graph-edge--loopback'), 'should style .message__graph-edge--loopback');
 });
 
 test('React 页面在迷你图工具栏提供展开与重置操作', () => {
