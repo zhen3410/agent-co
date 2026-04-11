@@ -2030,6 +2030,7 @@
     }
 
     const MINI_GRAPH_CORE_LIMIT = 8;
+    const NODE_CENTER_OFFSET = 24;
 
     function selectCoreGraph(callGraph) {
       if (!callGraph || !Array.isArray(callGraph.nodes)) {
@@ -2214,10 +2215,10 @@
         if (!from || !to) return null;
         const loopback = from.id === to.id;
         const highlightCycle = edge.isCycleEdge === true;
-        const startX = from.x + 24;
-        const startY = from.y + 24;
-        const endX = to.x + 24;
-        const endY = to.y + 24;
+      const startX = from.x + NODE_CENTER_OFFSET;
+      const startY = from.y + NODE_CENTER_OFFSET;
+      const endX = to.x + NODE_CENTER_OFFSET;
+      const endY = to.y + NODE_CENTER_OFFSET;
         let path;
         if (loopback) {
           path = `M${startX} ${startY} c 16 -12 40 -12 40 0`;
@@ -2254,9 +2255,9 @@
         return `<path class="${classes.join(' ')}" data-edge-id="${escapeHtml(edge.edgeId || edge.id || '')}" data-loopback="${edge.loopback ? '1' : '0'}" d="${d}"></path>`;
       }).join('');
       const nodeMarkup = nodes.map(node => {
-        const cx = typeof node.x === 'number' ? node.x : 0;
-        const cy = typeof node.y === 'number' ? node.y : 0;
         const nodeRole = node.isFocus ? 'focus' : 'core';
+        const cx = typeof node.x === 'number' ? node.x + NODE_CENTER_OFFSET : NODE_CENTER_OFFSET;
+        const cy = typeof node.y === 'number' ? node.y + NODE_CENTER_OFFSET : NODE_CENTER_OFFSET;
         return `<circle class="message__graph-node" data-node-id="${escapeHtml(node.id || '')}" data-graph-node-role="${nodeRole}" cx="${cx}" cy="${cy}" r="6"></circle>`;
       }).join('');
       return `

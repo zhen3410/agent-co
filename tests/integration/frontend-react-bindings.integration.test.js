@@ -865,6 +865,8 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
   assert.ok(svgBody.includes('data-message-id'), 'svg helper should expose the message id attribute');
   assert.ok(svgBody.includes('data-graph-mode="${graphMode}"'), 'svg helper should carry the graph mode attribute');
   assert.ok(svgBody.includes('data-graph-node-role="'), 'svg nodes should expose the role hook for future styling');
+  const offsetMatches = svgBody.match(/NODE_CENTER_OFFSET/g) || [];
+  assert.ok(offsetMatches.length >= 2, 'svg helper should use NODE_CENTER_OFFSET for both edges and nodes');
 });
 
 test('迷你图样式包含 loopback 线条', () => {
