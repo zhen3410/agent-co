@@ -19,10 +19,13 @@ function createRuntimeStub(overrides = {}) {
   ]));
   const createdInvocationTasks = [];
   const appendedLogs = [];
+  const appendedEvents = [];
+  let nextSeq = 1;
 
   return {
     createdInvocationTasks,
     appendedLogs,
+    appendedEvents,
     runtime: {
       normalizeDispatchKind(value) {
         return value || 'initial';
@@ -64,6 +67,26 @@ function createRuntimeStub(overrides = {}) {
         createdInvocationTasks.push({ ...task });
         invocationTasks.set(task.id, { ...task });
         return { ...task };
+      },
+      appendAgentEvent(sessionId, draft) {
+        const event = {
+          eventId: `evt-${nextSeq}`,
+          sessionId,
+          seq: nextSeq++,
+          actorType: 'agent',
+          actorId: draft.actorId || null,
+          actorName: draft.actorName || null,
+          eventType: draft.eventType,
+          payload: draft.payload || {},
+          metadata: draft.metadata,
+          correlationId: draft.correlationId,
+          causationId: draft.causationId,
+          causedByEventId: draft.causedByEventId,
+          causedBySeq: draft.causedBySeq,
+          createdAt: new Date().toISOString()
+        };
+        appendedEvents.push(event);
+        return event;
       },
       getActiveExecution(userKey, sessionId) {
         return activeExecutions.get(`${userKey}:${sessionId}`) || null;
