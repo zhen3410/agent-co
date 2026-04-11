@@ -853,7 +853,6 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
     'data-node-id'
   ], 'missing mini-graph canvas/svg markup contract inside call-graph panel');
   assert.ok(html.includes('data-graph-mode="${graphMode}"'), 'should mark canvas with graph mode attribute');
-  assert.ok(html.includes('disabled aria-disabled="true"'), 'toolbar buttons should be explicitly unavailable for now');
 
   assertContainsAll(panelBody, [
     'renderMessageGraphCanvas(',
@@ -934,6 +933,66 @@ test('React 页面在迷你图工具栏提供展开与重置操作', () => {
     'data-action="expand-call-graph"',
     'data-action="reset-call-graph-view"'
   ], 'missing expand/reset toolbar contract for mini-graph');
+});
+
+test('React 页面为调用图迷你图维护按消息隔离的交互状态', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assertContainsAll(html, [
+    'const messageGraphUiState = new Map();',
+    'function getMessageGraphUiState(messageId) {',
+    'messageGraphUiState.get(messageId)',
+    'messageGraphUiState.set(messageId,'
+  ], 'missing per-message graph ui state contract');
+});
+
+test('React 页面通过迷你图工具栏支持展开全图与重置视图', () => {
+  const html = readPublicFile('public', 'index.html');
+  const clickHandlerBody = getFunctionBody(html, 'bindDomEvents');
+
+  assertContainsAll(clickHandlerBody, [
+    'action === \'expand-call-graph\'',
+    'action === \'reset-call-graph-view\'',
+    'getMessageGraphUiState(messageId)',
+    'graphState.isExpanded = !graphState.isExpanded;',
+    'graphState.panX = 0;',
+    'graphState.panY = 0;',
+    'rerenderMessageGraphPanel(messageEl, messageId);'
+  ], 'missing expand/reset interaction contract');
+});
+
+test('React 页面为迷你图提供拖拽平移事件与指针状态', () => {
+  const html = readPublicFile('public', 'index.html');
+  const bindBody = getFunctionBody(html, 'bindDomEvents');
+
+  assertContainsAll(bindBody, [
+    'messagesEl.addEventListener(\'pointerdown\'',
+    'messagesEl.addEventListener(\'pointermove\'',
+    'messagesEl.addEventListener(\'pointerup\'',
+    'messagesEl.addEventListener(\'pointercancel\'',
+    'graphState.isDragging = true;',
+    'graphState.pointerId = event.pointerId;',
+    'graphState.dragOriginX = event.clientX;',
+    'graphState.dragOriginY = event.clientY;',
+    'graphState.panX = graphState.dragStartPanX + deltaX;',
+    'graphState.panY = graphState.dragStartPanY + deltaY;',
+    'graphState.isDragging = false;'
+  ], 'missing pointer drag contract');
+});
+
+test('React 页面会把平移偏移应用到迷你图画布变换', () => {
+  const html = readPublicFile('public', 'index.html');
+  const canvasBody = getFunctionBody(html, 'renderMessageGraphCanvas');
+
+  assertContainsAll(canvasBody, [
+    'getMessageGraphUiState(messageId)',
+    'const graphMode = graphState.isExpanded ? \'full\' : \'core\';',
+    'const graphTransform = `translate(${graphState.panX}px, ${graphState.panY}px)`;',
+    'data-graph-pan-x="${escapeHtml(String(graphState.panX))}"',
+    'data-graph-pan-y="${escapeHtml(String(graphState.panY))}"',
+    'style="transform: ${graphTransform};"',
+    'selectFullGraph(callGraph)'
+  ], 'missing pan transform/full mode contract');
 });
 
 test('React 页面为调用图迷你图提供纯布局 helper 合约', () => {

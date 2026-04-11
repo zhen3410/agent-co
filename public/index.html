@@ -519,6 +519,7 @@
     let agentChainMaxCallsPerAgent = null;
     const chatWorkdirState = { root: '', level2: '', level3: '', custom: '' };
     const streamingAgentTexts = new Map();
+    const messageGraphUiState = new Map();
     let groups = [];
     let expandedGroups = new Set();
     let activeGroup = null;
@@ -2032,6 +2033,53 @@
     const MINI_GRAPH_CORE_LIMIT = 8;
     const NODE_CENTER_OFFSET = 24;
 
+    function getMessageGraphUiState(messageId) {
+      if (!messageId) {
+        return {
+          isExpanded: false,
+          panX: 0,
+          panY: 0,
+          isDragging: false,
+          pointerId: null,
+          dragOriginX: 0,
+          dragOriginY: 0,
+          dragStartPanX: 0,
+          dragStartPanY: 0
+        };
+      }
+
+      const existingState = messageGraphUiState.get(messageId);
+      if (existingState) {
+        return existingState;
+      }
+
+      const nextState = {
+        isExpanded: false,
+        panX: 0,
+        panY: 0,
+        isDragging: false,
+        pointerId: null,
+        dragOriginX: 0,
+        dragOriginY: 0,
+        dragStartPanX: 0,
+        dragStartPanY: 0
+      };
+      messageGraphUiState.set(messageId, nextState);
+      return nextState;
+    }
+
+    function selectFullGraph(callGraph) {
+      if (!callGraph || !Array.isArray(callGraph.nodes)) {
+        return null;
+      }
+
+      return {
+        focusNodeId: callGraph.focusNodeId,
+        nodes: callGraph.nodes,
+        edges: Array.isArray(callGraph.edges) ? callGraph.edges : []
+      };
+    }
+
     function selectCoreGraph(callGraph) {
       if (!callGraph || !Array.isArray(callGraph.nodes)) {
         return null;
@@ -2270,30 +2318,38 @@
     }
 
     function renderMessageGraphCanvas(callGraph, messageId = '') {
-      const graphView = selectCoreGraph(callGraph);
+      const graphState = getMessageGraphUiState(messageId);
+      const graphView = graphState.isExpanded ? selectFullGraph(callGraph) : selectCoreGraph(callGraph);
       const depthInfo = graphView && graphView.nodes.length > 0
         ? assignGraphDepths(graphView.nodes, graphView.edges, graphView.focusNodeId)
         : null;
       const layoutInfo = depthInfo ? layoutGraphNodes(depthInfo.layoutNodes) : { layoutNodes: [], width: 0, height: 0 };
       const edgePaths = graphView ? buildGraphEdgePaths(layoutInfo.layoutNodes, graphView.edges) : [];
       const messageAttr = messageId ? ` data-message-id="${escapeHtml(messageId)}"` : '';
-      const graphMode = 'core';
+      const graphMode = graphState.isExpanded ? 'full' : 'core';
+      const graphTransform = `translate(${graphState.panX}px, ${graphState.panY}px)`;
+      const expandLabel = graphState.isExpanded ? '收起全图' : '展开全部';
+      const resetAttrs = (!graphState.isExpanded && graphState.panX === 0 && graphState.panY === 0)
+        ? ' disabled aria-disabled="true"'
+        : '';
       return `
         <div
           class="message__graph-canvas-wrap"
-          data-graph-canvas${messageAttr} data-graph-mode="${graphMode}"
+          data-graph-canvas${messageAttr} data-graph-mode="${graphMode}" data-graph-pan-x="${escapeHtml(String(graphState.panX))}" data-graph-pan-y="${escapeHtml(String(graphState.panY))}"
         >
           <div class="message__graph-toolbar">
-            <button type="button" class="message__graph-btn" data-action="expand-call-graph" disabled aria-disabled="true">展开</button>
-            <button type="button" class="message__graph-btn" data-action="reset-call-graph-view" disabled aria-disabled="true">重置</button>
+            <button type="button" class="message__graph-btn" data-action="expand-call-graph">${expandLabel}</button>
+            <button type="button" class="message__graph-btn" data-action="reset-call-graph-view"${resetAttrs}>重置</button>
           </div>
-          ${renderMessageGraphSvg({
-            nodes: layoutInfo.layoutNodes,
-            edges: edgePaths,
-            width: layoutInfo.width,
-            height: layoutInfo.height,
-            graphMode
-          }, messageId)}
+          <div data-graph-stage style="transform: ${graphTransform};">
+            ${renderMessageGraphSvg({
+              nodes: layoutInfo.layoutNodes,
+              edges: edgePaths,
+              width: layoutInfo.width,
+              height: layoutInfo.height,
+              graphMode
+            }, messageId)}
+          </div>
         </div>
       `;
     }
@@ -2651,6 +2707,35 @@
 
     function scrollToBottom() {
       messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function getHistoryMessageById(messageId) {
+      if (!messageId) return null;
+      return history.find((msg) => msg.id === messageId) || null;
+    }
+
+    function getRenderedMessageById(messageId) {
+      if (!messageId) return null;
+      return Array.from(messagesEl.querySelectorAll('.message[data-message-id]'))
+        .find((el) => el.getAttribute('data-message-id') === messageId) || null;
+    }
+
+    function rerenderMessageGraphPanel(messageEl, messageId) {
+      if (!messageEl || !messageId) return;
+      const message = getHistoryMessageById(messageId);
+      if (!message || !message.callGraph) return;
+      const miniGraphEl = messageEl.querySelector('.message__graph-mini');
+      if (!miniGraphEl) return;
+      miniGraphEl.innerHTML = renderMessageGraphCanvas(message.callGraph, messageId);
+    }
+
+    function releaseMessageGraphDrag(pointerId = null) {
+      for (const [, graphState] of messageGraphUiState.entries()) {
+        if (!graphState.isDragging) continue;
+        if (pointerId !== null && graphState.pointerId !== pointerId) continue;
+        graphState.isDragging = false;
+        graphState.pointerId = null;
+      }
     }
 
     function showSystemNotice(notice) {
@@ -3017,6 +3102,7 @@
         if (response.ok) {
           const data = await response.json();
           history = data.messages || [];
+          messageGraphUiState.clear();
           if (data.agents) {
             agents = data.agents;
           }
@@ -3062,6 +3148,7 @@
         const response = await fetch('/api/clear', { method: 'POST', credentials: 'include' });
         const data = await response.json();
         history = [];
+        messageGraphUiState.clear();
         currentAgent = data.currentAgent;
         currentAgentWillExpire = false;
         updateCurrentAgentUI();
@@ -3277,10 +3364,35 @@
       agentWorkdirLevel3El.addEventListener('change', onChatWorkdirLevel3Change);
 
       messagesEl.addEventListener('click', (event) => {
-        const target = event.target.closest('[data-action="toggle-call-graph"]');
+        const target = event.target.closest('[data-action]');
         if (!target) return;
 
         const messageEl = target.closest('[data-message-id]');
+        const messageId = messageEl ? messageEl.getAttribute('data-message-id') : '';
+        const action = target.getAttribute('data-action');
+
+        if (action === 'expand-call-graph' || action === 'reset-call-graph-view') {
+          if (!messageEl || !messageId) return;
+          const graphState = getMessageGraphUiState(messageId);
+          if (action === 'expand-call-graph') {
+            graphState.isExpanded = !graphState.isExpanded;
+            if (!graphState.isExpanded) {
+              graphState.panX = 0;
+              graphState.panY = 0;
+            }
+          } else {
+            graphState.isExpanded = false;
+            graphState.panX = 0;
+            graphState.panY = 0;
+          }
+          graphState.isDragging = false;
+          graphState.pointerId = null;
+          rerenderMessageGraphPanel(messageEl, messageId);
+          return;
+        }
+
+        if (action !== 'toggle-call-graph') return;
+
         const panel = messageEl ? messageEl.querySelector('.message__graph-panel') : null;
         if (!panel) return;
 
@@ -3300,6 +3412,56 @@
 
         panel.removeAttribute('hidden');
         target.textContent = '收起';
+      });
+
+      messagesEl.addEventListener('pointerdown', (event) => {
+        const canvasEl = event.target.closest('[data-graph-canvas]');
+        if (!canvasEl) return;
+
+        const messageEl = canvasEl.closest('[data-message-id]');
+        const messageId = messageEl ? messageEl.getAttribute('data-message-id') : '';
+        if (!messageId) return;
+
+        const graphState = getMessageGraphUiState(messageId);
+        if (!graphState.isExpanded) return;
+
+        graphState.isDragging = true;
+        graphState.pointerId = event.pointerId;
+        graphState.dragOriginX = event.clientX;
+        graphState.dragOriginY = event.clientY;
+        graphState.dragStartPanX = graphState.panX;
+        graphState.dragStartPanY = graphState.panY;
+      });
+
+      messagesEl.addEventListener('pointermove', (event) => {
+        const draggingEntry = Array.from(messageGraphUiState.entries())
+          .find(([, graphState]) => graphState.isDragging && graphState.pointerId === event.pointerId);
+        if (!draggingEntry) return;
+
+        const [messageId, graphState] = draggingEntry;
+        const deltaX = event.clientX - graphState.dragOriginX;
+        const deltaY = event.clientY - graphState.dragOriginY;
+        graphState.panX = graphState.dragStartPanX + deltaX;
+        graphState.panY = graphState.dragStartPanY + deltaY;
+
+        const messageEl = getRenderedMessageById(messageId);
+        const stageEl = messageEl ? messageEl.querySelector('[data-graph-stage]') : null;
+        const canvasEl = messageEl ? messageEl.querySelector('[data-graph-canvas]') : null;
+        if (stageEl) {
+          stageEl.style.transform = `translate(${graphState.panX}px, ${graphState.panY}px)`;
+        }
+        if (canvasEl) {
+          canvasEl.setAttribute('data-graph-pan-x', String(graphState.panX));
+          canvasEl.setAttribute('data-graph-pan-y', String(graphState.panY));
+        }
+      });
+
+      messagesEl.addEventListener('pointerup', (event) => {
+        releaseMessageGraphDrag(event.pointerId);
+      });
+
+      messagesEl.addEventListener('pointercancel', (event) => {
+        releaseMessageGraphDrag(event.pointerId);
       });
     }
 
