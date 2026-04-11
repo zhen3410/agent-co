@@ -2277,9 +2277,6 @@
         <div
           class="message__graph-canvas-wrap"
           data-graph-canvas${messageAttr}
-          onpointerdown="handleMiniGraphPointerDown(event)"
-          onpointermove="handleMiniGraphPointerMove(event)"
-          onpointerup="handleMiniGraphPointerUp(event)"
         >
           <div class="message__graph-toolbar">
             <button type="button" class="message__graph-btn" data-action="expand-call-graph">展开</button>
@@ -2293,20 +2290,6 @@
           }, messageId)}
         </div>
       `;
-    }
-
-    function handleMiniGraphPointerDown(event) {
-      if (event && typeof event.preventDefault === 'function') {
-        event.preventDefault();
-      }
-    }
-
-    function handleMiniGraphPointerMove(event) {
-      event?.preventDefault && event.preventDefault();
-    }
-
-    function handleMiniGraphPointerUp(event) {
-      event?.preventDefault && event.preventDefault();
     }
 
     function renderMessageGraphSummary(callGraph) {

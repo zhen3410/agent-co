@@ -884,17 +884,6 @@ test('React 页面在迷你图工具栏提供展开与重置操作', () => {
   ], 'missing expand/reset toolbar contract for mini-graph');
 });
 
-test('renderMessageGraphCanvas 绑定迷你图拖拽事件', () => {
-  const html = readPublicFile('public', 'index.html');
-  const canvasBody = getFunctionBody(html, 'renderMessageGraphCanvas');
-
-  assertContainsAll(canvasBody, [
-    'pointerdown',
-    'pointermove',
-    'pointerup'
-  ], 'missing canvas pointer drag handlers for mini-graph panning');
-});
-
 test('React 页面为调用图迷你图提供纯布局 helper 合约', () => {
   const html = readPublicFile('public', 'index.html');
   const selectBody = getFunctionBody(html, 'selectCoreGraph');
