@@ -50,23 +50,6 @@ export interface ChatServiceDependencies {
   syncAgentsFromStore(): void;
 }
 
-export interface StreamMessageCallbacks {
-  shouldContinue(): boolean;
-  signal?: AbortSignal;
-  onUserMessage(message: Message): void;
-  onThinking(agentName: string): void;
-  onTextDelta(agentName: string, delta: string): void;
-  onMessage(message: Message): boolean;
-}
-
-export interface StreamMessageResult {
-  currentAgent: string | null;
-  notice?: string;
-  hadVisibleMessages: boolean;
-  emptyVisibleMessage?: string;
-  stopped?: StoppedExecutionMetadata;
-}
-
 export interface ActiveExecutionRegistration {
   executionId: string;
   abortController: AbortController;
@@ -95,7 +78,6 @@ export interface AcceptedChatCommandResponse {
 export interface ChatService {
   listAgents(): AIAgentConfig[];
   sendMessage(context: SessionUserContext, body: { message: string; sender?: string }): Promise<AcceptedChatCommandResponse>;
-  streamMessage(context: SessionUserContext, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<StreamMessageResult>;
   resumePendingChat(context: SessionUserContext): Promise<ResumePendingChatResult>;
   summarizeChat(context: SessionUserContext, sessionId?: string): Promise<{ success: true; aiMessages: Message[]; currentAgent: string | null }>;
   stopExecution(context: SessionUserContext, request: StopExecutionRequest): Promise<{ success: true; stopped: boolean; scope: StopExecutionRequest['scope'] }>;

@@ -12,11 +12,10 @@ import type {
   ActiveExecutionRegistration,
   ChatService,
   ChatServiceDependencies,
-  StopExecutionRequest,
-  StreamMessageCallbacks
+  StopExecutionRequest
 } from './chat-service-types';
 
-export type { ChatService, ChatServiceDependencies, StreamMessageCallbacks } from './chat-service-types';
+export type { ChatService, ChatServiceDependencies } from './chat-service-types';
 
 export class ChatServiceError extends AppError {
   constructor(message: string, code: AppErrorCode, statusCode?: number) {
@@ -199,107 +198,6 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     };
   }
 
-  async function streamMessage(context: { userKey: string }, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks) {
-    deps.syncAgentsFromStore();
-    const { message, sender: bodySender } = body;
-    const sender = bodySender || deps.defaultUserName;
-    if (!message) {
-      throw new ChatServiceError('缺少 message 字段', APP_ERROR_CODES.VALIDATION_FAILED);
-    }
-
-    const { userKey, session } = sessionService.resolveChatSession(context);
-    if (sessionService.isSessionSummaryInProgress(userKey, session)) {
-      throw new ChatServiceError('当前会话正在生成总结，暂时不能发送新消息，请稍后再试。', APP_ERROR_CODES.CONFLICT);
-    }
-    const sessionId = buildSendContext(runtime, userKey, session.id);
-    const currentAgent = sessionService.expireInvalidCurrentAgent(userKey, session);
-    sessionService.prepareForIncomingMessage(session);
-
-    console.log(`\n[ChatStream] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
-    const { mentions, ignoredMentions } = dispatchOrchestrator.collectEligibleMentions(message, session);
-    console.log(`[ChatStream] @ 提及: ${mentions.join(', ') || '无'}`);
-
-    const agentsToRespond: string[] = [];
-    if (mentions.length > 0) {
-      agentsToRespond.push(...mentions);
-      sessionService.selectCurrentAgent(userKey, session.id, mentions[0]);
-      console.log(`[ChatStream] 设置当前对话智能体: ${mentions[0]}`);
-    } else if (currentAgent) {
-      agentsToRespond.push(currentAgent);
-      console.log(`[ChatStream] 继续与 ${currentAgent} 对话`);
-    }
-
-    const userMessage: Message = {
-      id: buildMessageId(),
-      role: 'user',
-      sender,
-      text: message,
-      timestamp: Date.now(),
-      mentions: mentions.length > 0 ? mentions : undefined
-    };
-    sessionService.appendMessage(session, userMessage);
-    callbacks.onUserMessage(userMessage);
-
-    if (agentsToRespond.length === 0) {
-      return {
-        currentAgent: sessionService.getCurrentAgent(userKey, session.id),
-        notice: sessionService.buildNoEnabledAgentsNotice(session, ignoredMentions),
-        hadVisibleMessages: false
-      };
-    }
-
-    const execution = registerChatExecution(runtime, userKey, session.id);
-    const { executionId, abortController: executionController } = execution;
-    const forwardAbort = () => executionController.abort();
-    if (callbacks.signal) {
-      if (callbacks.signal.aborted) {
-        executionController.abort();
-      } else {
-        callbacks.signal.addEventListener('abort', forwardAbort, { once: true });
-      }
-    }
-
-    const undeliveredMessages: Message[] = [];
-    try {
-      const executionResult = await dispatchOrchestrator.executeAgentTurn({
-        userKey,
-        session,
-        executionId,
-        initialTasks: agentsToRespond.map(agentName => ({
-          agentName,
-          prompt: message,
-          includeHistory: mentions.length === 0
-        })),
-        stream: true,
-        shouldContinue: callbacks.shouldContinue,
-        signal: executionController.signal,
-        onThinking: callbacks.onThinking,
-        onTextDelta: callbacks.onTextDelta,
-        onMessage: (visibleMessage) => {
-          const delivered = callbacks.onMessage(visibleMessage);
-          if (!delivered) {
-            undeliveredMessages.push(visibleMessage);
-          }
-        }
-      });
-      sessionService.updatePendingExecution(session, executionResult.pendingTasks, undeliveredMessages);
-
-      return {
-        currentAgent: sessionService.getCurrentAgent(userKey, session.id),
-        notice: ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined,
-        hadVisibleMessages: executionResult.aiMessages.length > 0,
-        emptyVisibleMessage: executionResult.aiMessages.length === 0
-          ? `${agentsToRespond.join('、')} 未返回可见消息，请稍后重试或查看日志。`
-          : undefined
-      };
-    } finally {
-      if (callbacks.signal) {
-        callbacks.signal.removeEventListener('abort', forwardAbort);
-      }
-      execution.clear();
-    }
-  }
-
   function createBlock(payload: { sessionId?: string; block: RichBlock }) {
     const { sessionId = 'default', block } = payload;
     if (!block) {
@@ -363,7 +261,6 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
   return {
     listAgents,
     sendMessage,
-    streamMessage,
     resumePendingChat: resumeService.resumePendingChat,
     summarizeChat: summaryService.summarizeChat,
     createBlock,
