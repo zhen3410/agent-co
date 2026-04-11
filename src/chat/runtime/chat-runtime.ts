@@ -169,6 +169,12 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     return activeExecutionState.clearActiveExecution(userKey, sessionId, executionId);
   }
 
+  function buildSessionSyncStatus(sessionId: string) {
+    const session = sessionState.getSessionById(sessionId);
+    const normalizedDiscussionState = discussionState.normalizeDiscussionState(session?.discussionState);
+    return sessionEventService.buildSessionSyncStatus(sessionId, normalizedDiscussionState);
+  }
+
   return {
     hydrate: persistence.hydrate,
     shutdown: persistence.shutdown,
@@ -220,6 +226,7 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     appendSystemEvent: sessionEventService.appendSystemEvent,
     listSessionEvents: sessionEventService.listSessionEvents,
     buildSessionTimeline: sessionEventService.buildSessionTimeline,
+    buildSessionSyncStatus,
     buildSessionCallGraph: sessionEventService.buildSessionCallGraph,
     buildSessionSummary: sessionEventService.buildSessionSummary,
     buildSessionResponse: sessionState.buildSessionResponse,

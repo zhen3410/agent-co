@@ -9,6 +9,7 @@ import { normalizeSessionId } from './chat-route-helpers';
 const EVENTS_REGEX = /^\/api\/sessions\/([^/]+)\/events$/;
 const TIMELINE_REGEX = /^\/api\/sessions\/([^/]+)\/timeline$/;
 const CALL_GRAPH_REGEX = /^\/api\/sessions\/([^/]+)\/call-graph$/;
+const SYNC_STATUS_REGEX = /^\/api\/sessions\/([^/]+)\/sync-status$/;
 
 export interface EventQueryRoutesDependencies {
   runtime: ChatRuntime;
@@ -38,12 +39,17 @@ export async function handleEventQueryRoutes(
   }
 
   if ((match = pathname.match(TIMELINE_REGEX))) {
-    await handleTimeline(match[1], res, deps);
+    await handleTimeline(match[1], requestUrl, res, deps);
     return true;
   }
 
   if ((match = pathname.match(CALL_GRAPH_REGEX))) {
     await handleCallGraph(match[1], res, deps);
+    return true;
+  }
+
+  if ((match = pathname.match(SYNC_STATUS_REGEX))) {
+    await handleSyncStatus(match[1], res, deps);
     return true;
   }
 
@@ -116,12 +122,14 @@ async function handleEvents(
 
 async function handleTimeline(
   sessionId: string,
+  requestUrl: URL,
   res: http.ServerResponse,
   deps: EventQueryRoutesDependencies
 ): Promise<void> {
   try {
     const normalizedSessionId = resolveAuthorizedSession(deps, sessionId);
-    const timeline = deps.runtime.buildSessionTimeline(normalizedSessionId);
+    const afterSeq = parseAfterSeq(requestUrl.searchParams.get('afterSeq'));
+    const timeline = deps.runtime.buildSessionTimeline(normalizedSessionId, afterSeq);
     sendJson(res, 200, { timeline });
   } catch (error) {
     sendHttpError(res, error);
@@ -137,6 +145,20 @@ async function handleCallGraph(
     const normalizedSessionId = resolveAuthorizedSession(deps, sessionId);
     const callGraph = deps.runtime.buildSessionCallGraph(normalizedSessionId);
     sendJson(res, 200, { callGraph });
+  } catch (error) {
+    sendHttpError(res, error);
+  }
+}
+
+async function handleSyncStatus(
+  sessionId: string,
+  res: http.ServerResponse,
+  deps: EventQueryRoutesDependencies
+): Promise<void> {
+  try {
+    const normalizedSessionId = resolveAuthorizedSession(deps, sessionId);
+    const status = deps.runtime.buildSessionSyncStatus(normalizedSessionId);
+    sendJson(res, 200, status);
   } catch (error) {
     sendHttpError(res, error);
   }

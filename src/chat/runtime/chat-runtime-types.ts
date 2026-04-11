@@ -5,7 +5,7 @@ import { ChatTimelineRow } from '../application/chat-timeline-projection';
 import { CallGraphProjection } from '../application/call-graph-projection';
 import { SessionEventEnvelope } from '../domain/session-events';
 import { SessionSummarySnapshot } from '../application/session-summary-projection';
-import { SessionEventWriteDraft } from '../application/session-event-service';
+import { SessionEventWriteDraft, SessionSyncStatusSnapshot } from '../application/session-event-service';
 
 export type NormalizedUserChatSession = UserChatSession & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent' | 'discussionMode' | 'discussionState' | 'invocationTasks'>>;
 export type DetailedNormalizedUserChatSession = NormalizedUserChatSession & { enabledAgents: string[]; agentWorkdirs: Record<string, string> };
@@ -107,7 +107,8 @@ export interface ChatRuntime {
   appendAgentEvent(sessionId: string, draft: SessionEventWriteDraft): SessionEventEnvelope;
   appendSystemEvent(sessionId: string, draft: SessionEventWriteDraft): SessionEventEnvelope;
   listSessionEvents(sessionId: string, afterSeq?: number): SessionEventEnvelope[];
-  buildSessionTimeline(sessionId: string): ChatTimelineRow[];
+  buildSessionTimeline(sessionId: string, afterSeq?: number): ChatTimelineRow[];
+  buildSessionSyncStatus(sessionId: string): SessionSyncStatusSnapshot;
   buildSessionCallGraph(sessionId: string): CallGraphProjection;
   buildSessionSummary(sessionId: string): SessionSummarySnapshot;
   buildSessionResponse(session: UserChatSession): NormalizedUserChatSession;

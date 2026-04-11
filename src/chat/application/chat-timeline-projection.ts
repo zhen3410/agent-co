@@ -109,6 +109,16 @@ export function projectChatTimeline(events: SessionEventEnvelope[]): ChatTimelin
   return timeline;
 }
 
+export function filterTimelineRowsAfterSeq(
+  timeline: ChatTimelineRow[],
+  afterSeq?: number
+): ChatTimelineRow[] {
+  if (typeof afterSeq !== 'number') {
+    return timeline;
+  }
+  return timeline.filter(row => row.seq > afterSeq);
+}
+
 function mapEventToRow(event: SessionEventEnvelope): ChatTimelineRow | null {
   if (MESSAGE_EVENT_TYPES.has(event.eventType)) {
     return buildMessageRow(event);

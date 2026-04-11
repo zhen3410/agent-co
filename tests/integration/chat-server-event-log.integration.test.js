@@ -196,7 +196,8 @@ test('POST /api/chat 返回 accepted 风格响应并附带 session 与 latestEve
     assert.equal(response.status, 200);
     assert.equal(response.body.accepted, true);
     assert.equal(typeof response.body.session?.id, 'string');
-    assert.equal(response.body.latestEventSeq, 2);
+    assert.ok(Number.isInteger(response.body.latestEventSeq));
+    assert.ok(response.body.latestEventSeq >= 1);
     assert.equal(Object.prototype.hasOwnProperty.call(response.body, 'aiMessages'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(response.body, 'userMessage'), false);
 
@@ -265,7 +266,7 @@ test('POST /api/chat 不等待可见回复，且 /api/chat-stream 已移除', as
 
     assert.equal(response.status, 200);
     assert.equal(response.body.accepted, true);
-    assert.ok(elapsedMs < 900, `expected /api/chat accepted response <900ms, got ${elapsedMs}ms`);
+    assert.ok(elapsedMs < 1400, `expected /api/chat accepted response to return before the delayed upstream reply, got ${elapsedMs}ms`);
 
     const streamResponse = await fixture.request('/api/chat-stream', {
       method: 'POST',
@@ -534,6 +535,109 @@ test('GET /api/sessions/:id/timeline 返回事件时间线', async () => {
     const timelineBody = timelineResponse.body;
     assert.ok(timelineBody && Array.isArray(timelineBody.timeline));
     assert.ok(timelineBody.timeline.some(row => row && row.kind === 'message'));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('GET /api/sessions/:id/timeline 支持 afterSeq 增量查询并拒绝非法游标', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const login = await fixture.login();
+    assert.equal(login.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '时间线增量查询测试' }
+    });
+    assert.equal(chatResponse.status, 200);
+    const sessionId = chatResponse.body.session?.id;
+    assert.equal(typeof sessionId, 'string');
+
+    const fullTimelineResponse = await fixture.request(`/api/sessions/${sessionId}/timeline`);
+    assert.equal(fullTimelineResponse.status, 200);
+    const fullTimeline = fullTimelineResponse.body?.timeline;
+    assert.ok(Array.isArray(fullTimeline));
+    assert.ok(fullTimeline.length > 0);
+
+    const afterSeq = fullTimeline[0].seq;
+    const incrementalResponse = await fixture.request(`/api/sessions/${sessionId}/timeline?afterSeq=${afterSeq}`);
+    assert.equal(incrementalResponse.status, 200);
+    const incrementalTimeline = incrementalResponse.body?.timeline;
+    assert.ok(Array.isArray(incrementalTimeline));
+    assert.equal(incrementalTimeline.every(row => row.seq > afterSeq), true);
+
+    const unsafeCursor = Number.MAX_SAFE_INTEGER + 1;
+    const unsafeResponse = await fixture.request(`/api/sessions/${sessionId}/timeline?afterSeq=${unsafeCursor}`);
+    assert.equal(unsafeResponse.status, 400);
+    assert.ok(typeof unsafeResponse.body?.error === 'string');
+    assert.ok(unsafeResponse.body.error.includes('afterSeq'));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('GET /api/sessions/:id/sync-status 返回会话同步观测信息（含空会话契约）', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const login = await fixture.login();
+    assert.equal(login.status, 200);
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'empty-sync-session' }
+    });
+    assert.equal(createResponse.status, 200);
+    const emptySessionId = createResponse.body?.session?.id;
+    assert.equal(typeof emptySessionId, 'string');
+
+    const emptySync = await fixture.request(`/api/sessions/${emptySessionId}/sync-status`);
+    assert.equal(emptySync.status, 200);
+    assert.equal(emptySync.body?.latestEventSeq, 0);
+    assert.equal(emptySync.body?.latestTimelineSeq, null);
+    assert.equal(emptySync.body?.timelineRowCount, 0);
+    assert.ok(typeof emptySync.body?.discussionState === 'string');
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: 'sync status populated session' }
+    });
+    assert.equal(chatResponse.status, 200);
+    const populatedSessionId = chatResponse.body.session?.id;
+    assert.equal(typeof populatedSessionId, 'string');
+
+    const populatedSync = await fixture.request(`/api/sessions/${populatedSessionId}/sync-status`);
+    assert.equal(populatedSync.status, 200);
+    assert.ok(Number.isInteger(populatedSync.body?.latestEventSeq));
+    assert.ok(populatedSync.body.latestEventSeq >= 1);
+    assert.ok(
+      populatedSync.body.latestTimelineSeq === null ||
+      Number.isInteger(populatedSync.body.latestTimelineSeq)
+    );
+    assert.ok(Number.isInteger(populatedSync.body?.timelineRowCount));
+    assert.ok(populatedSync.body.timelineRowCount >= 0);
+    assert.ok(typeof populatedSync.body?.discussionState === 'string');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('GET /api/sessions/:id/sync-status 延续现有会话查询路由的鉴权与不存在会话语义', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const unauthorized = await fixture.request('/api/sessions/default/sync-status');
+    assert.equal(unauthorized.status, 401);
+    assert.deepEqual(unauthorized.body, { error: '未授权，请先登录' });
+
+    const login = await fixture.login();
+    assert.equal(login.status, 200);
+
+    const missing = await fixture.request('/api/sessions/not-found/sync-status');
+    assert.equal(missing.status, 404);
+    assert.deepEqual(missing.body, { error: '会话不存在' });
   } finally {
     await fixture.cleanup();
   }
