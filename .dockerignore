@@ -1,0 +1,13 @@
+.git
+.github
+.worktrees
+.claude
+.superpowers
+node_modules
+dist
+logs
+data
+.env
+.env.*
+!.env.example
+npm-debug.log*

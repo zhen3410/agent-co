@@ -2,6 +2,7 @@ import * as http from 'http';
 
 export interface AuthAdminRuntimeConfig {
   port: number;
+  host: string;
   adminToken: string;
   dataFile: string;
   defaultPassword: string;
@@ -79,7 +80,7 @@ function performSecurityChecks(runtime: AuthAdminRuntime): void {
 function logStartupBanner(runtime: AuthAdminRuntime): void {
   console.log('='.repeat(60));
   console.log('🔐 鉴权管理服务已启动');
-  console.log(`📍 地址: http://localhost:${runtime.port}`);
+  console.log(`📍 地址: http://${runtime.host}:${runtime.port}`);
   console.log(`📁 用户数据: ${runtime.dataFile}`);
   console.log(`📁 智能体数据: ${runtime.agentDataFile}`);
   console.log('');
@@ -111,7 +112,7 @@ export async function startAuthAdminServer(server: http.Server, runtime: AuthAdm
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(runtime.port, () => {
+    server.listen(runtime.port, runtime.host, () => {
       logStartupBanner(runtime);
       resolve();
     });

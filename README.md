@@ -136,6 +136,22 @@ npm run test:fast       # 快速测试（单元 + 关键集成）
 npm run deploy:one-click  # 一键部署（安装 Redis + systemd）
 ```
 
+### Docker Compose
+
+项目包含单镜像、多容器的 Docker Compose 方案：
+
+```bash
+docker compose up --build
+```
+
+启动后：
+
+- 聊天服务：`http://localhost:3002`
+- 鉴权管理服务：`http://localhost:3003`
+- Redis：`localhost:6379`
+
+Compose 会复用同一个应用镜像启动 `chat` 与 `auth`，并使用独立 `redis` 容器。容器内聊天服务通过 `AUTH_ADMIN_BASE_URL=http://auth:3003` 访问鉴权服务，并通过 `REDIS_URL=redis://redis:6379` 连接 Redis。
+
 ### 目录结构
 
 ```text

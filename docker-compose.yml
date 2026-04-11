@@ -1,0 +1,98 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: multi-agent-chat:local
+    restart: unless-stopped
+    command: ['node', 'dist/auth-admin-server.js']
+    environment:
+      NODE_ENV: production
+      AUTH_ADMIN_PORT: 3003
+      AUTH_ADMIN_HOST: 0.0.0.0
+      AUTH_ADMIN_TOKEN: ${AUTH_ADMIN_TOKEN:-dev-admin-token-change-me-please-change-123456}
+      AUTH_DATA_FILE: /app/data/users.json
+      AGENT_DATA_FILE: /app/data/agents.json
+      GROUP_DATA_FILE: /app/data/groups.json
+      MODEL_CONNECTION_DATA_FILE: /app/data/api-connections.json
+      AGENT_CO_DEFAULT_USER: ${AGENT_CO_DEFAULT_USER:-admin}
+      AGENT_CO_DEFAULT_PASSWORD: ${AGENT_CO_DEFAULT_PASSWORD:-admin123!}
+    volumes:
+      - app-data:/app/data
+      - app-logs:/app/logs
+    ports:
+      - '3003:3003'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3003/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  chat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: multi-agent-chat:local
+    restart: unless-stopped
+    command: ['node', 'dist/server.js']
+    depends_on:
+      auth:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      HOST: 0.0.0.0
+      AGENT_CO_AUTH_ENABLED: ${AGENT_CO_AUTH_ENABLED:-true}
+      AUTH_ADMIN_BASE_URL: http://auth:3003
+      AUTH_ADMIN_TOKEN: ${AUTH_ADMIN_TOKEN:-dev-admin-token-change-me-please-change-123456}
+      AUTH_DATA_FILE: /app/data/users.json
+      AGENT_DATA_FILE: /app/data/agents.json
+      GROUP_DATA_FILE: /app/data/groups.json
+      MODEL_CONNECTION_DATA_FILE: /app/data/api-connections.json
+      AGENT_CO_VERBOSE_LOG_DIR: /app/logs/ai-cli-verbose
+      AGENT_CO_REDIS_REQUIRED: ${AGENT_CO_REDIS_REQUIRED:-true}
+      AGENT_CO_DISABLE_REDIS: ${AGENT_CO_DISABLE_REDIS:-false}
+      REDIS_URL: redis://redis:6379
+      AGENT_CO_CALLBACK_TOKEN: ${AGENT_CO_CALLBACK_TOKEN:-agent-co-callback-token}
+    volumes:
+      - app-data:/app/data
+      - app-logs:/app/logs
+    ports:
+      - '3002:3002'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3002/api/auth-status').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  app-data:
+  app-logs:
+  redis-data:

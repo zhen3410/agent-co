@@ -85,6 +85,34 @@ test('chat env config defaults use agent-co identifiers', () => {
   assert.equal(config.callback.authToken, 'agent-co-callback-token');
 });
 
+test('chat env config prefers REDIS_URL when provided', () => {
+  ensureBuildArtifacts();
+  const envConfigModule = require(path.join(distBootstrapDir, 'chat-env-config.js'));
+  const config = envConfigModule.createChatEnvConfig({
+    cwd: repoRoot,
+    serverDirname: path.join(repoRoot, 'dist'),
+    env: {
+      REDIS_URL: 'redis://redis:6379'
+    }
+  });
+
+  assert.equal(config.redis.url, 'redis://redis:6379');
+});
+
+test('chat env config prefers HOST when provided', () => {
+  ensureBuildArtifacts();
+  const envConfigModule = require(path.join(distBootstrapDir, 'chat-env-config.js'));
+  const config = envConfigModule.createChatEnvConfig({
+    cwd: repoRoot,
+    serverDirname: path.join(repoRoot, 'dist'),
+    env: {
+      HOST: '0.0.0.0'
+    }
+  });
+
+  assert.equal(config.host, '0.0.0.0');
+});
+
 test('compiled startup security helper exposes pure analysis with stable warning/error behavior', () => {
   ensureBuildArtifacts();
   const securityModule = require(path.join(distBootstrapDir, 'chat-startup-security.js'));

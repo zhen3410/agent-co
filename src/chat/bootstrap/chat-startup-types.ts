@@ -9,6 +9,7 @@ export interface ChatServerSecurityConfig {
 
 export interface ChatStartupBannerConfig {
   port: number;
+  host: string;
   agentDataFile: string;
   listAgents(): AIAgent[];
   authEnabled: boolean;
