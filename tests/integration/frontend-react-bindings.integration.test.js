@@ -865,8 +865,23 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
   assert.ok(svgBody.includes('data-message-id'), 'svg helper should expose the message id attribute');
   assert.ok(svgBody.includes('data-graph-mode="${graphMode}"'), 'svg helper should carry the graph mode attribute');
   assert.ok(svgBody.includes('data-graph-node-role="'), 'svg nodes should expose the role hook for future styling');
-  const offsetMatches = svgBody.match(/NODE_CENTER_OFFSET/g) || [];
-  assert.ok(offsetMatches.length >= 2, 'svg helper should use NODE_CENTER_OFFSET for both edges and nodes');
+
+  const offsetMatch = html.match(/const NODE_CENTER_OFFSET = (\\d+);/);
+  const nodeOffset = offsetMatch ? Number(offsetMatch[1]) : 24;
+  const edgeBody = getFunctionBody(html, 'buildGraphEdgePaths');
+  const safeEdgeBody = edgeBody.replace('function buildGraphEdgePaths', 'function buildGraphEdgePathsImpl');
+  const buildGraphEdgePathsFn = eval(`const NODE_CENTER_OFFSET = ${nodeOffset}; ${safeEdgeBody}; buildGraphEdgePathsImpl;`);
+  const layoutNodes = [
+    { id: 'n1', x: 0, y: 0 },
+    { id: 'n2', x: 40, y: 0 }
+  ];
+  const edges = [
+    { id: 'e1', from: 'n1', to: 'n2' },
+    { id: 'e2', from: 'n1', to: 'n1', isCycleEdge: true }
+  ];
+  const paths = buildGraphEdgePathsFn(layoutNodes, edges);
+  assert.equal(paths[0].path.startsWith(`M${nodeOffset} ${nodeOffset} L${40 + nodeOffset} ${nodeOffset}`), true, 'edges should start/end at node centers');
+  assert.ok(paths[1].path.startsWith(`M${nodeOffset} ${nodeOffset}`), 'cycle edges should share node origin');
 });
 
 test('迷你图样式包含 loopback 线条', () => {

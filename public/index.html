@@ -2215,16 +2215,17 @@
         if (!from || !to) return null;
         const loopback = from.id === to.id;
         const highlightCycle = edge.isCycleEdge === true;
-      const startX = from.x + NODE_CENTER_OFFSET;
-      const startY = from.y + NODE_CENTER_OFFSET;
-      const endX = to.x + NODE_CENTER_OFFSET;
-      const endY = to.y + NODE_CENTER_OFFSET;
+        const startX = from.x + NODE_CENTER_OFFSET;
+        const startY = from.y + NODE_CENTER_OFFSET;
+        const endX = to.x + NODE_CENTER_OFFSET;
+        const endY = to.y + NODE_CENTER_OFFSET;
         let path;
         if (loopback) {
           path = `M${startX} ${startY} c 16 -12 40 -12 40 0`;
         } else if (highlightCycle) {
           const midX = (startX + endX) / 2;
-          const midY = Math.min(startY, endY) - 40;
+          const minY = Math.min(startY, endY);
+          const midY = Math.max(NODE_CENTER_OFFSET, minY - 40);
           path = `M${startX} ${startY} Q${midX} ${midY} ${endX} ${endY}`;
         } else {
           path = `M${startX} ${startY} L${endX} ${endY}`;
