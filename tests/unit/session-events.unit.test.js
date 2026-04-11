@@ -6,6 +6,8 @@ const {
   isVisibleTimelineEvent,
 } = require('../../dist/chat/domain/session-events.js');
 
+const { createSessionEventRepository } = require('../../dist/chat/infrastructure/session-event-repository.js');
+
 test('createSessionEvent normalizes required envelope fields', () => {
   const event = createSessionEvent({
     sessionId: 's_1',
@@ -76,4 +78,57 @@ test('isVisibleTimelineEvent filters visible message events', () => {
 
   assert.equal(isVisibleTimelineEvent(visibleEvent), true);
   assert.equal(isVisibleTimelineEvent(hiddenEvent), false);
+});
+
+test('session event repository allocates per-session sequences and can clear', () => {
+  const repository = createSessionEventRepository();
+
+  const first = repository.appendEvent('session-a', {
+    eventType: 'session_created',
+    actorType: 'system',
+    metadata: { source: 'test' },
+  });
+
+  assert.equal(first.sessionId, 'session-a');
+  assert.equal(first.seq, 1);
+  assert.equal(repository.getLatestSeq('session-a'), 1);
+
+  repository.appendEvent('session-a', {
+    eventType: 'session_metadata_updated',
+    actorType: 'system',
+  });
+
+  assert.equal(repository.getLatestSeq('session-a'), 2);
+
+  const secondSessionEvent = repository.appendEvent('session-b', {
+    eventType: 'session_created',
+    actorType: 'system',
+  });
+
+  assert.equal(secondSessionEvent.seq, 1);
+  assert.equal(repository.getLatestSeq('session-b'), 1);
+  assert.equal(repository.getLatestSeq('session-a'), 2);
+
+  repository.clearAllSessions();
+
+  assert.equal(repository.getLatestSeq('session-a'), 0);
+  assert.deepEqual(repository.listEvents('session-a'), []);
+});
+
+test('session event repository batch append preserves draft order and filters by sequence', () => {
+  const repository = createSessionEventRepository();
+
+  const batch = repository.appendEvents('session-c', [
+    { eventType: 'session_created', actorType: 'system' },
+    { eventType: 'user_message_created', actorType: 'user', payload: { text: 'hi' } },
+    { eventType: 'agent_message_created', actorType: 'agent', payload: { text: 'reply' } },
+  ]);
+
+  assert.deepEqual(batch.map(evt => evt.seq), [1, 2, 3]);
+
+  const eventsAll = repository.listEvents('session-c');
+  assert.deepEqual(eventsAll.map(evt => evt.seq), [1, 2, 3]);
+
+  const eventsAfterTwo = repository.listEvents('session-c', 2);
+  assert.deepEqual(eventsAfterTwo.map(evt => evt.seq), [3]);
 });
