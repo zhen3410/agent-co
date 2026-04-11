@@ -68,6 +68,8 @@ function resolveAuthorizedSession(deps: EventQueryRoutesDependencies, sessionId:
   return normalized;
 }
 
+const AFTER_SEQ_ERROR_MESSAGE = 'afterSeq 必须是非负整数';
+
 function parseAfterSeq(value: string | null): number | undefined {
   if (value === null) {
     return undefined;
@@ -75,14 +77,20 @@ function parseAfterSeq(value: string | null): number | undefined {
 
   const trimmed = value.trim();
   if (!trimmed) {
-    throw new AppError('afterSeq 必须是非负整数', {
+    throw new AppError(AFTER_SEQ_ERROR_MESSAGE, {
       code: APP_ERROR_CODES.VALIDATION_FAILED
     });
   }
 
   const parsed = Number(trimmed);
   if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
-    throw new AppError('afterSeq 必须是非负整数', {
+    throw new AppError(AFTER_SEQ_ERROR_MESSAGE, {
+      code: APP_ERROR_CODES.VALIDATION_FAILED
+    });
+  }
+
+  if (!Number.isSafeInteger(parsed)) {
+    throw new AppError(AFTER_SEQ_ERROR_MESSAGE, {
       code: APP_ERROR_CODES.VALIDATION_FAILED
     });
   }

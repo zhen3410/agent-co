@@ -489,6 +489,31 @@ test('GET /api/sessions/:id/events 返回事件并支持 afterSeq', async () => 
   }
 });
 
+test('GET /api/sessions/:id/events 拒绝 unsafe afterSeq 游标', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const login = await fixture.login();
+    assert.equal(login.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '安全游标测试' }
+    });
+    assert.equal(chatResponse.status, 200);
+    const sessionId = chatResponse.body.session?.id;
+    assert.equal(typeof sessionId, 'string');
+
+    const unsafeCursor = Number.MAX_SAFE_INTEGER + 1;
+    const unsafeResponse = await fixture.request(`/api/sessions/${sessionId}/events?afterSeq=${unsafeCursor}`);
+    assert.equal(unsafeResponse.status, 400);
+    assert.ok(typeof unsafeResponse.body?.error === 'string');
+    assert.ok(unsafeResponse.body.error.includes('afterSeq'));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('GET /api/sessions/:id/timeline 返回事件时间线', async () => {
   const fixture = await createChatServerFixture();
 
