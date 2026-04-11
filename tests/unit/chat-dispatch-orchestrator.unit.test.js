@@ -13,6 +13,10 @@ function requireBuiltModule(...segments) {
 
 function createRuntimeStub(overrides = {}) {
   const invocationTasks = new Map((overrides.invocationTasks || []).map(task => [task.id, { ...task }]));
+  const activeExecutions = new Map((overrides.activeExecutions || []).map(entry => [
+    `${entry.userKey}:${entry.sessionId}`,
+    { ...entry.execution }
+  ]));
   const createdInvocationTasks = [];
   const appendedLogs = [];
 
@@ -60,6 +64,9 @@ function createRuntimeStub(overrides = {}) {
         createdInvocationTasks.push({ ...task });
         invocationTasks.set(task.id, { ...task });
         return { ...task };
+      },
+      getActiveExecution(userKey, sessionId) {
+        return activeExecutions.get(`${userKey}:${sessionId}`) || null;
       }
     }
   };
@@ -225,9 +232,10 @@ test('caller_review 被调用者回复 invoke 回原 caller 时不会创建反�
     stream: false
   });
 
-  assert.equal(result.aiMessages.length, 1);
-  assert.equal(result.aiMessages[0].sender, 'Bob');
-  assert.equal(result.aiMessages[0].invokeAgents, undefined);
+  const visibleMessages = result.aiMessages.filter(item => item.messageSubtype !== 'invocation_review');
+  assert.equal(visibleMessages.length, 1);
+  assert.equal(visibleMessages[0].sender, 'Bob');
+  assert.equal(visibleMessages[0].invokeAgents, undefined);
   assert.equal(createdInvocationTasks.length, 0);
   assert.equal(result.pendingTasks.length, 0);
   const [task] = runtime.listInvocationTasks('user-1', 'default');
