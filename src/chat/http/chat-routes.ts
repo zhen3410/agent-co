@@ -11,7 +11,6 @@ import { loadGroupStore } from '../../group-store';
 import { AgentManager } from '../../agent-manager';
 import { RichBlock } from '../../types';
 import { ChatRuntime } from '../runtime/chat-runtime';
-import { runChatSse } from './chat-sse';
 import {
   buildChatRateLimitBody,
   normalizeBodyText,
@@ -82,41 +81,6 @@ export async function handleChatRoutes(
     try {
       const body = await parseBody<{ message: string; sender?: string }>(req);
       sendJson(res, 200, await deps.chatService.sendMessage({ userKey: deps.userKey }, body));
-    } catch (error) {
-      sendServiceError(res, error);
-    }
-    return true;
-  }
-
-  if (requestUrl.pathname === '/api/chat-stream' && method === 'POST') {
-    const clientIP = getClientIP(req);
-    const rateLimit = checkRateLimit(clientIP, deps.rateLimitMaxRequests);
-    if (!rateLimit.allowed) {
-      sendRateLimitError(res, rateLimit.resetAt);
-      return true;
-    }
-
-    try {
-      const body = await parseBody<{ message: string; sender?: string }>(req);
-      if (!body.message) {
-        throw new AppError('缺少 message 字段', {
-          code: APP_ERROR_CODES.VALIDATION_FAILED
-        });
-      }
-
-      const streamSession = deps.sessionService.resolveChatSession({ userKey: deps.userKey }).session;
-      await runChatSse(req, res, {
-        runtime: deps.runtime,
-        sessionId: streamSession.id,
-        execute: (callbacks) => deps.chatService.streamMessage({ userKey: deps.userKey }, body, {
-          shouldContinue: callbacks.shouldContinue,
-          signal: callbacks.signal,
-          onUserMessage: callbacks.onUserMessage,
-          onThinking: callbacks.onThinking,
-          onTextDelta: callbacks.onTextDelta,
-          onMessage: callbacks.onMessage
-        })
-      });
     } catch (error) {
       sendServiceError(res, error);
     }

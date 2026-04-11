@@ -3,7 +3,12 @@ import { AgentManager } from '../../agent-manager';
 import { getStatus as getBlockBufferStatus } from '../../block-buffer';
 import { AppErrorCode } from '../../shared/errors/app-error-codes';
 import { SessionService, SessionUserContext } from './session-service';
-import { ChatRuntime, PendingAgentDispatchTask as RuntimePendingAgentDispatchTask, UserChatSession } from '../runtime/chat-runtime';
+import {
+  ChatRuntime,
+  NormalizedUserChatSession,
+  PendingAgentDispatchTask as RuntimePendingAgentDispatchTask,
+  UserChatSession
+} from '../runtime/chat-runtime';
 
 export type AgentDispatchReviewMode = 'none' | 'caller_review';
 export interface StopExecutionRequest {
@@ -76,9 +81,20 @@ export interface ResumePendingChatResult {
   notice?: string;
 }
 
+export interface AcceptedChatCommandResponse {
+  success: true;
+  accepted: true;
+  session: NormalizedUserChatSession;
+  currentAgent: string | null;
+  latestEventSeq?: number;
+  commandEventSeq?: number;
+  userEventSeq?: number;
+  notice?: string;
+}
+
 export interface ChatService {
   listAgents(): AIAgentConfig[];
-  sendMessage(context: SessionUserContext, body: { message: string; sender?: string }): Promise<{ success: true; userMessage: Message; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
+  sendMessage(context: SessionUserContext, body: { message: string; sender?: string }): Promise<AcceptedChatCommandResponse>;
   streamMessage(context: SessionUserContext, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<StreamMessageResult>;
   resumePendingChat(context: SessionUserContext): Promise<ResumePendingChatResult>;
   summarizeChat(context: SessionUserContext, sessionId?: string): Promise<{ success: true; aiMessages: Message[]; currentAgent: string | null }>;

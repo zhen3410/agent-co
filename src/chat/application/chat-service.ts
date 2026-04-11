@@ -135,18 +135,52 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     };
 
     sessionService.appendMessage(session, userMessage);
+    const commandEvent = runtime.appendCommandEvent(session.id, {
+      eventType: 'message_thinking_started',
+      actorName: 'chat-service',
+      actorId: userKey,
+      payload: {
+        command: 'chat.send',
+        message: {
+          id: userMessage.id,
+          sender,
+          text: message
+        },
+        mentions,
+        agentsToRespond
+      }
+    });
+    const userEvent = runtime.appendUserEvent(session.id, {
+      eventType: 'user_message_created',
+      actorId: userKey,
+      actorName: sender,
+      payload: {
+        message: userMessage
+      },
+      correlationId: commandEvent.eventId,
+      causationId: commandEvent.eventId,
+      causedByEventId: commandEvent.eventId,
+      causedBySeq: commandEvent.seq
+    });
+
+    const acceptedResponse = {
+      success: true as const,
+      accepted: true as const,
+      session: runtime.buildSessionResponse(session),
+      currentAgent: sessionService.getCurrentAgent(userKey, session.id),
+      latestEventSeq: userEvent.seq,
+      commandEventSeq: commandEvent.seq,
+      userEventSeq: userEvent.seq
+    };
 
     if (agentsToRespond.length === 0) {
       return {
-        success: true as const,
-        userMessage,
-        aiMessages: [],
-        currentAgent: sessionService.getCurrentAgent(userKey, session.id),
+        ...acceptedResponse,
         notice: sessionService.buildNoEnabledAgentsNotice(session, ignoredMentions)
       };
     }
 
-    const { aiMessages } = await dispatchOrchestrator.executeAgentTurn({
+    void dispatchOrchestrator.executeAgentTurn({
       userKey,
       session,
       initialTasks: agentsToRespond.map(agentName => ({
@@ -155,17 +189,13 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
         includeHistory: mentions.length === 0
       })),
       stream: false
+    }).catch((error) => {
+      console.error('[Chat] 异步命令执行失败:', error);
     });
-    const emptyVisibleNotice = aiMessages.length === 0
-      ? `${agentsToRespond.join('、')} 未返回可见消息，请稍后重试或查看日志。`
-      : undefined;
 
     return {
-      success: true as const,
-      userMessage,
-      aiMessages,
-      currentAgent: sessionService.getCurrentAgent(userKey, session.id),
-      notice: emptyVisibleNotice || (ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined)
+      ...acceptedResponse,
+      notice: ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined
     };
   }
 
