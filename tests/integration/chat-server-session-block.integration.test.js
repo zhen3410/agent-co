@@ -15,6 +15,26 @@ function requireBuiltModule(...segments) {
   return require(modulePath);
 }
 
+async function waitForCondition(check, timeoutMs = 3000, intervalMs = 80) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await check();
+    if (value) {
+      return value;
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  throw new Error('condition not met before timeout');
+}
+
+function extractTimelineMessages(timelineBody) {
+  return Array.isArray(timelineBody && timelineBody.timeline)
+    ? timelineBody.timeline
+      .filter(item => item && item.kind === 'message' && item.message)
+      .map(item => item.message)
+    : [];
+}
+
 function parseSetCookiePair(setCookieHeader) {
   if (!setCookieHeader) return '';
   return String(setCookieHeader).split(/,(?=\s*[^;]+=)/)[0].split(';')[0];
@@ -393,7 +413,7 @@ test('已停用的智能体不能被 @，零启用会话会返回明确提示', 
       body: { message: 'hello when empty' }
     });
     assert.equal(zeroEnabled.status, 200);
-    assert.equal(zeroEnabled.body.aiMessages.length, 0);
+    assert.equal(zeroEnabled.body.accepted, true);
     assert.match(zeroEnabled.body.notice || '', /没有启用智能体|先启用/i);
 
     await fixture.request('/api/session-agents', {
@@ -406,7 +426,7 @@ test('已停用的智能体不能被 @，零启用会话会返回明确提示', 
       body: { message: '@Alice 你好' }
     });
     assert.equal(mentionDisabled.status, 200);
-    assert.equal(mentionDisabled.body.aiMessages.length, 0);
+    assert.equal(mentionDisabled.body.accepted, true);
     assert.equal(mentionDisabled.body.currentAgent, null);
     assert.match(mentionDisabled.body.notice || '', /Alice|停用|启用/i);
 
@@ -415,7 +435,15 @@ test('已停用的智能体不能被 @，零启用会话会返回明确提示', 
       body: { message: '@Bob 你好' }
     });
     assert.equal(mentionEnabled.status, 200);
-    assert.equal(mentionEnabled.body.aiMessages.some(msg => msg.sender === 'Bob'), true);
+    const mentionEnabledMessages = await waitForCondition(async () => {
+      const timelineResponse = await fixture.request(`/api/sessions/${mentionEnabled.body.session.id}/timeline`);
+      if (timelineResponse.status !== 200) {
+        return null;
+      }
+      const messages = extractTimelineMessages(timelineResponse.body);
+      return messages.some(msg => msg.sender === 'Bob') ? messages : null;
+    });
+    assert.equal(mentionEnabledMessages.some(msg => msg.sender === 'Bob'), true);
     assert.equal(mentionEnabled.body.currentAgent, 'Bob');
   } finally {
     await fixture.cleanup();
@@ -453,7 +481,7 @@ test('关闭当前对话智能体后，从下一条消息开始失效', async ()
       body: { message: '继续' }
     });
     assert.equal(followup.status, 200);
-    assert.equal(followup.body.aiMessages.length, 0);
+    assert.equal(followup.body.accepted, true);
     assert.equal(followup.body.currentAgent, null);
     assert.match(followup.body.notice || '', /没有启用智能体|先启用/i);
   } finally {

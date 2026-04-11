@@ -14,6 +14,26 @@ async function enableAgents(fixture, agentNames) {
   }
 }
 
+async function waitForCondition(check, timeoutMs = 3000, intervalMs = 80) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await check();
+    if (value) {
+      return value;
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  throw new Error('condition not met before timeout');
+}
+
+function extractTimelineMessages(timelineBody) {
+  return Array.isArray(timelineBody && timelineBody.timeline)
+    ? timelineBody.timeline
+      .filter(item => item && item.kind === 'message' && item.message)
+      .map(item => item.message)
+    : [];
+}
+
 test('callback 接口未鉴权返回 401', async () => {
   const fixture = await createChatServerFixture();
   try {
@@ -88,7 +108,15 @@ test('callback post-message 的消息可被对应智能体消费并出现在聊�
     });
 
     assert.equal(chatResponse.status, 200);
-    const texts = chatResponse.body.aiMessages.map(item => item.text);
+    const texts = await waitForCondition(async () => {
+      const timelineResponse = await fixture.request(`/api/sessions/${sessionId}/timeline`);
+      if (timelineResponse.status !== 200) {
+        return null;
+      }
+      const timelineMessages = extractTimelineMessages(timelineResponse.body);
+      const nextTexts = timelineMessages.map(item => item.text);
+      return nextTexts.includes('我完成开发了，请 @Reviewer 做 Code Review。') ? nextTexts : null;
+    });
     assert.ok(texts.includes('我完成开发了，请 @Reviewer 做 Code Review。'));
   } finally {
     await fixture.cleanup();
