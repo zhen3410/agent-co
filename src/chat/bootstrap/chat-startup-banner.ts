@@ -4,7 +4,7 @@ export function logChatStartupBanner(config: ChatStartupBannerConfig): void {
   console.log('='.repeat(60));
   console.log('🚀 多 AI 智能体聊天室已启动');
   console.log('='.repeat(60));
-  console.log(`📍 地址: http://localhost:${config.port}`);
+  console.log(`📍 地址: http://${config.host}:${config.port}`);
   console.log('');
   console.log(`📁 智能体配置: ${config.agentDataFile}`);
   console.log('可用的 AI 智能体:');

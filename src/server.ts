@@ -43,6 +43,7 @@ void startChatServer({
   server,
   hydrate: () => runtimeDeps.runtime.hydrate(),
   port: config.port,
+  host: config.host,
   agentDataFile: config.dataFiles.agentDataFile,
   listAgents: () => runtimeDeps.agentManager.getAgents(),
   authEnabled: config.auth.enabled,

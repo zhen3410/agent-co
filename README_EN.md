@@ -116,6 +116,22 @@ npm run test:fast       # Fast run (unit + key integration)
 npm run deploy:one-click  # One-click deploy (Redis + systemd)
 ```
 
+### Docker Compose
+
+The project includes a single-image, multi-container Docker Compose setup:
+
+```bash
+docker compose up --build
+```
+
+After startup:
+
+- Chat service: `http://localhost:3002`
+- Auth/admin service: `http://localhost:3003`
+- Redis: `localhost:6379`
+
+Compose reuses the same app image for both `chat` and `auth`, and runs Redis as a separate container. Inside the Compose network, chat reaches auth via `AUTH_ADMIN_BASE_URL=http://auth:3003` and Redis via `REDIS_URL=redis://redis:6379`.
+
 ### Project Structure
 
 ```text

@@ -10,7 +10,7 @@ export async function startChatServer(config: ChatServerStartupConfig): Promise<
 
   await new Promise<void>((resolve, reject) => {
     config.server.once('error', reject);
-    config.server.listen(config.port, () => {
+    config.server.listen(config.port, config.host, () => {
       logChatStartupBanner(config);
       resolve();
     });
