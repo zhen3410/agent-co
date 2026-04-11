@@ -502,7 +502,7 @@
     // ============================================
     // 状态管理
     // ============================================
-    let history = [];
+    let timelineRows = [];
     let agents = [];
     let isLoading = false;
     let isStopRequestInFlight = false;
@@ -518,7 +518,13 @@
     let agentChainMaxHops = '';
     let agentChainMaxCallsPerAgent = null;
     const chatWorkdirState = { root: '', level2: '', level3: '', custom: '' };
-    const streamingAgentTexts = new Map();
+    let lastSeenEventSeq = 0;
+    let chatSocket = null;
+    let socketSubscribedSessionId = null;
+    let socketReconnectTimer = null;
+    let socketReconnectAttempts = 0;
+    let timelineRefreshTimer = null;
+    let socketExplicitlyClosed = false;
     let groups = [];
     let expandedGroups = new Set();
     let activeGroup = null;
@@ -706,7 +712,8 @@
       await fetch('/api/logout', { method: 'POST', credentials: 'include' });
       await checkAuthStatus();
       if (authEnabled && !isAuthenticated) {
-        history = [];
+        timelineRows = [];
+        lastSeenEventSeq = 0;
         chatSessions = [];
         activeSessionId = null;
         activeSession = null;
@@ -717,6 +724,7 @@
         sessionSearchQuery = '';
         if (sessionSearchInputEl) sessionSearchInputEl.value = '';
         enabledAgents = new Set();
+        closeSessionEventSocket();
         currentAgent = null;
         currentAgentWillExpire = false;
         renderSessionList();
@@ -850,15 +858,12 @@
 
     function applySessionResponseData(data, options = {}) {
       const {
-        replaceMessages = false,
         replaceCurrentAgent = false,
         replaceEnabledAgents = false,
-        replaceAgentWorkdirs = false
+        replaceAgentWorkdirs = false,
+        refreshTimeline = false
       } = options;
 
-      if (replaceMessages) {
-        history = data.messages || (data.session && data.session.history) || [];
-      }
       if (replaceCurrentAgent) {
         currentAgent = Object.prototype.hasOwnProperty.call(data, 'currentAgent')
           ? data.currentAgent
@@ -880,6 +885,18 @@
       renderAgentsList();
       updateCurrentAgentUI();
       renderMessages();
+
+      if (!activeSessionId) {
+        timelineRows = [];
+        lastSeenEventSeq = 0;
+        closeSessionEventSocket();
+        renderMessages();
+        return;
+      }
+
+      if (refreshTimeline) {
+        void refreshActiveSessionTimeline();
+      }
     }
 
     async function saveSessionSettings(patch, successMessage) {
@@ -1073,10 +1090,10 @@
         }
         const data = await response.json();
         applySessionResponseData(data, {
-          replaceMessages: true,
           replaceCurrentAgent: true,
           replaceEnabledAgents: true,
-          replaceAgentWorkdirs: true
+          replaceAgentWorkdirs: true,
+          refreshTimeline: true
         });
         closeMobileControlHub();
       } catch (error) {
@@ -1100,10 +1117,10 @@
       }
       const data = await response.json();
       applySessionResponseData(data, {
-        replaceMessages: true,
         replaceCurrentAgent: true,
         replaceEnabledAgents: true,
-        replaceAgentWorkdirs: true
+        replaceAgentWorkdirs: true,
+        refreshTimeline: true
       });
     }
 
@@ -1149,7 +1166,8 @@
         return;
       }
 
-      history = data.messages || [];
+      timelineRows = [];
+      lastSeenEventSeq = 0;
       currentAgent = data.currentAgent || null;
       currentAgentWillExpire = false;
       enabledAgents = new Set(data.enabledAgents || []);
@@ -1161,6 +1179,7 @@
       renderAgentsList();
       updateCurrentAgentUI();
       renderMessages();
+      void refreshActiveSessionTimeline();
       closeMobileControlHub();
     }
 
@@ -2158,23 +2177,309 @@
       }
     }
 
+    function deriveLastSeenEventSeq(rows) {
+      return rows.reduce((maxSeq, row) => {
+        if (row && Number.isInteger(row.seq)) {
+          return Math.max(maxSeq, row.seq);
+        }
+        return maxSeq;
+      }, 0);
+    }
+
+    function buildSessionEventsSocketUrl() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${protocol}//${window.location.host}/api/ws/session-events`;
+    }
+
+    function clearSocketReconnectTimer() {
+      if (!socketReconnectTimer) {
+        return;
+      }
+      clearTimeout(socketReconnectTimer);
+      socketReconnectTimer = null;
+    }
+
+    function clearTimelineRefreshTimer() {
+      if (!timelineRefreshTimer) {
+        return;
+      }
+      clearTimeout(timelineRefreshTimer);
+      timelineRefreshTimer = null;
+    }
+
+    function closeSessionEventSocket({ shouldReconnect = false } = {}) {
+      clearSocketReconnectTimer();
+      if (!shouldReconnect) {
+        socketExplicitlyClosed = true;
+      }
+      if (!chatSocket) {
+        socketSubscribedSessionId = null;
+        return;
+      }
+
+      const socket = chatSocket;
+      chatSocket = null;
+      socketSubscribedSessionId = null;
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onerror = null;
+      socket.onclose = null;
+      try {
+        socket.close();
+      } catch (error) {
+        console.warn('关闭 session events socket 失败:', error);
+      }
+    }
+
+    function scheduleSocketReconnect() {
+      if (socketExplicitlyClosed || !activeSessionId || (authEnabled && !isAuthenticated)) {
+        return;
+      }
+
+      clearSocketReconnectTimer();
+      const delay = Math.min(5000, 500 * Math.max(1, 2 ** socketReconnectAttempts));
+      socketReconnectAttempts += 1;
+      socketReconnectTimer = setTimeout(() => {
+        void ensureSessionEventSocket();
+      }, delay);
+    }
+
+    function handleSessionEventSocketMessage(event) {
+      let message = null;
+      try {
+        message = JSON.parse(event.data);
+      } catch (error) {
+        console.warn('解析 session_event websocket 消息失败:', error);
+        return;
+      }
+
+      if (!message || typeof message !== 'object') {
+        return;
+      }
+
+      if (message.type === 'session_event') {
+        const eventSeq = Number(message.event && message.event.seq);
+        if (Number.isSafeInteger(eventSeq) && eventSeq >= 0) {
+          lastSeenEventSeq = Math.max(lastSeenEventSeq, eventSeq);
+        }
+        if (message.sessionId === activeSessionId) {
+          scheduleTimelineRefresh();
+        }
+        return;
+      }
+
+      if (message.type === 'subscribed') {
+        socketSubscribedSessionId = typeof message.sessionId === 'string' ? message.sessionId : socketSubscribedSessionId;
+        const latestSeq = Number(message.latestSeq);
+        if (Number.isSafeInteger(latestSeq) && latestSeq >= 0) {
+          lastSeenEventSeq = Math.max(lastSeenEventSeq, latestSeq);
+        }
+        statusEl.textContent = isLoading ? '等待事件同步...' : '已连接';
+        return;
+      }
+
+      if (message.type === 'heartbeat' || message.type === 'pong' || message.type === 'unsubscribed') {
+        return;
+      }
+
+      if (message.type === 'error') {
+        statusEl.textContent = '事件连接异常，正在重试...';
+      }
+    }
+
+    function subscribeToSessionEvents() {
+      if (!chatSocket || chatSocket.readyState !== WebSocket.OPEN || !activeSessionId) {
+        return;
+      }
+
+      chatSocket.send(JSON.stringify({
+        type: 'subscribe',
+        sessionId: activeSessionId,
+        afterSeq: lastSeenEventSeq
+      }));
+    }
+
+    async function ensureSessionEventSocket() {
+      if (!activeSessionId || (authEnabled && !isAuthenticated)) {
+        closeSessionEventSocket();
+        return;
+      }
+
+      socketExplicitlyClosed = false;
+      if (chatSocket && chatSocket.readyState === WebSocket.OPEN) {
+        if (socketSubscribedSessionId !== activeSessionId) {
+          subscribeToSessionEvents();
+        }
+        return;
+      }
+
+      if (chatSocket && chatSocket.readyState === WebSocket.CONNECTING) {
+        return;
+      }
+
+      await new Promise((resolve, reject) => {
+        const socket = new WebSocket(buildSessionEventsSocketUrl());
+        let settled = false;
+
+        const settleResolve = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+        const settleReject = (error) => {
+          if (settled) return;
+          settled = true;
+          reject(error);
+        };
+
+        socket.onopen = () => {
+          clearSocketReconnectTimer();
+          socketReconnectAttempts = 0;
+          chatSocket = socket;
+          settleResolve();
+          subscribeToSessionEvents();
+        };
+        socket.onmessage = handleSessionEventSocketMessage;
+        socket.onerror = () => {
+          if (chatSocket === socket) {
+            chatSocket = null;
+          }
+          settleReject(new Error('websocket open failed'));
+        };
+        socket.onclose = () => {
+          if (chatSocket === socket) {
+            chatSocket = null;
+          }
+          socketSubscribedSessionId = null;
+          if (!socketExplicitlyClosed) {
+            statusEl.textContent = '事件连接断开，正在重试...';
+            scheduleSocketReconnect();
+          }
+        };
+      }).catch((error) => {
+        console.error('连接 session events websocket 失败:', error);
+        statusEl.textContent = '事件连接失败，正在重试...';
+        scheduleSocketReconnect();
+      });
+    }
+
+    function scheduleTimelineRefresh() {
+      clearTimelineRefreshTimer();
+      timelineRefreshTimer = setTimeout(() => {
+        timelineRefreshTimer = null;
+        void refreshActiveSessionTimeline({ ensureSocket: false });
+      }, 80);
+    }
+
+    async function refreshActiveSessionTimeline(options = {}) {
+      const { ensureSocket = true } = options;
+      if (!activeSessionId) {
+        timelineRows = [];
+        lastSeenEventSeq = 0;
+        renderMessages();
+        return false;
+      }
+
+      try {
+        const response = await fetch(`/api/sessions/${encodeURIComponent(activeSessionId)}/timeline`, {
+          credentials: 'include',
+          cache: 'no-store'
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || '加载时间线失败');
+        }
+
+        timelineRows = Array.isArray(data.timeline) ? data.timeline : [];
+        lastSeenEventSeq = deriveLastSeenEventSeq(timelineRows);
+        renderMessages();
+
+        if (ensureSocket) {
+          await ensureSessionEventSocket();
+        }
+        return true;
+      } catch (error) {
+        console.error('加载时间线失败:', error);
+        statusEl.textContent = error.message || '加载时间线失败';
+        return false;
+      }
+    }
+
+    function renderTimelineActivityRow(row) {
+      const actorInfo = getAgentInfo(row.actorName);
+      const avatar = actorInfo ? actorInfo.avatar : '🛰️';
+      const color = actorInfo ? actorInfo.color : 'var(--accent)';
+      let title = '系统事件';
+      let description = '';
+      let meta = '';
+
+      if (row.kind === 'thinking') {
+        title = row.actorName ? `${row.actorName} 思考状态` : '思考状态';
+        description = row.status === 'started'
+          ? '开始思考'
+          : row.status === 'finished'
+            ? '思考完成'
+            : '思考已取消';
+      } else if (row.kind === 'dispatch') {
+        title = row.callerAgentName && row.calleeAgentName
+          ? `${row.callerAgentName} → ${row.calleeAgentName}`
+          : '任务派发';
+        description = row.status === 'created' ? '已创建派发任务' : '派发任务已完成';
+        meta = row.dispatchKind ? `<div class="message__blocks"><span class="agent-tag">${escapeHtml(row.dispatchKind)}</span></div>` : '';
+      } else if (row.kind === 'review') {
+        title = row.callerAgentName && row.calleeAgentName
+          ? `${row.callerAgentName} ↔ ${row.calleeAgentName}`
+          : '评审事件';
+        description = row.reviewDisplayText || (row.status === 'requested' ? '已请求评审' : '已提交评审');
+        meta = row.reviewAction ? `<div class="message__blocks"><span class="agent-tag">${escapeHtml(row.reviewAction)}</span></div>` : '';
+      }
+
+      const renderedMarkdown = window.ChatMarkdown.renderMarkdownHtml(description || title, {
+        role: 'assistant',
+        enableMentions: true
+      });
+
+      return `
+        <div class="message message--assistant message--timeline-event" data-timeline-kind="${escapeHtml(row.kind)}" style="--sender-color: ${color}">
+          <div class="message__avatar">${avatar}</div>
+          <div class="message__content">
+            <div class="message__sender" style="--sender-color: ${color}">${escapeHtml(title)}</div>
+            <div class="message__text message__text--markdown">${renderedMarkdown}</div>
+            ${meta}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderTimelineRow(row) {
+      if (!row || typeof row !== 'object') {
+        return '';
+      }
+
+      if (row.kind === 'message' && row.message) {
+        return renderMessage(row.message);
+      }
+
+      return renderTimelineActivityRow(row);
+    }
+
     function renderMessages() {
       let markup = renderMessageIntro();
 
-      if (history.length === 0 && enabledAgents.size === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {
+      if (timelineRows.length === 0 && enabledAgents.size === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {
         messagesEl.innerHTML = markup + renderEmptyState();
         syncMessageChromeState();
         return;
       }
 
-      history.forEach(msg => {
-        markup += renderMessage(msg);
+      timelineRows.forEach(row => {
+        markup += renderTimelineRow(row);
       });
       if (discussionMode === 'peer' && discussionState === 'paused') {
         markup += renderDiscussionPauseCard();
       }
       messagesEl.innerHTML = markup;
-      if (history.length === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {
+      if (timelineRows.length === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {
         messagesEl.innerHTML += renderWelcomeState();
       }
       syncMessageChromeState();
@@ -2192,51 +2497,6 @@
 
     function addMessage(msg) {
       appendMessageMarkup(renderMessage(msg));
-    }
-
-    function findStreamingAgentMessage(agentName) {
-      return Array.from(messagesEl.querySelectorAll('.message--streaming'))
-        .find(el => el.getAttribute('data-agent') === agentName) || null;
-    }
-
-    function appendStreamingAgentDelta(agentName, delta) {
-      if (!delta) return;
-
-      let streamingEl = findStreamingAgentMessage(agentName);
-      if (!streamingEl) {
-        hideThinkingIndicator(agentName);
-        appendMessageMarkup(renderMessage({
-          role: 'assistant',
-          sender: agentName,
-          text: ''
-        }, { streamingAgentName: agentName }));
-        streamingEl = findStreamingAgentMessage(agentName);
-      }
-
-      const nextText = `${streamingAgentTexts.get(agentName) || ''}${delta}`;
-      streamingAgentTexts.set(agentName, nextText);
-      const textEl = streamingEl ? streamingEl.querySelector('.message__text--markdown') : null;
-      if (textEl) {
-        textEl.innerHTML = window.ChatMarkdown.renderMarkdownHtml(nextText, {
-          role: 'assistant',
-          enableMentions: true
-        });
-      }
-      scrollToBottom();
-    }
-
-    function finalizeStreamingAgentMessage(message) {
-      const streamingEl = findStreamingAgentMessage(message.sender);
-      streamingAgentTexts.delete(message.sender);
-      if (!streamingEl) {
-        addMessage(message);
-        return;
-      }
-
-      streamingEl.outerHTML = renderMessage(message);
-      cacheMessageChromeElements();
-      updateCurrentAgentUI();
-      scrollToBottom();
     }
 
     function setLoading(loading, agentName = null) {
@@ -2304,16 +2564,7 @@
 
     function showSystemNotice(notice) {
       if (!notice) return;
-      addMessage({
-        role: 'assistant',
-        sender: '系统',
-        text: notice
-      });
-      history.push({
-        role: 'assistant',
-        sender: '系统',
-        text: notice
-      });
+      statusEl.textContent = notice;
     }
 
     function clearResumeChainNotice() {
@@ -2330,7 +2581,7 @@
           <div class="message__avatar">🧩</div>
           <div class="message__content">
             <div class="message__sender">系统</div>
-            <div class="message__text message__text--markdown">本次对话已收到部分回复，连接已中断。</div>
+            <div class="message__text message__text--markdown">本次对话可继续同步最新执行进展。</div>
             <div class="message__blocks">
               <button class="btn-switch" onclick="window.resumePendingChain && window.resumePendingChain()">继续剩余执行</button>
             </div>
@@ -2362,17 +2613,12 @@
         }
 
         const data = await response.json();
-        if (Array.isArray(data.aiMessages)) {
-          for (const aiMsg of data.aiMessages) {
-            history.push(aiMsg);
-            addMessage(aiMsg);
-          }
-        }
         currentAgent = data.currentAgent || null;
         currentAgentWillExpire = false;
         updateCurrentAgentUI();
         showSystemNotice(data.notice);
-        statusEl.textContent = '已连接';
+        await refreshActiveSessionTimeline();
+        statusEl.textContent = '已同步最新进展';
       } catch (error) {
         console.error('继续剩余执行失败:', error);
         statusEl.textContent = '连接失败';
@@ -2405,54 +2651,6 @@
     // API 调用
     // ============================================
 
-    async function recoverViaDirectChat(text) {
-      try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ message: text })
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (Array.isArray(data.aiMessages)) {
-          for (const aiMsg of data.aiMessages) {
-            history.push(aiMsg);
-            addMessage(aiMsg);
-          }
-        }
-        currentAgent = data.currentAgent || null;
-        currentAgentWillExpire = false;
-        updateCurrentAgentUI();
-        showSystemNotice(data.notice);
-        statusEl.textContent = '已连接（已自动降级到普通模式）';
-        return true;
-      } catch (fallbackError) {
-        console.error('降级到 /api/chat 失败:', fallbackError);
-        return false;
-      }
-    }
-
-    function normalizeStreamErrorMessage(error) {
-      const raw = String(error || '');
-      const normalized = raw.toLowerCase();
-      if (
-        normalized.includes('deactivated_workspace') ||
-        normalized.includes('payment required') ||
-        normalized.includes('auth error') ||
-        normalized.includes('unauthorized') ||
-        normalized.includes('forbidden') ||
-        normalized.includes('402')
-      ) {
-        return '账号或工作区异常：请检查 Codex 登录状态、套餐/额度或 workspace 是否已恢复';
-      }
-      return raw || '连接失败';
-    }
-
     async function sendMessage(event) {
       event.preventDefault();
 
@@ -2476,25 +2674,14 @@
       }
       clearResumeChainNotice();
 
-      const userMsg = { role: 'user', sender: '用户', text: text };
-      addMessage(userMsg);
-      history.push(userMsg);
-
       isLoading = true;
       sendBtnEl.disabled = true;
       sendBtnEl.textContent = '...';
       statusEl.textContent = '发送中...';
       syncStopActionButtons();
 
-      const thinkingAgents = new Set();
-      let streamReceivedAgentMessage = false;
-      let streamReceivedAgentDelta = false;
-      let streamReceivedError = false;
-      let streamStoppedByUser = false;
-      let streamResumeAvailable = false;
-
       try {
-        const response = await fetch('/api/chat-stream', {
+        const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
@@ -2505,159 +2692,37 @@
           throw new Error(`HTTP ${response.status}`);
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          let eventType = '';
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              eventType = line.substring(7).trim();
-            } else if (line.startsWith('data: ')) {
-              const dataStr = line.substring(6);
-              try {
-                const data = JSON.parse(dataStr);
-
-                if (eventType === 'user_message') {
-                  statusEl.textContent = '处理中...';
-                } else if (eventType === 'agent_thinking') {
-                  const agentName = data.agent;
-                  thinkingAgents.add(agentName);
-                  statusEl.textContent = `${agentName} 思考中...`;
-                  showThinkingIndicator(agentName);
-                } else if (eventType === 'agent_delta') {
-                  streamReceivedAgentDelta = true;
-                  appendStreamingAgentDelta(data.agent, data.delta || '');
-                  statusEl.textContent = `${data.agent} 回复中...`;
-                } else if (eventType === 'agent_message') {
-                  streamReceivedAgentMessage = true;
-                  thinkingAgents.delete(data.sender);
-                  hideThinkingIndicator(data.sender);
-                  history.push(data);
-                  finalizeStreamingAgentMessage(data);
-                  statusEl.textContent = thinkingAgents.size > 0
-                    ? `${Array.from(thinkingAgents).join(', ')} 思考中...`
-                    : '已连接';
-                } else if (eventType === 'done') {
-                  currentAgent = data.currentAgent || null;
-                  currentAgentWillExpire = false;
-                  updateCurrentAgentUI();
-                } else if (eventType === 'notice') {
-                  showSystemNotice(data.notice);
-                } else if (eventType === 'execution_stopped') {
-                  streamStoppedByUser = true;
-                  streamResumeAvailable = data.resumeAvailable === true;
-                  thinkingAgents.clear();
-                  document.querySelectorAll('.message--thinking').forEach(el => el.remove());
-                  currentAgent = data.currentAgent || null;
-                  currentAgentWillExpire = false;
-                  updateCurrentAgentUI();
-                  statusEl.textContent = streamResumeAvailable ? '执行已停止，可继续剩余执行' : '执行已停止';
-                  if (streamResumeAvailable) {
-                    showResumeChainNotice();
-                  } else {
-                    clearResumeChainNotice();
-                  }
-                } else if (eventType === 'error') {
-                  streamReceivedError = true;
-                  statusEl.textContent = '连接失败';
-                  const message = normalizeStreamErrorMessage(data.error);
-                  addMessage({
-                    role: 'assistant',
-                    sender: '系统',
-                    text: `❌ 错误: ${message}`
-                  });
-                }
-              } catch (e) {
-                console.error('解析 SSE 数据失败:', e);
-              }
-              eventType = '';
-            }
-          }
+        const data = await response.json().catch(() => ({}));
+        if (data.session && data.session.id) {
+          activeSessionId = data.session.id;
+          syncSessionSettingsState(data.session);
         }
-
-        if (!streamReceivedAgentMessage && !streamReceivedError) {
-          if (!streamStoppedByUser && !streamReceivedAgentDelta) {
-            statusEl.textContent = '连接失败';
-            addMessage({
-              role: 'assistant',
-              sender: '系统',
-              text: '❌ 智能体未返回可见消息，请稍后重试或查看日志'
-            });
-          }
+        currentAgent = data.currentAgent || null;
+        currentAgentWillExpire = false;
+        updateCurrentAgentUI();
+        showSystemNotice(data.notice);
+        statusEl.textContent = '命令已接受，等待事件同步...';
+        const historyLoaded = await loadHistory();
+        if (!historyLoaded) {
+          throw new Error('刷新会话状态失败');
         }
-
+        await refreshActiveSessionTimeline();
+        await ensureSessionEventSocket();
       } catch (error) {
         console.error('发送失败:', error);
-        if (!streamStoppedByUser) {
-          if (!streamReceivedAgentMessage) {
-            if (!streamReceivedAgentDelta) {
-              statusEl.textContent = '流式连接失败，尝试降级...';
-              const recovered = await recoverViaDirectChat(text);
-              if (!recovered) {
-                statusEl.textContent = '连接失败';
-                addMessage({
-                  role: 'assistant',
-                  sender: '系统',
-                  text: `❌ 发送失败: ${error.message}`
-                });
-              }
-            } else {
-              statusEl.textContent = '连接中断';
-              showResumeChainNotice();
-            }
-          } else {
-            statusEl.textContent = '连接中断';
-            showResumeChainNotice();
-          }
-        } else if (streamResumeAvailable) {
-          showResumeChainNotice();
-        }
+        statusEl.textContent = '发送失败';
+        addMessage({
+          role: 'assistant',
+          sender: '系统',
+          text: `❌ 发送失败: ${error.message}`
+        });
       } finally {
         isLoading = false;
         isStopRequestInFlight = false;
         sendBtnEl.disabled = false;
         sendBtnEl.textContent = '发送';
         syncStopActionButtons();
-        streamingAgentTexts.clear();
-        document.querySelectorAll('.message--streaming').forEach(el => el.classList.remove('message--streaming'));
-        document.querySelectorAll('.message--thinking').forEach(el => el.remove());
       }
-    }
-
-    function showThinkingIndicator(agentName) {
-      const agent = agents.find(a => a.name === agentName);
-      const avatar = agent ? agent.avatar : '🤖';
-      const color = agent ? agent.color : 'var(--accent)';
-
-      const thinkingHtml = `
-        <div class="message message--assistant message--thinking" data-agent="${agentName}" style="--sender-color: ${color}">
-          <div class="message__avatar">${avatar}</div>
-          <div class="message__content">
-            <div class="message__sender" style="--sender-color: ${color}">${agentName}</div>
-            <div class="message__text">
-              <span class="loading-dots">
-                <span></span><span></span><span></span>
-              </span>
-            </div>
-          </div>
-        </div>
-      `;
-      messagesEl.insertAdjacentHTML('beforeend', thinkingHtml);
-      scrollToBottom();
-    }
-
-    function hideThinkingIndicator(agentName) {
-      const thinkingEl = messagesEl.querySelector(`.message--thinking[data-agent="${agentName}"]`);
-      if (thinkingEl) thinkingEl.remove();
     }
 
     async function loadHistory() {
@@ -2665,7 +2730,6 @@
         const response = await fetch('/api/history', { credentials: 'include', cache: 'no-store' });
         if (response.ok) {
           const data = await response.json();
-          history = data.messages || [];
           if (data.agents) {
             agents = data.agents;
           }
@@ -2680,6 +2744,7 @@
           syncSessionSettingsState(data.session || null);
           renderSessionList();
           renderMessages();
+          await refreshActiveSessionTimeline();
           return true;
         }
       } catch (error) {
@@ -2710,7 +2775,8 @@
       try {
         const response = await fetch('/api/clear', { method: 'POST', credentials: 'include' });
         const data = await response.json();
-        history = [];
+        timelineRows = [];
+        lastSeenEventSeq = 0;
         currentAgent = data.currentAgent;
         currentAgentWillExpire = false;
         updateCurrentAgentUI();
