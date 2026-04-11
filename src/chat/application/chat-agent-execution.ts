@@ -112,16 +112,21 @@ function buildFallbackMessage(agentName: string, fallbackText: string): Message 
 }
 
 function applyTaskMetadataToVisibleMessages(task: RunAgentTaskParams['task'], visibleMessages: Message[]): Message[] {
-  if (!task.taskId || !task.callerAgentName) {
-    return visibleMessages;
-  }
-
   const calleeAgentName = task.calleeAgentName || task.agentName;
   return visibleMessages.map(message => ({
     ...message,
-    taskId: task.taskId,
-    callerAgentName: task.callerAgentName,
-    calleeAgentName
+    taskId: task.taskId || message.taskId,
+    callerAgentName: task.callerAgentName || message.callerAgentName,
+    calleeAgentName: task.taskId ? calleeAgentName : message.calleeAgentName
+  }));
+}
+
+function normalizeVisibleMessages(agentName: string, visibleMessages: Message[]): Message[] {
+  return visibleMessages.map(message => ({
+    ...message,
+    id: message.id || buildMessageId(),
+    sender: message.sender || agentName,
+    timestamp: Number.isFinite(message.timestamp) ? Number(message.timestamp) : Date.now()
   }));
 }
 
@@ -198,10 +203,10 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
     }
 
     const callbackReplies = runtime.consumeCallbackMessages(session.id, agentName);
-    const visibleMessages = applyTaskMetadataToVisibleMessages(
+    const visibleMessages = normalizeVisibleMessages(agentName, applyTaskMetadataToVisibleMessages(
       task,
       buildAgentVisibleMessages(agentName, providerResult, fallbackMessage, callbackReplies)
-    );
+    ));
 
     if (callbackReplies.length === 0) {
       for (const message of visibleMessages) {
