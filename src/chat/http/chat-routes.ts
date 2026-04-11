@@ -18,6 +18,7 @@ import {
   normalizeWorkdirSelection
 } from './chat-route-helpers';
 import { isExistingAbsoluteDirectory } from './workdir-path';
+import { handleEventQueryRoutes } from './event-query-routes';
 
 export interface ChatRoutesDependencies {
   chatService: ChatService;
@@ -54,6 +55,10 @@ export async function handleChatRoutes(
   deps: ChatRoutesDependencies
 ): Promise<boolean> {
   const method = req.method || 'GET';
+
+  if (await handleEventQueryRoutes(req, res, requestUrl, { runtime: deps.runtime, userKey: deps.userKey })) {
+    return true;
+  }
 
   if (requestUrl.pathname === '/api/agents' && method === 'GET') {
     sendJson(res, 200, { agents: deps.chatService.listAgents() });

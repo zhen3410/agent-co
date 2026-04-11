@@ -457,3 +457,86 @@ test('callback-routes 会将 callback 消息写为 canonical events', async () =
   assert.equal(events.some(event => event.eventType === 'agent_message_created'), true);
   assert.equal(events.some(event => event.eventType === 'dispatch_task_created'), true);
 });
+
+test('GET /api/sessions/:id/events 返回事件并支持 afterSeq', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const login = await fixture.login();
+    assert.equal(login.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '事件日志查询测试' }
+    });
+    assert.equal(chatResponse.status, 200);
+    const sessionId = chatResponse.body.session?.id;
+    assert.equal(typeof sessionId, 'string');
+
+    const eventsResponse = await fixture.request(`/api/sessions/${sessionId}/events`);
+    assert.equal(eventsResponse.status, 200);
+    const eventsBody = eventsResponse.body;
+    assert.ok(eventsBody && Array.isArray(eventsBody.events));
+    assert.ok(eventsBody.events.length > 0);
+
+    const filteredResponse = await fixture.request(`/api/sessions/${sessionId}/events?afterSeq=999999999`);
+    assert.equal(filteredResponse.status, 200);
+    const filteredBody = filteredResponse.body;
+    assert.ok(filteredBody && Array.isArray(filteredBody.events));
+    assert.equal(filteredBody.events.length, 0);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('GET /api/sessions/:id/timeline 返回事件时间线', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const login = await fixture.login();
+    assert.equal(login.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '时间线查询测试' }
+    });
+    assert.equal(chatResponse.status, 200);
+    const sessionId = chatResponse.body.session?.id;
+    assert.equal(typeof sessionId, 'string');
+
+    const timelineResponse = await fixture.request(`/api/sessions/${sessionId}/timeline`);
+    assert.equal(timelineResponse.status, 200);
+    const timelineBody = timelineResponse.body;
+    assert.ok(timelineBody && Array.isArray(timelineBody.timeline));
+    assert.ok(timelineBody.timeline.some(row => row && row.kind === 'message'));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('GET /api/sessions/:id/call-graph 返回调用图', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const login = await fixture.login();
+    assert.equal(login.status, 200);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '调用图查询测试' }
+    });
+    assert.equal(chatResponse.status, 200);
+    const sessionId = chatResponse.body.session?.id;
+    assert.equal(typeof sessionId, 'string');
+
+    const graphResponse = await fixture.request(`/api/sessions/${sessionId}/call-graph`);
+    assert.equal(graphResponse.status, 200);
+    const callGraphBody = graphResponse.body;
+    assert.ok(callGraphBody && callGraphBody.callGraph);
+    assert.ok(Array.isArray(callGraphBody.callGraph.nodes));
+    assert.ok(Array.isArray(callGraphBody.callGraph.edges));
+    assert.ok(callGraphBody.callGraph.nodes.length > 0);
+  } finally {
+    await fixture.cleanup();
+  }
+});
