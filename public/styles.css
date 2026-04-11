@@ -852,7 +852,6 @@ body.context-panel-open .main-layout {
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(226, 232, 240, 0.95);
   box-shadow: var(--shadow-sm);
-  touch-action: none;
 }
 
 .message__graph-toolbar {
@@ -872,6 +871,11 @@ body.context-panel-open .main-layout {
   padding: 4px 10px;
   cursor: pointer;
   transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+
+.message__graph-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .message__graph-btn:hover {

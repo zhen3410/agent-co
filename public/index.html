@@ -2245,6 +2245,7 @@
       const viewBoxWidth = Math.max(width, 1);
       const viewBoxHeight = Math.max(height, 1);
       const messageAttr = messageId ? ` data-message-id="${escapeHtml(messageId)}"` : '';
+      const graphMode = escapeHtml(graphView?.graphMode || 'core');
       const edgeMarkup = edges.map(edge => {
         const d = escapeHtml(edge.path || 'M0 0 L0 0');
         const classes = ['message__graph-edge'];
@@ -2255,10 +2256,11 @@
       const nodeMarkup = nodes.map(node => {
         const cx = typeof node.x === 'number' ? node.x : 0;
         const cy = typeof node.y === 'number' ? node.y : 0;
-        return `<circle class="message__graph-node" data-node-id="${escapeHtml(node.id || '')}" cx="${cx}" cy="${cy}" r="6"></circle>`;
+        const nodeRole = node.isFocus ? 'focus' : 'core';
+        return `<circle class="message__graph-node" data-node-id="${escapeHtml(node.id || '')}" data-graph-node-role="${nodeRole}" cx="${cx}" cy="${cy}" r="6"></circle>`;
       }).join('');
       return `
-        <svg class="message__graph-svg" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="${viewBoxWidth}" height="${viewBoxHeight}" role="presentation" xmlns="http://www.w3.org/2000/svg"${messageAttr}>
+        <svg class="message__graph-svg" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="${viewBoxWidth}" height="${viewBoxHeight}" role="presentation" xmlns="http://www.w3.org/2000/svg"${messageAttr} data-graph-mode="${graphMode}">
           ${edgeMarkup}
           ${nodeMarkup}
         </svg>
@@ -2273,20 +2275,22 @@
       const layoutInfo = depthInfo ? layoutGraphNodes(depthInfo.layoutNodes) : { layoutNodes: [], width: 0, height: 0 };
       const edgePaths = graphView ? buildGraphEdgePaths(layoutInfo.layoutNodes, graphView.edges) : [];
       const messageAttr = messageId ? ` data-message-id="${escapeHtml(messageId)}"` : '';
+      const graphMode = 'core';
       return `
         <div
           class="message__graph-canvas-wrap"
-          data-graph-canvas${messageAttr}
+          data-graph-canvas${messageAttr} data-graph-mode="${graphMode}"
         >
           <div class="message__graph-toolbar">
-            <button type="button" class="message__graph-btn" data-action="expand-call-graph">展开</button>
-            <button type="button" class="message__graph-btn" data-action="reset-call-graph-view">重置</button>
+            <button type="button" class="message__graph-btn" data-action="expand-call-graph" disabled aria-disabled="true">展开</button>
+            <button type="button" class="message__graph-btn" data-action="reset-call-graph-view" disabled aria-disabled="true">重置</button>
           </div>
           ${renderMessageGraphSvg({
             nodes: layoutInfo.layoutNodes,
             edges: edgePaths,
             width: layoutInfo.width,
-            height: layoutInfo.height
+            height: layoutInfo.height,
+            graphMode
           }, messageId)}
         </div>
       `;

@@ -852,6 +852,8 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
     'message__graph-svg',
     'data-node-id'
   ], 'missing mini-graph canvas/svg markup contract inside call-graph panel');
+  assert.ok(html.includes('data-graph-mode="${graphMode}"'), 'should mark canvas with graph mode attribute');
+  assert.ok(html.includes('disabled aria-disabled="true"'), 'toolbar buttons should be explicitly unavailable for now');
 
   assertContainsAll(panelBody, [
     'renderMessageGraphCanvas(',
@@ -861,6 +863,8 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
   assert.ok(svgBody.includes('viewBoxWidth'), 'svg helper should use computed viewBox width');
   assert.ok(svgBody.includes('viewBoxHeight'), 'svg helper should use computed viewBox height');
   assert.ok(svgBody.includes('data-message-id'), 'svg helper should expose the message id attribute');
+  assert.ok(svgBody.includes('data-graph-mode="${graphMode}"'), 'svg helper should carry the graph mode attribute');
+  assert.ok(svgBody.includes('data-graph-node-role="'), 'svg nodes should expose the role hook for future styling');
 });
 
 test('迷你图样式包含 loopback 线条', () => {
