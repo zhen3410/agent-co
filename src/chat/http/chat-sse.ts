@@ -1,12 +1,8 @@
 import * as http from 'http';
+import type { StreamMessageResult } from '../application/chat-service-types';
 import { ChatRuntime } from '../runtime/chat-runtime';
 
-export interface ChatSseExecutionResult {
-  currentAgent: string | null;
-  notice?: string;
-  hadVisibleMessages: boolean;
-  emptyVisibleMessage?: string;
-}
+export type ChatSseExecutionResult = StreamMessageResult;
 
 export interface ChatSseCallbacks {
   shouldContinue(): boolean;
@@ -21,7 +17,7 @@ export async function runChatSse(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   params: {
-    runtime: Pick<ChatRuntime, 'appendOperationalLog'>;
+    runtime: Pick<ChatRuntime, 'appendOperationalLog' | 'getSessionById'>;
     sessionId: string;
     execute(callbacks: ChatSseCallbacks): Promise<ChatSseExecutionResult>;
   }
@@ -43,6 +39,13 @@ export async function runChatSse(
   let streamCompleted = false;
   const executionController = new AbortController();
   let heartbeatTimer: NodeJS.Timeout | null = null;
+  const runtime = params.runtime as ChatRuntime;
+  const originalAppendOperationalLog = runtime.appendOperationalLog;
+  let wrappedAppendOperationalLog: typeof runtime.appendOperationalLog | null = null;
+  let stoppedMetadataFromLog: {
+    scope: 'current_agent' | 'session';
+    currentAgent: string | null;
+  } | null = null;
 
   const markStreamClosed = (source: 'req_aborted' | 'req_close' | 'res_close') => {
     if (streamClosed) {
@@ -78,6 +81,27 @@ export async function runChatSse(
     heartbeatTimer.unref?.();
   }
 
+  wrappedAppendOperationalLog = (level, dependency, message) => {
+    if (
+      !stoppedMetadataFromLog
+      && dependency === 'chat-exec'
+      && message.includes(`session=${params.sessionId}`)
+      && message.includes('reason=explicit_stop')
+    ) {
+      const scopeMatch = message.match(/\bscope=(current_agent|session)\b/);
+      if (scopeMatch) {
+        const agentMatch = message.match(/\bagent=([^\s]+)\b/);
+        const scope = scopeMatch[1] as 'current_agent' | 'session';
+        stoppedMetadataFromLog = {
+          scope,
+          currentAgent: agentMatch ? agentMatch[1] : null
+        };
+      }
+    }
+    originalAppendOperationalLog(level, dependency, message);
+  };
+  runtime.appendOperationalLog = wrappedAppendOperationalLog;
+
   try {
     const result = await params.execute({
       shouldContinue: () => !streamClosed && !res.writableEnded && !res.destroyed,
@@ -98,6 +122,32 @@ export async function runChatSse(
       return;
     }
 
+    const stoppedFromLog = stoppedMetadataFromLog as {
+      scope: 'current_agent' | 'session';
+      currentAgent: string | null;
+    } | null;
+    const sessionSnapshot = runtime.getSessionById(params.sessionId);
+    const resumeAvailableFromSession = Boolean(
+      Array.isArray(sessionSnapshot?.pendingAgentTasks)
+      && sessionSnapshot.pendingAgentTasks.length > 0
+    );
+    const stoppedMetadata = result.stopped || (stoppedFromLog
+      ? {
+        scope: stoppedFromLog.scope,
+        currentAgent: stoppedFromLog.currentAgent || result.currentAgent,
+        resumeAvailable: stoppedFromLog.scope === 'current_agent'
+          ? resumeAvailableFromSession
+          : false
+      }
+      : undefined);
+
+    if (stoppedMetadata) {
+      sendEvent('execution_stopped', stoppedMetadata);
+      streamCompleted = true;
+      res.end();
+      return;
+    }
+
     if (!result.hadVisibleMessages) {
       sendEvent('error', { error: result.emptyVisibleMessage || '未返回可见消息，请稍后重试或查看日志。' });
     }
@@ -114,6 +164,9 @@ export async function runChatSse(
     res.write(`event: error\ndata: ${JSON.stringify({ error: (error as Error).message })}\n\n`);
     res.end();
   } finally {
+    if (wrappedAppendOperationalLog && runtime.appendOperationalLog === wrappedAppendOperationalLog) {
+      runtime.appendOperationalLog = originalAppendOperationalLog;
+    }
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
     }

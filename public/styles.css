@@ -434,6 +434,24 @@ body.context-panel-open .main-layout {
   padding: 8px 13px;
 }
 
+.btn-stop-action {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: rgba(254, 226, 226, 0.7);
+  color: #b91c1c;
+}
+
+.btn-stop-action:hover:not(:disabled) {
+  background: rgba(254, 202, 202, 0.84);
+  border-color: rgba(220, 38, 38, 0.45);
+  color: #991b1b;
+}
+
+.btn-stop-action:disabled {
+  opacity: 0.58;
+  cursor: wait;
+  transform: none;
+}
+
 .btn-session {
   padding: 10px 14px;
 }
@@ -746,6 +764,156 @@ body.context-panel-open .main-layout {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.message__graph-summary {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.message__graph-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.message__graph-badge--cycle {
+  background: rgba(251, 146, 60, 0.14);
+  color: #c2410c;
+}
+
+.message__graph-toggle {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.message__graph-panel {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  box-shadow: var(--shadow-sm);
+}
+
+.message__graph-meta,
+.message__graph-details-title,
+.message__graph-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.message__graph-details-title {
+  margin: 10px 0 8px;
+  font-weight: 600;
+}
+
+.message__graph-details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message__graph-group h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.message__graph-group ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-primary);
+}
+
+.message__graph-group li + li {
+  margin-top: 4px;
+}
+
+.message__graph-mini {
+  margin-bottom: 10px;
+}
+
+.message__graph-canvas-wrap {
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  box-shadow: var(--shadow-sm);
+}
+
+.message__graph-toolbar {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.message__graph-btn {
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.2;
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+
+.message__graph-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.message__graph-btn:hover {
+  border-color: rgba(37, 99, 235, 0.4);
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--accent);
+}
+
+.message__graph-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.message__graph-svg {
+  width: 100%;
+  height: auto;
+  min-height: 140px;
+}
+
+.message__graph-edge {
+  fill: none;
+  stroke: rgba(15, 23, 42, 0.45);
+  stroke-width: 1.2;
+}
+
+.message__graph-edge--loopback {
+  stroke: var(--accent);
+  stroke-dasharray: 4 3;
+}
+
+.message__graph-edge--cycle {
+  stroke-width: 1.6;
+}
+
+.message__graph-node {
+  fill: var(--accent);
+  stroke: #fff;
+  stroke-width: 2;
 }
 
 .message__text--markdown p,
@@ -2069,6 +2237,11 @@ body.composer-drawer-open .mobile-composer-trigger {
 
   .btn-clear {
     padding: 6px 10px;
+  }
+
+  .btn-stop-action {
+    padding: 6px 8px;
+    font-size: 11px;
   }
 
   .btn-mobile-session {

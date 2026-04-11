@@ -1,4 +1,4 @@
-import { AIAgentConfig, Message, RichBlock } from '../../types';
+import { AIAgentConfig, ChatExecutionStopMode, ChatExecutionStoppedMetadata, Message, RichBlock } from '../../types';
 import { AgentManager } from '../../agent-manager';
 import { getStatus as getBlockBufferStatus } from '../../block-buffer';
 import { AppErrorCode } from '../../shared/errors/app-error-codes';
@@ -6,6 +6,12 @@ import { SessionService, SessionUserContext } from './session-service';
 import { ChatRuntime, PendingAgentDispatchTask as RuntimePendingAgentDispatchTask, UserChatSession } from '../runtime/chat-runtime';
 
 export type AgentDispatchReviewMode = 'none' | 'caller_review';
+export interface StopExecutionRequest {
+  sessionId?: string;
+  scope: Exclude<ChatExecutionStopMode, 'none'>;
+}
+
+export type StoppedExecutionMetadata = ChatExecutionStoppedMetadata;
 
 export interface AgentDispatchTask {
   agentName: string;
@@ -48,12 +54,35 @@ export interface StreamMessageCallbacks {
   onMessage(message: Message): boolean;
 }
 
+export interface StreamMessageResult {
+  currentAgent: string | null;
+  notice?: string;
+  hadVisibleMessages: boolean;
+  emptyVisibleMessage?: string;
+  stopped?: StoppedExecutionMetadata;
+}
+
+export interface ActiveExecutionRegistration {
+  executionId: string;
+  abortController: AbortController;
+  clear(): void;
+}
+
+export interface ResumePendingChatResult {
+  success: true;
+  resumed: boolean;
+  aiMessages: Message[];
+  currentAgent: string | null;
+  notice?: string;
+}
+
 export interface ChatService {
   listAgents(): AIAgentConfig[];
   sendMessage(context: SessionUserContext, body: { message: string; sender?: string }): Promise<{ success: true; userMessage: Message; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
-  streamMessage(context: SessionUserContext, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<{ currentAgent: string | null; notice?: string; hadVisibleMessages: boolean; emptyVisibleMessage?: string }>;
-  resumePendingChat(context: SessionUserContext): Promise<{ success: true; resumed: boolean; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
+  streamMessage(context: SessionUserContext, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks): Promise<StreamMessageResult>;
+  resumePendingChat(context: SessionUserContext): Promise<ResumePendingChatResult>;
   summarizeChat(context: SessionUserContext, sessionId?: string): Promise<{ success: true; aiMessages: Message[]; currentAgent: string | null }>;
+  stopExecution(context: SessionUserContext, request: StopExecutionRequest): Promise<{ success: true; stopped: boolean; scope: StopExecutionRequest['scope'] }>;
   createBlock(payload: { sessionId?: string; block: RichBlock }): { success: true; block: RichBlock };
   getBlockStatus(): ReturnType<typeof getBlockBufferStatus>;
   postCallbackMessage(sessionId: string, agentName: string, content: string, invokeAgents?: string[]): { status: 'ok' };
@@ -70,6 +99,7 @@ export interface RunAgentTaskParams {
   session: UserChatSession;
   task: AgentDispatchTask;
   stream: boolean;
+  executionId?: string;
   onTextDelta?: (delta: string) => void;
   signal?: AbortSignal;
 }
@@ -81,6 +111,7 @@ export interface ExecuteAgentTurnParams {
   session: UserChatSession;
   initialTasks: AgentDispatchTask[];
   stream: boolean;
+  executionId?: string;
   onThinking?: (agentName: string) => void;
   onTextDelta?: (agentName: string, delta: string) => void;
   onMessage?: (message: Message) => void;
@@ -92,6 +123,7 @@ export interface ExecuteAgentTurnParams {
 export interface ExecuteAgentTurnResult {
   aiMessages: Message[];
   pendingTasks: PendingAgentDispatchTask[];
+  stopped?: StoppedExecutionMetadata;
 }
 
 export interface ChatDispatchOrchestrator {
@@ -104,7 +136,7 @@ export interface ChatSummaryService {
 }
 
 export interface ChatResumeService {
-  resumePendingChat(context: SessionUserContext): Promise<{ success: true; resumed: boolean; aiMessages: Message[]; currentAgent: string | null; notice?: string }>;
+  resumePendingChat(context: SessionUserContext): Promise<ResumePendingChatResult>;
 }
 
 export interface ChatServiceErrorDescriptor {

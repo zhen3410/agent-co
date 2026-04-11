@@ -14,6 +14,22 @@ export interface ChatAgentExecutionDependencies {
   agentManager: AgentManager;
 }
 
+export function buildSessionScopedAgentPrompt(basePrompt: string, enabledAgents: string[]): string {
+  const scopedAgents = Array.isArray(enabledAgents) ? enabledAgents.filter(Boolean) : [];
+  const enabledList = scopedAgents.length > 0 ? scopedAgents.join('、') : '（无已启用智能体）';
+
+  return [
+    (basePrompt || '').trim(),
+    '',
+    '【当前会话启用的智能体】',
+    enabledList,
+    '【继续传播约束】',
+    '如果你希望下一轮由其他智能体继续，只能通过 invokeAgents 调度上述已启用智能体。',
+    '不要调度未启用的智能体，也不要在 invokeAgents 中填写不在上述名单内的名字。',
+    '如果你认为需要某个未启用角色，请先在群里明确说明该角色当前未启用，并给出替代方案。'
+  ].filter(Boolean).join('\n');
+}
+
 function buildMessageId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
@@ -113,13 +129,19 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
   const { runtime, sessionService, agentManager } = deps;
 
   const runAgentTask: RunAgentTask = async (params) => {
-    const { userKey, session, task, stream, onTextDelta, signal } = params;
+    const { userKey, session, task, stream, executionId, onTextDelta, signal } = params;
     const { agentName, prompt, includeHistory } = task;
     const agent = agentManager.getAgent(agentName);
     if (!agent) return [];
+    const enabledAgents = sessionService.getEnabledAgents(session);
 
     const runtimeWorkdir = sessionService.getAgentWorkdir(userKey, session.id, agentName) || agent.workdir;
-    const runtimeAgent = runtimeWorkdir ? { ...agent, workdir: runtimeWorkdir } : agent;
+    const scopedSystemPrompt = buildSessionScopedAgentPrompt(agent.systemPrompt, enabledAgents);
+    const runtimeAgent = {
+      ...agent,
+      systemPrompt: scopedSystemPrompt,
+      ...(runtimeWorkdir ? { workdir: runtimeWorkdir } : {})
+    };
     const logTag = stream ? 'ChatStream' : 'Chat';
     const isApiMode = runtimeAgent.executionMode === 'api';
     const startStage = isApiMode ? 'api_start' : 'cli_start';
@@ -154,11 +176,20 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
       runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${doneStage} text_len=${result.text.length} blocks=${result.blocks.length}`);
     } catch (error: unknown) {
       const err = error as Error;
-      console.log(`[${logTag}] AI 调用失败: ${err.message}`);
-      runtime.appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=${errorStage} error=${err.message}`);
       if (signal?.aborted) {
-        runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} agent=${agentName} stage=${errorStage}_aborted`);
+        const activeExecution = executionId
+          ? runtime.getActiveExecution(userKey, session.id)
+          : null;
+        const abortScope = activeExecution && activeExecution.executionId === executionId
+          ? activeExecution.stopMode
+          : 'none';
+        const abortReason = abortScope === 'none'
+          ? 'signal_aborted'
+          : `explicit_stop scope=${abortScope}`;
+        runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${agentName} stage=${errorStage}_aborted reason=${abortReason}`);
       } else {
+        console.log(`[${logTag}] AI 调用失败: ${err.message}`);
+        runtime.appendOperationalLog('error', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${agentName} stage=${errorStage} error=${err.message}`);
         const fallbackText = isApiMode
           ? `API 调用失败：${err.message}`
           : buildCliErrorVisibleText(err.message);
@@ -187,7 +218,8 @@ export function createChatAgentExecution(deps: ChatAgentExecutionDependencies): 
     }
 
     if (visibleMessages.length === 0) {
-      runtime.appendOperationalLog('error', 'chat-exec', `session=${session.id} agent=${agentName} stage=empty_visible_message`);
+      const emptyReason = signal?.aborted ? 'aborted' : 'no_visible_message';
+      runtime.appendOperationalLog(signal?.aborted ? 'info' : 'error', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${agentName} stage=empty_visible_message reason=${emptyReason}`);
     }
 
     return visibleMessages;

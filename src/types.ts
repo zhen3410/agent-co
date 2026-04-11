@@ -49,6 +49,14 @@ export type InvocationTaskStatus =
   | 'failed'
   | 'timed_out';
 export type InvocationReviewAction = 'accept' | 'follow_up' | 'retry';
+export type ChatExecutionStopMode = 'none' | 'current_agent' | 'session';
+
+export interface ChatExecutionStoppedMetadata {
+  scope: Exclude<ChatExecutionStopMode, 'none'>;
+  currentAgent: string | null;
+  resumeAvailable: boolean;
+}
+
 export type DiscussionTriggerReason =
   | 'explicit_mention'
   | 'factual_conflict'
@@ -82,6 +90,58 @@ export interface ApiConnectionSummary {
 
 export type MessageRole = 'user' | 'assistant';
 export type MessageSubtype = 'invocation_review';
+export type MessageCallGraphNodeKind = 'message' | 'execution';
+export type MessageCallGraphNodeSubtype =
+  | 'user'
+  | 'assistant'
+  | 'system'
+  | 'agent_run'
+  | 'callback'
+  | 'resume'
+  | 'stop';
+export type MessageCallGraphNodeStatus = 'pending' | 'running' | 'completed' | 'failed' | 'stopped';
+export type MessageCallGraphEdgeType = 'trigger' | 'spawn' | 'callback' | 'resume' | 'emit' | 'loopback';
+export type MessageCallGraphEdgeStatus = 'completed' | 'failed' | 'stopped';
+
+export interface MessageCallGraphSummary {
+  nodeCount: number;
+  edgeCount: number;
+  cycleCount: number;
+  participantNames: string[];
+  focusKind: MessageCallGraphNodeKind;
+  focusLabel: string;
+  truncatedNodeCount?: number;
+}
+
+export interface MessageCallGraphNode {
+  id: string;
+  kind: MessageCallGraphNodeKind;
+  subtype: MessageCallGraphNodeSubtype;
+  label: string;
+  actorName?: string;
+  status?: MessageCallGraphNodeStatus;
+  timestamp?: number;
+  isFocus?: boolean;
+}
+
+export interface MessageCallGraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  type: MessageCallGraphEdgeType;
+  status?: MessageCallGraphEdgeStatus;
+  isCycleEdge?: boolean;
+}
+
+export interface MessageCallGraph {
+  version: 1;
+  focusNodeId: string;
+  hasCycle: boolean;
+  truncated: boolean;
+  summary: MessageCallGraphSummary;
+  nodes: MessageCallGraphNode[];
+  edges: MessageCallGraphEdge[];
+}
 
 export interface Message {
   id: string;
@@ -103,6 +163,7 @@ export interface Message {
   callerAgentName?: string;
   calleeAgentName?: string;
   reviewAction?: InvocationReviewAction;
+  callGraph?: MessageCallGraph;
 }
 
 export interface InvocationTask {

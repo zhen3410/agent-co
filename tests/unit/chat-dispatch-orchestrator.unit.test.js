@@ -233,3 +233,45 @@ test('caller_review 被调用者回复 invoke 回原 caller 时不会创建反�
   const [task] = runtime.listInvocationTasks('user-1', 'default');
   assert.equal(task.status, 'completed');
 });
+
+test('显式 invokeAgents 会过滤掉当前会话未启用的 agent', async () => {
+  const { createChatDispatchOrchestrator } = requireBuiltModule('chat', 'application', 'chat-dispatch-orchestrator.js');
+  const { runtime, createdInvocationTasks } = createRuntimeStub();
+  const sessionService = createSessionServiceStub();
+  const orchestrator = createChatDispatchOrchestrator({
+    runtime,
+    sessionService,
+    agentManager: createAgentManagerStub(),
+    async runAgentTask({ task }) {
+      if (task.agentName !== 'Alice') {
+        return [];
+      }
+      return [{
+        id: 'alice-msg-1',
+        role: 'assistant',
+        sender: 'Alice',
+        text: '请 Bob 和 Carol 一起继续。',
+        invokeAgents: ['Bob', 'Carol'],
+        timestamp: Date.now()
+      }];
+    }
+  });
+
+  const result = await orchestrator.executeAgentTurn({
+    userKey: 'user-1',
+    session: { id: 'default', enabledAgents: ['Alice', 'Bob'], history: [] },
+    initialTasks: [{
+      agentName: 'Alice',
+      prompt: '@Alice 请开始',
+      includeHistory: true,
+      dispatchKind: 'initial'
+    }],
+    stream: false
+  });
+
+  assert.equal(result.aiMessages.length, 1);
+  assert.deepEqual(result.aiMessages[0].invokeAgents, ['Bob']);
+  assert.equal(createdInvocationTasks.length, 1);
+  assert.equal(createdInvocationTasks[0].calleeAgentName, 'Bob');
+  assert.deepEqual(result.pendingTasks.map(task => task.agentName), []);
+});

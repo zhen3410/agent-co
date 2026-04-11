@@ -8,6 +8,33 @@ const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
 
+const repoRoot = join(__dirname, '..', '..');
+const distDir = join(repoRoot, 'dist');
+
+function requireBuiltRuntimeModule() {
+  const modulePath = join(distDir, 'chat', 'runtime', 'chat-runtime.js');
+  delete require.cache[require.resolve(modulePath)];
+  return require(modulePath);
+}
+
+function createRuntimeFixture() {
+  const { createChatRuntime } = requireBuiltRuntimeModule();
+  return createChatRuntime({
+    redisUrl: 'redis://127.0.0.1:6379',
+    redisConfigKey: 'test:runtime:config',
+    defaultRedisChatSessionsKey: 'test:runtime:sessions',
+    redisPersistDebounceMs: 100,
+    redisRequired: false,
+    redisDisabled: true,
+    envRedisChatSessionsKey: '',
+    defaultChatSessionId: 'default',
+    defaultChatSessionName: '默认会话',
+    defaultAgentChainMaxHops: 3,
+    dependencyStatusLogLimit: 20,
+    getValidAgentNames: () => ['Alice', 'Bob']
+  });
+}
+
 async function enableAgents(fixture, agentNames) {
   for (const agentName of agentNames) {
     const response = await fixture.request('/api/session-agents', {
@@ -45,6 +72,45 @@ async function requestRaw(url, options = {}) {
     headers: response.headers,
     text: await response.text()
   };
+}
+
+async function postJsonViaHttp(port, path, body, cookieHeader = '') {
+  const payload = JSON.stringify(body || {});
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+        ...(cookieHeader ? { Cookie: cookieHeader } : {})
+      }
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        if (text) {
+          try {
+            json = JSON.parse(text);
+          } catch {
+            json = null;
+          }
+        }
+        resolve({
+          status: res.statusCode || 0,
+          body: json,
+          text
+        });
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
 }
 
 async function createOpenAICompatibleStub(handler) {
@@ -140,6 +206,98 @@ test('chat routes 将 SSE 传输细节抽离到独立 helper', () => {
   assert.equal(chatRoutesSource.includes('X-Accel-Buffering'), false);
   assert.equal(chatRoutesSource.includes('event: ${event}'), false);
   assert.equal(sseHelperSource.includes('text/event-stream'), true);
+});
+
+test('活动执行状态可记录停止范围并触发 abort', () => {
+  const runtime = createRuntimeFixture();
+  const controller = new AbortController();
+  const userKey = 'user-1';
+  const sessionId = 'session-active-1';
+  const executionId = 'exec-1';
+
+  runtime.registerActiveExecution(userKey, sessionId, {
+    executionId,
+    userKey,
+    sessionId,
+    currentAgentName: null,
+    abortController: controller,
+    stopMode: 'none'
+  });
+
+  assert.equal(runtime.getActiveExecution(userKey, sessionId)?.executionId, executionId);
+
+  const updated = runtime.updateActiveExecutionAgent(userKey, sessionId, executionId, 'Alice');
+  assert.equal(updated?.currentAgentName, 'Alice');
+
+  const stopRequested = runtime.requestExecutionStop(userKey, sessionId, 'session');
+  assert.equal(stopRequested?.stopMode, 'session');
+  assert.equal(controller.signal.aborted, true);
+  assert.equal(runtime.consumeExecutionStopMode(userKey, sessionId, executionId), 'session');
+  assert.equal(runtime.consumeExecutionStopMode(userKey, sessionId, executionId), 'none');
+  assert.deepEqual(runtime.consumeExecutionStopResult(userKey, sessionId, executionId), {
+    scope: 'session',
+    currentAgent: 'Alice',
+    resumeAvailable: false
+  });
+});
+
+test('旧 executionId 不能清理新活动执行', () => {
+  const runtime = createRuntimeFixture();
+  const userKey = 'user-1';
+  const sessionId = 'session-active-2';
+
+  runtime.registerActiveExecution(userKey, sessionId, {
+    executionId: 'exec-old',
+    userKey,
+    sessionId,
+    currentAgentName: 'Alice',
+    abortController: new AbortController(),
+    stopMode: 'none'
+  });
+  runtime.registerActiveExecution(userKey, sessionId, {
+    executionId: 'exec-new',
+    userKey,
+    sessionId,
+    currentAgentName: 'Bob',
+    abortController: new AbortController(),
+    stopMode: 'none'
+  });
+
+  assert.equal(runtime.clearActiveExecution(userKey, sessionId, 'exec-old'), false);
+  assert.equal(runtime.getActiveExecution(userKey, sessionId)?.executionId, 'exec-new');
+  assert.equal(runtime.clearActiveExecution(userKey, sessionId, 'exec-new'), true);
+  assert.equal(runtime.getActiveExecution(userKey, sessionId), null);
+});
+
+test('不同用户共享默认 sessionId 时活动执行状态互不覆盖', () => {
+  const runtime = createRuntimeFixture();
+  const sessionId = 'default';
+  const userA = 'user-A';
+  const userB = 'user-B';
+
+  runtime.registerActiveExecution(userA, sessionId, {
+    executionId: 'exec-a',
+    userKey: userA,
+    sessionId,
+    currentAgentName: 'Alice',
+    abortController: new AbortController(),
+    stopMode: 'none'
+  });
+  runtime.registerActiveExecution(userB, sessionId, {
+    executionId: 'exec-b',
+    userKey: userB,
+    sessionId,
+    currentAgentName: 'Bob',
+    abortController: new AbortController(),
+    stopMode: 'none'
+  });
+
+  assert.equal(runtime.getActiveExecution(userA, sessionId)?.executionId, 'exec-a');
+  assert.equal(runtime.getActiveExecution(userB, sessionId)?.executionId, 'exec-b');
+
+  runtime.requestExecutionStop(userA, sessionId, 'session');
+  assert.equal(runtime.consumeExecutionStopMode(userA, sessionId, 'exec-a'), 'session');
+  assert.equal(runtime.consumeExecutionStopMode(userB, sessionId, 'exec-b'), 'none');
 });
 
 async function waitForChatServer(port, timeoutMs = 10000) {
@@ -323,7 +481,13 @@ async function createRedisBackedChatServerFixture(options = {}) {
   }
 
   return {
+    port,
     request,
+    getCookieHeader() {
+      return Array.from(cookieJar.entries())
+        .map(([key, value]) => `${key}=${value}`)
+        .join('; ');
+    },
     async login(username = 'admin', password = 'Admin1234!@#') {
       return request('/api/login', {
         method: 'POST',
@@ -431,6 +595,103 @@ async function post(content, invokeAgents) {
   process.exit(1);
 });
 EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
+function createStopScopeSemanticsClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+agent_name="\${AGENT_CO_AGENT_NAME:-AI}"
+if [ "$agent_name" = "Alice" ]; then
+  sleep 3
+  printf '{"output_text":"Alice 慢回复，断流恢复后应继续执行"}\\n'
+elif [ "$agent_name" = "Bob" ]; then
+  printf '{"output_text":"Bob 已在恢复链路中执行"}\\n'
+else
+  printf '{"output_text":"%s 已完成"}\\n' "$agent_name"
+fi
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
+function createStopAfterVisibleOutputClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+node - <<'EOF'
+const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
+const sessionId = process.env.AGENT_CO_SESSION_ID || '';
+const apiUrl = process.env.AGENT_CO_API_URL || '';
+const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
+
+async function post(content, invokeAgents) {
+  const encodedAgentName = encodeURIComponent(agentName);
+  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: \`Bearer \${token}\`,
+      'Content-Type': 'application/json',
+      'x-agent-co-callback-token': token,
+      'x-agent-co-session-id': sessionId,
+      'x-agent-co-agent': encodedAgentName
+    },
+    body: JSON.stringify({ content, invokeAgents })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+async function sleep(ms) {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+(async () => {
+  if (agentName === 'Alice') {
+    await post('Alice 已发出可见接力请求：请 @@Bob 继续补充', ['Bob']);
+    await sleep(2600);
+    process.stdout.write('{"output_text":"callback sent"}\\n');
+    return;
+  }
+
+  if (agentName === 'Bob') {
+    await post('Bob 不应被显式停止后的当前任务派生触发');
+    process.stdout.write('{"output_text":"callback sent"}\\n');
+    return;
+  }
+
+  if (agentName === 'Claude') {
+    await post('Claude 是原队列中的后续任务，应在恢复时继续执行');
+    process.stdout.write('{"output_text":"callback sent"}\\n');
+    return;
+  }
+
+  await post(\`\${agentName} 已完成\`);
+  process.stdout.write('{"output_text":"callback sent"}\\n');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+}
+
+function createInvocationResumeStopClaudeScript(tempDir) {
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+agent_name="\${AGENT_CO_AGENT_NAME:-AI}"
+dispatch_kind="\${AGENT_CO_DISPATCH_KIND:-initial}"
+if [ "$agent_name" = "Bob" ]; then
+  sleep 4
+  printf '{"output_text":"Bob 来自 invocation 的回复"}\\n'
+elif [ "$agent_name" = "Claude" ]; then
+  printf '{"output_text":"Claude 来自 invocation 的回复"}\\n'
+elif [ "$agent_name" = "Alice" ] && [ "$dispatch_kind" = "internal_review" ]; then
+  printf '{"output_text":"accept: Alice 已完成调用复核"}\\n'
+else
+  printf '{"output_text":"%s 已完成"}\\n' "$agent_name"
+fi
 `, 'utf8');
   chmodSync(fakeClaude, 0o755);
 }
@@ -841,6 +1102,139 @@ async function waitForCondition(check, timeoutMs = 3000, intervalMs = 80) {
     await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
   throw new Error('condition not met before timeout');
+}
+
+async function waitForAgentThinkingEvent(reader, expectedAgent, timeoutMs = 5000) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const { done, value } = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`stream did not emit ${expectedAgent} thinking before timeout`)), remainingMs))
+    ]);
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    let eventType = '';
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        eventType = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        const payload = JSON.parse(line.slice(6));
+        if (eventType === 'agent_thinking' && payload.agent === expectedAgent) {
+          return;
+        }
+        eventType = '';
+      }
+    }
+  }
+
+  throw new Error(`stream ended before receiving ${expectedAgent} thinking event`);
+}
+
+async function waitForAgentMessageEvent(reader, expectedSender, timeoutMs = 5000) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const { done, value } = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`stream did not emit ${expectedSender} message before timeout`)), remainingMs))
+    ]);
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    let eventType = '';
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        eventType = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        const payload = JSON.parse(line.slice(6));
+        if (eventType === 'agent_message' && payload.sender === expectedSender) {
+          return payload;
+        }
+        eventType = '';
+      }
+    }
+  }
+
+  throw new Error(`stream ended before receiving ${expectedSender} agent_message event`);
+}
+
+async function collectSseEventsUntilClosed(reader, timeoutMs = 5000) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let pendingEventType = '';
+  const events = [];
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const { done, value } = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('stream did not close before timeout')), remainingMs))
+    ]);
+    if (done) {
+      return events;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        pendingEventType = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        events.push({
+          event: pendingEventType,
+          payload: JSON.parse(line.slice(6))
+        });
+        pendingEventType = '';
+      }
+    }
+  }
+
+  throw new Error('stream did not close before timeout');
+}
+
+async function drainStreamUntilClosed(reader, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const { done } = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('stream did not close before timeout')), remainingMs))
+    ]);
+    if (done) {
+      return;
+    }
+  }
+
+  throw new Error('stream did not close before timeout');
+}
+
+async function waitForChatStopAccepted(fixture, scope, timeoutMs = 3000) {
+  return waitForCondition(async () => {
+    const stopResponse = await postJsonViaHttp(fixture.port, '/api/chat-stop', { scope }, fixture.getCookieHeader());
+    assert.equal(stopResponse.status, 200);
+    if (!stopResponse.body?.stopped) {
+      return null;
+    }
+    return stopResponse;
+  }, timeoutMs, 30);
 }
 
 test('统一 agent 调用入口在 api 模式下会调用 OpenAI-compatible provider 并解析结果', async () => {
@@ -1536,6 +1930,808 @@ test('chat-stream 在 API 模式下会先推送 agent_delta，再推送最终 ag
   }
 });
 
+test('chat-stop 在无活动执行时返回 stopped false', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    await fixture.login();
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'session' }
+    });
+
+    assert.equal(stopResponse.status, 200);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: false,
+      scope: 'session'
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('chat-stop scope 非法值会返回校验失败', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    await fixture.login();
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'invalid_scope' }
+    });
+
+    assert.equal(stopResponse.status, 400);
+    assert.deepEqual(stopResponse.body, { error: 'scope 必须是 current_agent 或 session' });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('chat-stop 可停止当前活动执行并返回 scope', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-active-stream-'));
+  const fakeClaude = join(tempDir, 'claude');
+  writeFileSync(fakeClaude, `#!/usr/bin/env bash
+sleep 2
+printf '{"output_text":"late reply"}\\n'
+`, 'utf8');
+  chmodSync(fakeClaude, 0o755);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Claude']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Claude 保持执行用于 stop 测试' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let thinkingSeen = false;
+    const thinkingDeadline = Date.now() + 5000;
+
+    while (!thinkingSeen) {
+      assert.ok(Date.now() < thinkingDeadline, 'stream should emit thinking before stop request');
+      const { done, value } = await reader.read();
+      assert.equal(done, false);
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      let eventType = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          const payload = JSON.parse(line.slice(6));
+          if (eventType === 'agent_thinking' && payload.agent === 'Claude') {
+            thinkingSeen = true;
+            break;
+          }
+          eventType = '';
+        }
+      }
+    }
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'session' }
+    });
+    assert.equal(stopResponse.status, 200);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'session'
+    });
+
+    await reader.cancel().catch(() => {});
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('显式停止当前智能体时只丢弃当前任务并保留后续链路', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-current-agent-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Bob 显式停止当前智能体并保留后续链路' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'current_agent' }
+    });
+    assert.equal(stopResponse.status, 200);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'current_agent'
+    });
+
+    await drainStreamUntilClosed(reader, 6000);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), true);
+    assert.deepEqual(
+      historyResponse.body.session.pendingAgentTasks.map(item => item.agentName),
+      ['Bob']
+    );
+
+    const assistantSenders = historyResponse.body.messages
+      .filter(item => item.role === 'assistant')
+      .map(item => item.sender);
+    assert.ok(!assistantSenders.includes('Alice'));
+    assert.ok(!assistantSenders.includes('Bob'));
+
+    const resumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.equal(resumeResponse.body.aiMessages.length, 1);
+    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Bob');
+    assert.equal(resumeResponse.body.aiMessages[0].text, 'Bob 已在恢复链路中执行');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('显式停止当前智能体时 SSE 会发送 execution_stopped 事件', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-sse-current-agent-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Bob 显式停止当前智能体时应发送 execution_stopped' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+
+    const stopResponse = await waitForChatStopAccepted(fixture, 'current_agent', 1800);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'current_agent'
+    });
+
+    const events = await collectSseEventsUntilClosed(reader, 7000);
+    const stoppedEvent = events.find(item => item.event === 'execution_stopped');
+    assert.ok(stoppedEvent, 'stream should emit execution_stopped event');
+    assert.deepEqual(stoppedEvent.payload, {
+      scope: 'current_agent',
+      currentAgent: 'Alice',
+      resumeAvailable: true
+    });
+    assert.equal(events.some(item => item.event === 'done'), false);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('显式停止整个执行时会清空剩余链路', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-session-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Bob 显式停止整个执行并清空队列' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'session' }
+    });
+    assert.equal(stopResponse.status, 200);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'session'
+    });
+
+    await drainStreamUntilClosed(reader, 6000);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), false);
+
+    const resumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, false);
+    assert.deepEqual(resumeResponse.body.aiMessages, []);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('显式停止整个执行时 SSE 会标记 resumeAvailable false', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-sse-session-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Bob 显式停止整个执行时应发送 execution_stopped' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+
+    const stopResponse = await waitForChatStopAccepted(fixture, 'session', 1800);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'session'
+    });
+
+    const events = await collectSseEventsUntilClosed(reader, 7000);
+    const stoppedEvent = events.find(item => item.event === 'execution_stopped');
+    assert.ok(stoppedEvent, 'stream should emit execution_stopped event');
+    assert.deepEqual(stoppedEvent.payload, {
+      scope: 'session',
+      currentAgent: 'Alice',
+      resumeAvailable: false
+    });
+    assert.equal(events.some(item => item.event === 'done'), false);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('恢复后的链路也可被显式停止当前任务', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-resume-stop-current-agent-'));
+  createInvocationResumeStopClaudeScript(tempDir);
+  const now = Date.now();
+  const bobTaskId = 'resume-stop-inv-bob';
+  const claudeTaskId = 'resume-stop-inv-claude';
+
+  const fixture = await createRedisBackedChatServerFixture({
+    redisState: {
+      version: 1,
+      userChatSessions: {
+        'user:admin': [{
+          id: 'default',
+          name: '默认会话',
+          history: [{
+            id: 'resume-stop-user',
+            role: 'user',
+            sender: '用户',
+            text: '@Alice 发起调用并等待后续执行',
+            timestamp: now - 3000
+          }, {
+            id: 'resume-stop-alice',
+            role: 'assistant',
+            sender: 'Alice',
+            text: '请 @@Bob 与 @@Claude 分别补充',
+            timestamp: now - 2500
+          }],
+          currentAgent: 'Alice',
+          enabledAgents: ['Alice', 'Bob', 'Claude'],
+          agentWorkdirs: {},
+          pendingAgentTasks: [{
+            agentName: 'Bob',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            includeHistory: true,
+            dispatchKind: 'explicit_chained',
+            taskId: bobTaskId,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Bob',
+            reviewMode: 'caller_review',
+            deadlineAt: now + 5 * 60 * 1000
+          }, {
+            agentName: 'Claude',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            includeHistory: true,
+            dispatchKind: 'explicit_chained',
+            taskId: claudeTaskId,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Claude',
+            reviewMode: 'caller_review',
+            deadlineAt: now + 5 * 60 * 1000
+          }],
+          pendingVisibleMessages: [],
+          invocationTasks: [{
+            id: bobTaskId,
+            sessionId: 'default',
+            status: 'pending_reply',
+            reviewVersion: 0,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Bob',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            originalPrompt: '请 @@Bob 与 @@Claude 分别补充',
+            createdAt: now - 2600,
+            updatedAt: now - 2600,
+            deadlineAt: now + 5 * 60 * 1000,
+            retryCount: 0,
+            followupCount: 0
+          }, {
+            id: claudeTaskId,
+            sessionId: 'default',
+            status: 'pending_reply',
+            reviewVersion: 0,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Claude',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            originalPrompt: '请 @@Bob 与 @@Claude 分别补充',
+            createdAt: now - 2550,
+            updatedAt: now - 2550,
+            deadlineAt: now + 5 * 60 * 1000,
+            retryCount: 0,
+            followupCount: 0
+          }],
+          agentChainMaxHops: 4,
+          agentChainMaxCallsPerAgent: 1,
+          discussionMode: 'classic',
+          discussionState: 'active',
+          createdAt: now - 3500,
+          updatedAt: now - 2400
+        }]
+      },
+      userActiveChatSession: {
+        'user:admin': 'default'
+      }
+    },
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    const historyBefore = await fixture.request('/api/history');
+    assert.equal(historyBefore.status, 200);
+    assert.deepEqual(
+      historyBefore.body.session.pendingAgentTasks.map(item => [item.agentName, item.taskId]),
+      [['Bob', bobTaskId], ['Claude', claudeTaskId]]
+    );
+
+    const resumePromise = fetch(`http://127.0.0.1:${fixture.port}/api/chat-resume`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({})
+    }).then(async (response) => ({
+      status: response.status,
+      body: await response.json()
+    }));
+
+    const stopResponse = await waitForChatStopAccepted(fixture, 'current_agent', 1800);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'current_agent'
+    });
+
+    const resumeResponse = await resumePromise;
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.deepEqual(resumeResponse.body.aiMessages, []);
+
+    const historyAfterStop = await fixture.request('/api/history');
+    assert.equal(historyAfterStop.status, 200);
+    assert.equal(Array.isArray(historyAfterStop.body.session.pendingAgentTasks), true);
+    assert.deepEqual(
+      historyAfterStop.body.session.pendingAgentTasks.map(item => item.agentName),
+      ['Claude']
+    );
+    assert.equal(historyAfterStop.body.session.pendingAgentTasks[0].taskId, claudeTaskId);
+    const bobInvocationTaskAfterStop = historyAfterStop.body.session.invocationTasks.find(item => item.id === bobTaskId);
+    const claudeInvocationTaskAfterStop = historyAfterStop.body.session.invocationTasks.find(item => item.id === claudeTaskId);
+    assert.ok(bobInvocationTaskAfterStop);
+    assert.ok(claudeInvocationTaskAfterStop);
+    assert.equal(bobInvocationTaskAfterStop.status, 'failed');
+    assert.equal(bobInvocationTaskAfterStop.failureReason, 'explicit_stop_current_agent_on_resume');
+    assert.equal(claudeInvocationTaskAfterStop.status, 'pending_reply');
+
+    const nextResumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(nextResumeResponse.status, 200);
+    assert.equal(nextResumeResponse.body.success, true);
+    assert.equal(nextResumeResponse.body.resumed, true);
+    assert.equal(nextResumeResponse.body.aiMessages.length, 2);
+    assert.deepEqual(
+      nextResumeResponse.body.aiMessages.slice(0, 1).map(item => [item.sender, item.messageSubtype || null, item.reviewAction || null, item.text]),
+      [
+        ['Claude', null, null, 'Claude 来自 invocation 的回复']
+      ]
+    );
+    assert.equal(nextResumeResponse.body.aiMessages[1].sender, 'Alice');
+    assert.equal(nextResumeResponse.body.aiMessages[1].messageSubtype, 'invocation_review');
+    assert.equal(nextResumeResponse.body.aiMessages[1].reviewAction, 'accept');
+    assert.match(nextResumeResponse.body.aiMessages[1].text, /^Alice 对 Claude 的调用复核：接受。/);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('恢复中的 session stop 会清空剩余可恢复链路', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-resume-stop-session-'));
+  createInvocationResumeStopClaudeScript(tempDir);
+  const now = Date.now();
+  const bobTaskId = 'resume-stop-session-inv-bob';
+  const claudeTaskId = 'resume-stop-session-inv-claude';
+
+  const fixture = await createRedisBackedChatServerFixture({
+    redisState: {
+      version: 1,
+      userChatSessions: {
+        'user:admin': [{
+          id: 'default',
+          name: '默认会话',
+          history: [{
+            id: 'resume-stop-session-user',
+            role: 'user',
+            sender: '用户',
+            text: '@Alice 发起调用并等待后续执行',
+            timestamp: now - 3000
+          }, {
+            id: 'resume-stop-session-alice',
+            role: 'assistant',
+            sender: 'Alice',
+            text: '请 @@Bob 与 @@Claude 分别补充',
+            timestamp: now - 2500
+          }],
+          currentAgent: 'Alice',
+          enabledAgents: ['Alice', 'Bob', 'Claude'],
+          agentWorkdirs: {},
+          pendingAgentTasks: [{
+            agentName: 'Bob',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            includeHistory: true,
+            dispatchKind: 'explicit_chained',
+            taskId: bobTaskId,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Bob',
+            reviewMode: 'caller_review',
+            deadlineAt: now + 5 * 60 * 1000
+          }, {
+            agentName: 'Claude',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            includeHistory: true,
+            dispatchKind: 'explicit_chained',
+            taskId: claudeTaskId,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Claude',
+            reviewMode: 'caller_review',
+            deadlineAt: now + 5 * 60 * 1000
+          }],
+          pendingVisibleMessages: [],
+          invocationTasks: [{
+            id: bobTaskId,
+            sessionId: 'default',
+            status: 'pending_reply',
+            reviewVersion: 0,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Bob',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            originalPrompt: '请 @@Bob 与 @@Claude 分别补充',
+            createdAt: now - 2600,
+            updatedAt: now - 2600,
+            deadlineAt: now + 5 * 60 * 1000,
+            retryCount: 0,
+            followupCount: 0
+          }, {
+            id: claudeTaskId,
+            sessionId: 'default',
+            status: 'pending_reply',
+            reviewVersion: 0,
+            callerAgentName: 'Alice',
+            calleeAgentName: 'Claude',
+            prompt: '请 @@Bob 与 @@Claude 分别补充',
+            originalPrompt: '请 @@Bob 与 @@Claude 分别补充',
+            createdAt: now - 2550,
+            updatedAt: now - 2550,
+            deadlineAt: now + 5 * 60 * 1000,
+            retryCount: 0,
+            followupCount: 0
+          }],
+          agentChainMaxHops: 4,
+          agentChainMaxCallsPerAgent: 1,
+          discussionMode: 'classic',
+          discussionState: 'active',
+          createdAt: now - 3500,
+          updatedAt: now - 2400
+        }]
+      },
+      userActiveChatSession: {
+        'user:admin': 'default'
+      }
+    },
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    const historyBefore = await fixture.request('/api/history');
+    assert.equal(historyBefore.status, 200);
+    assert.deepEqual(
+      historyBefore.body.session.pendingAgentTasks.map(item => [item.agentName, item.taskId]),
+      [['Bob', bobTaskId], ['Claude', claudeTaskId]]
+    );
+    const stoppedTaskIds = [bobTaskId, claudeTaskId];
+
+    const resumePromise = fetch(`http://127.0.0.1:${fixture.port}/api/chat-resume`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({})
+    }).then(async (response) => ({
+      status: response.status,
+      body: await response.json()
+    }));
+
+    const stopResponse = await waitForChatStopAccepted(fixture, 'session', 1800);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'session'
+    });
+
+    const resumeResponse = await resumePromise;
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.deepEqual(resumeResponse.body.aiMessages, []);
+
+    const historyAfterStop = await fixture.request('/api/history');
+    assert.equal(historyAfterStop.status, 200);
+    assert.equal(Array.isArray(historyAfterStop.body.session.pendingAgentTasks), false);
+    const invocationTasksAfterStop = historyAfterStop.body.session.invocationTasks
+      .filter(item => stoppedTaskIds.includes(item.id));
+    assert.equal(invocationTasksAfterStop.length, 2);
+    assert.ok(invocationTasksAfterStop.every(item => item.status === 'failed'));
+    assert.ok(invocationTasksAfterStop.every(item => item.failureReason === 'explicit_stop_session_on_resume'));
+
+    const nextResumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(nextResumeResponse.status, 200);
+    assert.equal(nextResumeResponse.body.success, true);
+    assert.equal(nextResumeResponse.body.resumed, false);
+    assert.deepEqual(nextResumeResponse.body.aiMessages, []);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('显式停止当前智能体后即使该任务已产出可见输出也不会派生新链路', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-visible-output-current-agent-'));
+  createStopAfterVisibleOutputClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob', 'Claude']);
+
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice @Claude 当前任务先产出可见输出再停止' })
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    const aliceVisibleMessage = await waitForAgentMessageEvent(reader, 'Alice', 7000);
+    assert.ok(typeof aliceVisibleMessage.text === 'string' && aliceVisibleMessage.text.includes('Alice 已发出可见接力请求'));
+
+    const stopResponse = await fixture.request('/api/chat-stop', {
+      method: 'POST',
+      body: { scope: 'current_agent' }
+    });
+    assert.equal(stopResponse.status, 200);
+    assert.deepEqual(stopResponse.body, {
+      success: true,
+      stopped: true,
+      scope: 'current_agent'
+    });
+
+    await drainStreamUntilClosed(reader, 7000);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), true);
+    assert.deepEqual(
+      historyResponse.body.session.pendingAgentTasks.map(item => item.agentName),
+      ['Claude']
+    );
+
+    const assistantTexts = historyResponse.body.messages
+      .filter(item => item.role === 'assistant')
+      .map(item => item.text);
+    assert.ok(assistantTexts.some(text => text.includes('Alice 已发出可见接力请求')));
+    assert.ok(!assistantTexts.some(text => text.includes('Bob 不应被显式停止后的当前任务派生触发')));
+    assert.ok(!assistantTexts.some(text => text.includes('Claude 是原队列中的后续任务')));
+
+    const resumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.equal(resumeResponse.body.aiMessages.length, 1);
+    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Claude');
+    assert.equal(resumeResponse.body.aiMessages[0].text, 'Claude 是原队列中的后续任务，应在恢复时继续执行');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('客户端断流仍保留当前任务以便恢复', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-stream-disconnect-requeue-current-'));
+  createStopScopeSemanticsClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice']);
+
+    const abortController = new AbortController();
+    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fixture.getCookieHeader()
+      },
+      body: JSON.stringify({ message: '@Alice 客户端断流后应可恢复当前任务' }),
+      signal: abortController.signal
+    });
+    assert.equal(streamResponse.status, 200);
+
+    const reader = streamResponse.body.getReader();
+    await waitForAgentThinkingEvent(reader, 'Alice');
+
+    abortController.abort();
+    await reader.cancel().catch(() => {});
+
+    const historyWithPending = await waitForCondition(async () => {
+      const history = await fixture.request('/api/history');
+      if (!Array.isArray(history.body?.session?.pendingAgentTasks)) return null;
+      if (history.body.session.pendingAgentTasks.length === 0) return null;
+      return history;
+    }, 6000, 120);
+
+    assert.deepEqual(
+      historyWithPending.body.session.pendingAgentTasks.map(item => item.agentName),
+      ['Alice']
+    );
+
+    const resumeResponse = await fixture.request('/api/chat-resume', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeResponse.body.success, true);
+    assert.equal(resumeResponse.body.resumed, true);
+    assert.equal(resumeResponse.body.aiMessages.length, 1);
+    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Alice');
+    assert.equal(resumeResponse.body.aiMessages[0].text, 'Alice 慢回复，断流恢复后应继续执行');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('未登录时聊天相关接口会返回 401，登录后可正常聊天', async () => {
   const fixture = await createChatServerFixture();
 
@@ -1857,6 +3053,54 @@ test('被调用者回复会回传给调用者做 accept 复核', async () => {
     assert.match(reviewPrompt, /原始委派请求：请 @@Bob 给出三步落地方案/);
     assert.match(reviewPrompt, /Bob 的回复：1\. 建表并补索引。2\. 实现服务与接口。3\. 增加集成测试覆盖主链路。/);
     assert.match(reviewPrompt, /accept: <接受原因>/);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('调用链相关 assistant 消息会在聊天响应与历史记录中携带 callGraph 快照', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-call-graph-'));
+  createReviewLoopClaudeScript(tempDir, 'accept');
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 发起调用并要求 Bob 给出落地方案' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.equal(chatResponse.body.success, true);
+    assert.equal(chatResponse.body.userMessage.callGraph, undefined);
+
+    const graphMessages = chatResponse.body.aiMessages.filter(item => item.taskId);
+    assert.equal(graphMessages.length >= 2, true);
+    assert.equal(graphMessages.every(item => item.callGraph && item.callGraph.focusNodeId === `message:${item.id}`), true);
+    assert.equal(graphMessages.some(item => item.callGraph && item.callGraph.hasCycle), false);
+
+    const historyResponse = await waitForCondition(async () => {
+      const history = await fixture.request('/api/history');
+      const reviewMessage = history.body?.messages?.find(item => item.messageSubtype === 'invocation_review');
+      return reviewMessage?.callGraph ? history : null;
+    }, 4000, 100);
+
+    assert.equal(historyResponse.status, 200);
+    const historyReviewMessage = historyResponse.body.messages.find(item => item.messageSubtype === 'invocation_review');
+    assert.ok(historyReviewMessage.callGraph);
+    assert.equal(historyReviewMessage.callGraph.focusNodeId, `message:${historyReviewMessage.id}`);
+    assert.equal(historyReviewMessage.callGraph.summary.participantNames.includes('Alice'), true);
+    assert.equal(historyReviewMessage.callGraph.summary.participantNames.includes('Bob'), true);
+    assert.equal(Array.isArray(historyReviewMessage.callGraph.nodes), true);
+    assert.equal(Array.isArray(historyReviewMessage.callGraph.edges), true);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -2800,6 +4044,7 @@ EOF
       }
     }
 
+    await new Promise(resolve => setTimeout(resolve, 260));
     controller.abort();
     await reader.cancel().catch(() => {});
 
@@ -4154,6 +5399,44 @@ test('classic 模式下单 @ 点名不会兼容升级为继续传播', async () 
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'classic');
     assert.equal(historyResponse.body.session.discussionState, 'active');
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('classic 模式下 callback invokeAgents 指向未启用 agent 时会被过滤', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-classic-chain-disabled-target-'));
+  createExplicitThenStopClaudeScript(tempDir);
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+
+    const createResponse = await fixture.request('/api/sessions', {
+      method: 'POST',
+      body: { name: 'classic disabled chained target discussion' }
+    });
+    assert.equal(createResponse.status, 200);
+    await enableAgents(fixture, ['Alice']);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 请开始讨论' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
+    assert.equal(chatResponse.body.aiMessages[0].invokeAgents, undefined);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200);
+    assert.deepEqual(historyResponse.body.messages.map(item => item.sender), ['用户', 'Alice']);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
