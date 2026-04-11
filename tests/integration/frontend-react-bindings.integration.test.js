@@ -866,7 +866,7 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
   assert.ok(svgBody.includes('data-graph-mode="${graphMode}"'), 'svg helper should carry the graph mode attribute');
   assert.ok(svgBody.includes('data-graph-node-role="'), 'svg nodes should expose the role hook for future styling');
 
-  const offsetMatch = html.match(/const NODE_CENTER_OFFSET = (\\d+);/);
+  const offsetMatch = html.match(/const NODE_CENTER_OFFSET = (\d+);/);
   const nodeOffset = offsetMatch ? Number(offsetMatch[1]) : 24;
   const edgeBody = getFunctionBody(html, 'buildGraphEdgePaths');
   const safeEdgeBody = edgeBody.replace('function buildGraphEdgePaths', 'function buildGraphEdgePathsImpl');
@@ -882,6 +882,37 @@ test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', ()
   const paths = buildGraphEdgePathsFn(layoutNodes, edges);
   assert.equal(paths[0].path.startsWith(`M${nodeOffset} ${nodeOffset} L${40 + nodeOffset} ${nodeOffset}`), true, 'edges should start/end at node centers');
   assert.ok(paths[1].path.startsWith(`M${nodeOffset} ${nodeOffset}`), 'cycle edges should share node origin');
+
+  const svgFunctionBody = getFunctionBody(html, 'renderMessageGraphSvg');
+  const safeSvgBody = svgFunctionBody.replace('function renderMessageGraphSvg', 'function renderMessageGraphSvgImpl');
+  const renderMessageGraphSvgFn = eval(`
+    const NODE_CENTER_OFFSET = ${nodeOffset};
+    function escapeHtml(text) {
+      return (text === null || text === undefined) ? '' : String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+    ${safeSvgBody};
+    renderMessageGraphSvgImpl;
+  `);
+  const svgMarkup = renderMessageGraphSvgFn({
+    nodes: layoutNodes,
+    edges: paths,
+    width: 200,
+    height: 200,
+    graphMode: 'core'
+  }, 'msg-graph');
+  const circleMatch = svgMarkup.match(/<circle[^>]+cx="([\d.]+)"[^>]+cy="([\d.]+)"[^>]*>/);
+  assert.ok(circleMatch, 'svg output should include circle markup');
+  const circleCx = Number(circleMatch[1]);
+  const circleCy = Number(circleMatch[2]);
+  const pathMatches = Array.from(svgMarkup.matchAll(/<path[^>]+d="([^"]+)"/g));
+  assert.ok(pathMatches.length >= 2, 'svg output should include both edges');
+  const firstPath = pathMatches[0][1];
+  const cyclePath = pathMatches[1][1];
+  assert.ok(firstPath.startsWith(`M${circleCx} ${circleCy}`), 'rendered edge path should begin at node center');
+  assert.ok(cyclePath.startsWith(`M${circleCx} ${circleCy}`), 'rendered cycle path should begin at node center');
 });
 
 test('迷你图样式包含 loopback 线条', () => {
