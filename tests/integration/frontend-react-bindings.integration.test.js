@@ -801,6 +801,269 @@ test('React 页面按后端 reviewAction 枚举映射评审状态标签（accept
   ], 'missing backend reviewAction mapping contract');
 });
 
+test('React 页面为消息调用图提供摘要、展开面板与分组详情渲染钩子', () => {
+  const html = readPublicFile('public', 'index.html');
+  const summaryBody = getFunctionBody(html, 'renderMessageGraphSummary');
+  const panelBody = getFunctionBody(html, 'renderMessageGraphPanel');
+
+  assertContainsAll(html, [
+    'renderMessageGraphSummary(',
+    'renderMessageGraphPanel('
+  ], 'missing call-graph rendering hook in message cards');
+  assertContainsAll(summaryBody, [
+    'message__graph-summary',
+    'message__graph-badge',
+    'data-action="toggle-call-graph"',
+    '调用图',
+    '含环'
+  ], 'missing call-graph summary contract');
+  assertContainsAll(panelBody, [
+    'message__graph-panel',
+    'message__graph-meta',
+    'message__graph-details',
+    'renderGraphDetailGroups(callGraph)',
+    '查看结构详情'
+  ], 'missing call-graph panel contract');
+});
+
+test('React 页面通过事件代理支持消息调用图单开展开/收起', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assertContainsAll(html, [
+    'messagesEl.addEventListener(\'click\'',
+    'data-action="toggle-call-graph"',
+    'message__graph-panel',
+    'panel.setAttribute(\'hidden\', \'\');',
+    'target.textContent = \'收起\';'
+  ], 'missing delegated call-graph toggle contract');
+});
+
+test('React 页面在调用图面板提供迷你图 canvas/svg 渲染入口', () => {
+  const html = readPublicFile('public', 'index.html');
+  const panelBody = getFunctionBody(html, 'renderMessageGraphPanel');
+  const svgBody = getFunctionBody(html, 'renderMessageGraphSvg');
+
+  assertContainsAll(html, [
+    'renderMessageGraphCanvas(',
+    'renderMessageGraphSvg(',
+    'message__graph-canvas-wrap',
+    'message__graph-toolbar',
+    'message__graph-btn',
+    'message__graph-svg',
+    'data-node-id'
+  ], 'missing mini-graph canvas/svg markup contract inside call-graph panel');
+  assert.ok(html.includes('data-graph-mode="${graphMode}"'), 'should mark canvas with graph mode attribute');
+
+  assertContainsAll(panelBody, [
+    'renderMessageGraphCanvas(',
+    'message__graph-mini'
+  ], 'missing mini-graph wiring inside renderMessageGraphPanel');
+  assert.ok(html.includes('message__graph-edge--loopback'), 'should render loopback class on mini-graph edge paths');
+  assert.ok(svgBody.includes('viewBoxWidth'), 'svg helper should use computed viewBox width');
+  assert.ok(svgBody.includes('viewBoxHeight'), 'svg helper should use computed viewBox height');
+  assert.ok(svgBody.includes('data-message-id'), 'svg helper should expose the message id attribute');
+  assert.ok(svgBody.includes('data-graph-mode="${graphMode}"'), 'svg helper should carry the graph mode attribute');
+  assert.ok(svgBody.includes('data-graph-node-role="'), 'svg nodes should expose the role hook for future styling');
+
+  const offsetMatch = html.match(/const NODE_CENTER_OFFSET = (\d+);/);
+  const nodeOffset = offsetMatch ? Number(offsetMatch[1]) : 24;
+  const edgeBody = getFunctionBody(html, 'buildGraphEdgePaths');
+  const safeEdgeBody = edgeBody.replace('function buildGraphEdgePaths', 'function buildGraphEdgePathsImpl');
+  const buildGraphEdgePathsFn = eval(`const NODE_CENTER_OFFSET = ${nodeOffset}; ${safeEdgeBody}; buildGraphEdgePathsImpl;`);
+  const layoutNodes = [
+    { id: 'n1', x: 0, y: 0 },
+    { id: 'n2', x: 40, y: 0 }
+  ];
+  const edges = [
+    { id: 'e1', from: 'n1', to: 'n2' },
+    { id: 'e2', from: 'n1', to: 'n1', isCycleEdge: true }
+  ];
+  const paths = buildGraphEdgePathsFn(layoutNodes, edges);
+  assert.equal(paths[0].path.startsWith(`M${nodeOffset} ${nodeOffset} L${40 + nodeOffset} ${nodeOffset}`), true, 'edges should start/end at node centers');
+  assert.ok(paths[1].path.startsWith(`M${nodeOffset} ${nodeOffset}`), 'cycle edges should share node origin');
+
+  const svgFunctionBody = getFunctionBody(html, 'renderMessageGraphSvg');
+  const safeSvgBody = svgFunctionBody.replace('function renderMessageGraphSvg', 'function renderMessageGraphSvgImpl');
+  const renderMessageGraphSvgFn = eval(`
+    const NODE_CENTER_OFFSET = ${nodeOffset};
+    function escapeHtml(text) {
+      return (text === null || text === undefined) ? '' : String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+    ${safeSvgBody};
+    renderMessageGraphSvgImpl;
+  `);
+  const svgMarkup = renderMessageGraphSvgFn({
+    nodes: layoutNodes,
+    edges: paths,
+    width: 200,
+    height: 200,
+    graphMode: 'core'
+  }, 'msg-graph');
+  const circleMatch = svgMarkup.match(/<circle[^>]+cx="([\d.]+)"[^>]+cy="([\d.]+)"[^>]*>/);
+  assert.ok(circleMatch, 'svg output should include circle markup');
+  const circleCx = Number(circleMatch[1]);
+  const circleCy = Number(circleMatch[2]);
+  const pathMatches = Array.from(svgMarkup.matchAll(/<path[^>]+d="([^"]+)"/g));
+  assert.ok(pathMatches.length >= 2, 'svg output should include both edges');
+  const firstPath = pathMatches[0][1];
+  const cyclePath = pathMatches[1][1];
+  assert.ok(firstPath.startsWith(`M${circleCx} ${circleCy}`), 'rendered edge path should begin at node center');
+  assert.ok(cyclePath.startsWith(`M${circleCx} ${circleCy}`), 'rendered cycle path should begin at node center');
+});
+
+test('迷你图样式包含 loopback 线条', () => {
+  const css = readPublicFile('public', 'styles.css');
+  assert.ok(css.includes('.message__graph-edge--loopback'), 'should style .message__graph-edge--loopback');
+});
+
+test('迷你图 canvas 与工具栏样式存在', () => {
+  const css = readPublicFile('public', 'styles.css');
+  assert.ok(css.includes('.message__graph-canvas-wrap {'), 'should style .message__graph-canvas-wrap');
+  assert.ok(css.includes('.message__graph-toolbar {'), 'should style .message__graph-toolbar');
+  assert.ok(css.includes('.message__graph-btn {'), 'should style .message__graph-btn');
+});
+
+test('React 页面在迷你图工具栏提供展开与重置操作', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assertContainsAll(html, [
+    'data-action="expand-call-graph"',
+    'data-action="reset-call-graph-view"'
+  ], 'missing expand/reset toolbar contract for mini-graph');
+});
+
+test('React 页面为调用图迷你图维护按消息隔离的交互状态', () => {
+  const html = readPublicFile('public', 'index.html');
+
+  assertContainsAll(html, [
+    'const messageGraphUiState = new Map();',
+    'function getMessageGraphUiState(messageId) {',
+    'messageGraphUiState.get(messageId)',
+    'messageGraphUiState.set(messageId,'
+  ], 'missing per-message graph ui state contract');
+});
+
+test('React 页面通过迷你图工具栏支持展开全图与重置视图', () => {
+  const html = readPublicFile('public', 'index.html');
+  const clickHandlerBody = getFunctionBody(html, 'bindDomEvents');
+
+  assertContainsAll(clickHandlerBody, [
+    'action === \'expand-call-graph\'',
+    'action === \'reset-call-graph-view\'',
+    'getMessageGraphUiState(messageId)',
+    'graphState.isExpanded = !graphState.isExpanded;',
+    'graphState.panX = 0;',
+    'graphState.panY = 0;',
+    'rerenderMessageGraphPanel(messageEl, messageId);'
+  ], 'missing expand/reset interaction contract');
+});
+
+test('React 页面为迷你图提供拖拽平移事件与指针状态', () => {
+  const html = readPublicFile('public', 'index.html');
+  const bindBody = getFunctionBody(html, 'bindDomEvents');
+
+  assertContainsAll(bindBody, [
+    'messagesEl.addEventListener(\'pointerdown\'',
+    'messagesEl.addEventListener(\'pointermove\'',
+    'messagesEl.addEventListener(\'pointerup\'',
+    'messagesEl.addEventListener(\'pointercancel\'',
+    'graphState.isDragging = true;',
+    'graphState.pointerId = event.pointerId;',
+    'graphState.dragOriginX = event.clientX;',
+    'graphState.dragOriginY = event.clientY;',
+    'graphState.panX = graphState.dragStartPanX + deltaX;',
+    'graphState.panY = graphState.dragStartPanY + deltaY;',
+    'graphState.isDragging = false;'
+  ], 'missing pointer drag contract');
+});
+
+test('React 页面会把平移偏移应用到迷你图画布变换', () => {
+  const html = readPublicFile('public', 'index.html');
+  const canvasBody = getFunctionBody(html, 'renderMessageGraphCanvas');
+
+  assertContainsAll(canvasBody, [
+    'getMessageGraphUiState(messageId)',
+    'const graphMode = graphState.isExpanded ? \'full\' : \'core\';',
+    'const graphTransform = `translate(${graphState.panX}px, ${graphState.panY}px)`;',
+    'data-graph-pan-x="${escapeHtml(String(graphState.panX))}"',
+    'data-graph-pan-y="${escapeHtml(String(graphState.panY))}"',
+    'style="transform: ${graphTransform};"',
+    'selectFullGraph(callGraph)'
+  ], 'missing pan transform/full mode contract');
+});
+
+test('React 页面为调用图迷你图提供纯布局 helper 合约', () => {
+  const html = readPublicFile('public', 'index.html');
+  const selectBody = getFunctionBody(html, 'selectCoreGraph');
+  const assignBody = getFunctionBody(html, 'assignGraphDepths');
+  const layoutBody = getFunctionBody(html, 'layoutGraphNodes');
+  const edgeBody = getFunctionBody(html, 'buildGraphEdgePaths');
+
+  assertContainsAll(selectBody, [
+    'nodeIndex',
+    'MINI_GRAPH_CORE_LIMIT',
+    'focusNodeId',
+    'neighborMap',
+    'enqueue'
+  ], 'missing selectCoreGraph focus/core limit contract');
+
+  assertContainsAll(assignBody, [
+    'const incoming',
+    'depthMap',
+    'depth += 1',
+    'column:'
+  ], 'missing assignGraphDepths column/depth contract');
+
+  assertContainsAll(layoutBody, [
+    'spacingX',
+    'spacingY',
+    'layoutNodes',
+    'columnHeights'
+  ], 'missing layoutGraphNodes spacing contract');
+
+  assertContainsAll(edgeBody, [
+    'loopback',
+    'edge.isCycleEdge',
+    'M${',
+    'L${'
+  ], 'missing buildGraphEdgePaths path/loop contract');
+});
+
+test('selectCoreGraph 构建焦点邻居核心图', () => {
+  const html = readPublicFile('public', 'index.html');
+  const selectBody = getFunctionBody(html, 'selectCoreGraph');
+  const safeSelectBody = selectBody.replace('function selectCoreGraph', 'function selectCoreGraphFn');
+  const selectCoreGraph = eval(`const MINI_GRAPH_CORE_LIMIT = 8; ${safeSelectBody}; selectCoreGraphFn;`);
+  const callGraph = {
+    focusNodeId: 'node:focus',
+    nodes: [
+      { id: 'node:focus', label: 'focus' },
+      { id: 'node:a', label: 'A' },
+      { id: 'node:b', label: 'B' },
+      { id: 'node:c', label: 'C' },
+      { id: 'node:d', label: 'D' }
+    ],
+    edges: [
+      { id: 'edge:1', from: 'node:focus', to: 'node:a' },
+      { id: 'edge:2', from: 'node:b', to: 'node:focus' },
+      { id: 'edge:3', from: 'node:focus', to: 'node:c' },
+      { id: 'edge:4', from: 'node:d', to: 'node:b' }
+    ]
+  };
+
+  const core = selectCoreGraph(callGraph);
+  assert.ok(core);
+  assert.equal(core.focusNodeId, 'node:focus');
+  assert.equal(core.nodes[0].id, 'node:focus');
+  assert.ok(core.nodes.some(node => node.id === 'node:a'));
+  assert.ok(core.nodes.some(node => node.id === 'node:b'));
+  assert.ok(core.nodes.some(node => node.id === 'node:c'));
+  assert.ok(core.edges.every(edge => core.nodes.some(node => node.id === edge.from) && core.nodes.some(node => node.id === edge.to)));
+});
+
 test('React 页面会在当前会话设置中支持“不限制”语义并从会话数据同步状态', () => {
   const html = readPublicFile('public', 'index.html');
   const sessionSettingsCardBody = getArrowComponentBody(html, 'SessionSettingsCard');

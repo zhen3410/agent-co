@@ -3,6 +3,7 @@ import { addBlock, getStatus as getBlockBufferStatus } from '../../block-buffer'
 import { AppErrorOptions } from '../../shared/errors/app-error';
 import { AppError } from '../../shared/errors/app-error';
 import { APP_ERROR_CODES, AppErrorCode } from '../../shared/errors/app-error-codes';
+import { enrichMessagesWithCallGraphs } from '../domain/message-call-graph';
 import { createChatAgentExecution } from './chat-agent-execution';
 import { createChatDispatchOrchestrator } from './chat-dispatch-orchestrator';
 import { createChatResumeService } from './chat-resume-service';
@@ -35,6 +36,15 @@ function createChatServiceError(message: string, error: Pick<AppErrorOptions, 'c
 
 function buildSendContext(runtime: ChatRuntime, userKey: string, sessionId: string): string {
   return `${userKey}::${sessionId}`;
+}
+
+function mapMessagesFromHistory(history: Message[], messages: Message[]): Message[] {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return [];
+  }
+
+  const enrichedById = new Map(enrichMessagesWithCallGraphs(history).map(message => [message.id, message]));
+  return messages.map(message => enrichedById.get(message.id) || message);
 }
 
 function registerChatExecution(runtime: ChatRuntime, userKey: string, sessionId: string): ActiveExecutionRegistration {
@@ -159,11 +169,12 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     const emptyVisibleNotice = aiMessages.length === 0
       ? `${agentsToRespond.join('、')} 未返回可见消息，请稍后重试或查看日志。`
       : undefined;
+    const enrichedAiMessages = mapMessagesFromHistory(session.history, aiMessages);
 
     return {
       success: true as const,
       userMessage,
-      aiMessages,
+      aiMessages: enrichedAiMessages,
       currentAgent: sessionService.getCurrentAgent(userKey, session.id),
       notice: emptyVisibleNotice || (ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined)
     };
@@ -246,9 +257,10 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
         onThinking: callbacks.onThinking,
         onTextDelta: callbacks.onTextDelta,
         onMessage: (visibleMessage) => {
-          const delivered = callbacks.onMessage(visibleMessage);
+          const [enrichedVisibleMessage] = mapMessagesFromHistory(session.history, [visibleMessage]);
+          const delivered = callbacks.onMessage(enrichedVisibleMessage);
           if (!delivered) {
-            undeliveredMessages.push(visibleMessage);
+            undeliveredMessages.push(enrichedVisibleMessage);
           }
         }
       });
@@ -298,7 +310,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       throw new ChatServiceError('会话不存在', APP_ERROR_CODES.NOT_FOUND);
     }
 
-    return { sessionId, messages: session.history };
+    return { sessionId, messages: enrichMessagesWithCallGraphs(session.history) };
   }
 
   async function stopExecution(

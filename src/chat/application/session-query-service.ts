@@ -1,4 +1,5 @@
 import { ChatRuntime, UserChatSession } from '../runtime/chat-runtime';
+import { enrichMessagesWithCallGraphs } from '../domain/message-call-graph';
 import {
   SessionDeleteResponse,
   SessionHistoryResponse,
@@ -34,7 +35,7 @@ export function createSessionQueryService(deps: SessionQueryServiceDependencies)
     const normalizedSession = runtime.buildDetailedSessionResponse(session);
 
     return {
-      messages: normalizedSession.history,
+      messages: enrichMessagesWithCallGraphs(normalizedSession.history),
       agents,
       currentAgent: runtime.getUserCurrentAgent(userKey, normalizedSession.id),
       enabledAgents: runtime.getSessionEnabledAgents(normalizedSession),
@@ -60,7 +61,7 @@ export function createSessionQueryService(deps: SessionQueryServiceDependencies)
     const normalizedSession = runtime.buildDetailedSessionResponse(session);
     return {
       success: true,
-      messages: normalizedSession.history,
+      messages: enrichMessagesWithCallGraphs(normalizedSession.history),
       currentAgent: runtime.getUserCurrentAgent(userKey, normalizedSession.id),
       enabledAgents: runtime.getSessionEnabledAgents(normalizedSession),
       session: normalizedSession,
@@ -82,7 +83,7 @@ export function createSessionQueryService(deps: SessionQueryServiceDependencies)
     return {
       success: true,
       activeSessionId: normalizedSession.id,
-      messages: normalizedSession.history,
+      messages: enrichMessagesWithCallGraphs(normalizedSession.history),
       currentAgent: runtime.getUserCurrentAgent(userKey, normalizedSession.id),
       enabledAgents: runtime.getSessionEnabledAgents(normalizedSession),
       session: normalizedSession,
