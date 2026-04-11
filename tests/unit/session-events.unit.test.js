@@ -7,6 +7,8 @@ const {
 } = require('../../dist/chat/domain/session-events.js');
 
 const { createSessionEventRepository } = require('../../dist/chat/infrastructure/session-event-repository.js');
+const { createSessionEventService } = require('../../dist/chat/application/session-event-service.js');
+const { projectSessionSummary } = require('../../dist/chat/application/session-summary-projection.js');
 
 test('createSessionEvent normalizes required envelope fields', () => {
   const event = createSessionEvent({
@@ -131,4 +133,88 @@ test('session event repository batch append preserves draft order and filters by
 
   const eventsAfterTwo = repository.listEvents('session-c', 2);
   assert.deepEqual(eventsAfterTwo.map(evt => evt.seq), [3]);
+});
+
+function buildMessage(id, role, sender, text, timestamp = 1) {
+  return { id, role, sender, text, timestamp };
+}
+
+test('session event service wires repository, timeline, call graph, and summary helpers', () => {
+  const repository = createSessionEventRepository();
+  const service = createSessionEventService({ sessionEventRepository: repository });
+  const sessionId = 'session-test';
+
+  service.appendSystemEvent(sessionId, { eventType: 'session_created' });
+  service.appendUserEvent(sessionId, {
+    eventType: 'user_message_created',
+    actorName: 'Tester',
+    payload: { message: buildMessage('m1', 'user', 'Tester', 'hi timeline') }
+  });
+  service.appendCommandEvent(sessionId, { eventType: 'message_thinking_started', payload: { taskId: 'task-1' } });
+  service.appendAgentEvent(sessionId, {
+    eventType: 'agent_message_created',
+    actorName: 'Assistant',
+    payload: { message: buildMessage('m2', 'assistant', 'Assistant', 'reply timeline') }
+  });
+
+  const events = service.listSessionEvents(sessionId);
+  assert.equal(events.length, 4);
+  assert.ok(events.some(evt => evt.eventType === 'message_thinking_started'));
+
+  const timeline = service.buildSessionTimeline(sessionId);
+  assert.equal(timeline.length, 3);
+  assert.equal(timeline[0].kind, 'message');
+  assert.equal(timeline[0].message.text, 'hi timeline');
+
+  const callGraph = service.buildSessionCallGraph(sessionId);
+  const messageNodes = callGraph.nodes.filter(node => node.kind === 'message');
+  assert.ok(messageNodes.some(node => node.messageId === 'm1'));
+  assert.ok(messageNodes.some(node => node.messageId === 'm2'));
+
+  const summary = service.buildSessionSummary(sessionId);
+  assert.equal(summary.eventCount, 4);
+  assert.equal(summary.latestSeq, 4);
+  assert.equal(summary.visibleMessageCount, 2);
+  assert.equal(summary.lastVisibleMessage?.text, 'reply timeline');
+  assert.equal(summary.status, 'open');
+});
+
+test('projectSessionSummary derives snapshot metadata and status', () => {
+  const events = [
+    createSessionEvent({
+      sessionId: 's-summary',
+      seq: 1,
+      eventType: 'session_created',
+      actorType: 'system'
+    }),
+    createSessionEvent({
+      sessionId: 's-summary',
+      seq: 2,
+      eventType: 'user_message_created',
+      actorType: 'user',
+      payload: { message: buildMessage('u1', 'user', 'Tester', 'open') }
+    }),
+    createSessionEvent({
+      sessionId: 's-summary',
+      seq: 3,
+      eventType: 'agent_message_created',
+      actorType: 'agent',
+      payload: { message: buildMessage('a1', 'assistant', 'Assistant', 'closed') }
+    }),
+    createSessionEvent({
+      sessionId: 's-summary',
+      seq: 4,
+      eventType: 'session_closed',
+      actorType: 'system'
+    }),
+  ];
+
+  const summary = projectSessionSummary('s-summary', events);
+  assert.equal(summary.sessionId, 's-summary');
+  assert.equal(summary.latestSeq, 4);
+  assert.equal(summary.eventCount, 4);
+  assert.equal(summary.visibleMessageCount, 2);
+  assert.equal(summary.lastVisibleMessage?.text, 'closed');
+  assert.equal(summary.lastEventType, 'session_closed');
+  assert.equal(summary.status, 'closed');
 });

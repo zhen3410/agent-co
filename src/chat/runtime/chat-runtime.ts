@@ -24,6 +24,7 @@ import { createChatDiscussionState } from './chat-discussion-state';
 import { createChatRuntimePersistence } from './chat-runtime-persistence';
 import { createChatRuntimeDependencies } from './chat-runtime-dependencies';
 import { createChatRuntimeStores } from './chat-runtime-stores';
+import { createSessionEventService } from '../application/session-event-service';
 import { createChatActiveExecutionState } from './chat-active-execution-state';
 
 export type { UserChatSession, PendingAgentDispatchTask } from '../infrastructure/chat-session-repository';
@@ -42,7 +43,8 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     repository,
     callbackMessageStore,
     persistenceStore,
-    dependencyLogStore
+    dependencyLogStore,
+    sessionEventRepository
   } = createChatRuntimeStores(config);
   const redisClient = new Redis(config.redisUrl, { lazyConnect: true });
 
@@ -79,6 +81,10 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     normalizeSessionChainSettings: discussionState.normalizeSessionChainSettings,
     normalizeSessionDiscussionSettings: discussionState.normalizeSessionDiscussionSettings,
     normalizeDispatchKind: discussionState.normalizeDispatchKind
+  });
+
+  const sessionEventService = createSessionEventService({
+    sessionEventRepository
   });
 
   const runtimeDependencies = createChatRuntimeDependencies({
@@ -208,6 +214,14 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     consumeExecutionStopMode,
     consumeExecutionStopResult,
     clearActiveExecution,
+    appendCommandEvent: sessionEventService.appendCommandEvent,
+    appendUserEvent: sessionEventService.appendUserEvent,
+    appendAgentEvent: sessionEventService.appendAgentEvent,
+    appendSystemEvent: sessionEventService.appendSystemEvent,
+    listSessionEvents: sessionEventService.listSessionEvents,
+    buildSessionTimeline: sessionEventService.buildSessionTimeline,
+    buildSessionCallGraph: sessionEventService.buildSessionCallGraph,
+    buildSessionSummary: sessionEventService.buildSessionSummary,
     buildSessionResponse: sessionState.buildSessionResponse,
     buildDetailedSessionResponse: sessionState.buildDetailedSessionResponse,
     parseSessionChainPatch: sessionState.parseSessionChainPatch,

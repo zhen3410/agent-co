@@ -1,6 +1,11 @@
 import { Message, DiscussionMode, DiscussionState, AgentDispatchKind, InvocationTask, ChatExecutionStopMode, ChatExecutionStoppedMetadata } from '../../types';
 import { UserChatSession, PendingAgentDispatchTask } from '../infrastructure/chat-session-repository';
 import { DependencyStatusItem, DependencyStatusLogEntry } from '../infrastructure/dependency-log-store';
+import { ChatTimelineRow } from '../application/chat-timeline-projection';
+import { CallGraphProjection } from '../application/call-graph-projection';
+import { SessionEventEnvelope } from '../domain/session-events';
+import { SessionSummarySnapshot } from '../application/session-summary-projection';
+import { SessionEventWriteDraft } from '../application/session-event-service';
 
 export type NormalizedUserChatSession = UserChatSession & Required<Pick<UserChatSession, 'agentChainMaxHops' | 'agentChainMaxCallsPerAgent' | 'discussionMode' | 'discussionState' | 'invocationTasks'>>;
 export type DetailedNormalizedUserChatSession = NormalizedUserChatSession & { enabledAgents: string[]; agentWorkdirs: Record<string, string> };
@@ -97,6 +102,14 @@ export interface ChatRuntime {
   consumeExecutionStopMode(userKey: string, sessionId: string, executionId: string): ChatExecutionStopMode;
   consumeExecutionStopResult(userKey: string, sessionId: string, executionId: string): ActiveChatExecutionStopResult | null;
   clearActiveExecution(userKey: string, sessionId: string, executionId: string): boolean;
+  appendCommandEvent(sessionId: string, draft: SessionEventWriteDraft): SessionEventEnvelope;
+  appendUserEvent(sessionId: string, draft: SessionEventWriteDraft): SessionEventEnvelope;
+  appendAgentEvent(sessionId: string, draft: SessionEventWriteDraft): SessionEventEnvelope;
+  appendSystemEvent(sessionId: string, draft: SessionEventWriteDraft): SessionEventEnvelope;
+  listSessionEvents(sessionId: string, afterSeq?: number): SessionEventEnvelope[];
+  buildSessionTimeline(sessionId: string): ChatTimelineRow[];
+  buildSessionCallGraph(sessionId: string): CallGraphProjection;
+  buildSessionSummary(sessionId: string): SessionSummarySnapshot;
   buildSessionResponse(session: UserChatSession): NormalizedUserChatSession;
   buildDetailedSessionResponse(session: UserChatSession): DetailedNormalizedUserChatSession;
   parseSessionChainPatch(patch: unknown): SessionChainPatch;
