@@ -8,6 +8,7 @@ import { SessionSidebar } from '../features/session-sidebar/SessionSidebar';
 import { TimelinePanel } from '../features/timeline-panel/TimelinePanel';
 import { RuntimeStatusBadge } from '../features/runtime-status/RuntimeStatusBadge';
 import { CallGraphPanel } from '../features/call-graph/CallGraphPanel';
+import { resolveChatRealtimeUrl } from '../services/chat-realtime-url';
 import { createChatApi, type ChatApi } from '../services/chat-api';
 import {
   appendIncomingChatRealtimeData,
@@ -16,7 +17,7 @@ import {
   type ChatRealtimeConnection,
   type ChatRealtimeOptions
 } from '../services/chat-realtime';
-import type { ChatHistoryResponse, ChatMessage } from '../types';
+import type { ChatHistoryResponse, ChatMessage, ChatRealtimeEnvelope } from '../types';
 
 export interface ChatPageProps {
   initialState?: ChatHistoryResponse;
@@ -34,28 +35,6 @@ function createOptimisticUserMessage(text: string): ChatMessage {
     text,
     timestamp: Date.now()
   };
-}
-
-function resolveRealtimeUrl(): string {
-  if (typeof window === 'undefined') {
-    return '/api/ws/session-events';
-  }
-
-  const config = getMergedRuntimeConfig();
-  const configured = typeof config.realtimeBaseUrl === 'string' ? config.realtimeBaseUrl : '';
-  if (configured) {
-    if (/^wss?:\/\//i.test(configured)) {
-      return configured;
-    }
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    if (configured.startsWith('/')) {
-      return `${protocol}//${window.location.host}${configured}`;
-    }
-    return `${protocol}//${window.location.host}/${configured}`;
-  }
-
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/api/ws/session-events`;
 }
 
 function normalizeHistoryState(state: ChatHistoryResponse): ChatHistoryResponse {
@@ -92,9 +71,15 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
   const [loadState, setLoadState] = useState<LoadState>(initialState ? 'ready' : 'loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [panelRefreshSignal, setPanelRefreshSignal] = useState(0);
   const messagesRef = useRef<ChatMessage[]>(historyState?.messages ?? []);
   const realtimeSeqRef = useRef<number>(typeof initialState?.latestEventSeq === 'number' ? initialState.latestEventSeq : 0);
   const realtimeSessionIdRef = useRef<string | null>(historyState?.activeSessionId ?? null);
+  const realtimeSubscribedRef = useRef(false);
+
+  const notifyPanelsToRefresh = useCallback(() => {
+    setPanelRefreshSignal((current) => current + 1);
+  }, []);
 
   const applyHistoryState = useCallback((nextState: ChatHistoryResponse) => {
     const normalized = normalizeHistoryState(nextState);
@@ -104,6 +89,7 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
     if (realtimeSessionIdRef.current !== nextSessionId) {
       realtimeSessionIdRef.current = nextSessionId;
       realtimeSeqRef.current = nextLatestSeq ?? 0;
+      realtimeSubscribedRef.current = false;
     } else if (nextLatestSeq !== null && nextLatestSeq > realtimeSeqRef.current) {
       realtimeSeqRef.current = nextLatestSeq;
     }
@@ -152,15 +138,30 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
     }
 
     realtimeSessionIdRef.current = activeSessionId;
+    realtimeSubscribedRef.current = false;
     const connection = realtimeConnectionFactory({
       sessionId: activeSessionId,
-      url: resolveRealtimeUrl(),
+      url: resolveChatRealtimeUrl(),
       getAfterSeq: () => realtimeSeqRef.current,
       getMessages: () => messagesRef.current,
       onEnvelope: (payload) => {
         const sequence = extractRealtimeSequence(payload, activeSessionId);
         if (sequence !== null && sequence > realtimeSeqRef.current) {
           realtimeSeqRef.current = sequence;
+        }
+
+        const envelope = payload as ChatRealtimeEnvelope;
+        if (envelope.type === 'subscribed') {
+          if (realtimeSubscribedRef.current) {
+            notifyPanelsToRefresh();
+          } else {
+            realtimeSubscribedRef.current = true;
+          }
+          return;
+        }
+
+        if (envelope.type === 'session_event') {
+          notifyPanelsToRefresh();
         }
       },
       onMessage: (nextMessages) => {
@@ -181,7 +182,7 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
     return () => {
       connection.disconnect();
     };
-  }, [historyState?.activeSessionId, realtimeConnectionFactory]);
+  }, [historyState?.activeSessionId, notifyPanelsToRefresh, realtimeConnectionFactory]);
 
   const handleSubmit = async (message: string): Promise<void> => {
     const optimistic = createOptimisticUserMessage(message);
@@ -280,9 +281,18 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
         </div>
 
         <aside style={{ display: 'grid', gap: 'var(--space-4)' }}>
-          <RuntimeStatusBadge sessionId={safeState.activeSessionId} />
-          <TimelinePanel sessionId={safeState.activeSessionId} />
-          <CallGraphPanel sessionId={safeState.activeSessionId} />
+          <RuntimeStatusBadge
+            sessionId={safeState.activeSessionId}
+            refreshSignal={panelRefreshSignal}
+          />
+          <TimelinePanel
+            sessionId={safeState.activeSessionId}
+            refreshSignal={panelRefreshSignal}
+          />
+          <CallGraphPanel
+            sessionId={safeState.activeSessionId}
+            refreshSignal={panelRefreshSignal}
+          />
         </aside>
       </section>
     </AppShell>

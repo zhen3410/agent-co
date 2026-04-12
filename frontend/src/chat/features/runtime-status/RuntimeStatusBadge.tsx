@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { createHttpClient } from '../../../shared/lib/http/http-client';
 import { Card, EmptyState, ErrorState, Spinner } from '../../../shared/ui';
 import { getMergedRuntimeConfig } from '../../../shared/config/runtime-config';
-import { useSessionEventSignal } from '../shared/useSessionEventSignal';
+import { useSessionPanelResource } from '../shared/useSessionPanelResource';
 
 interface SessionSyncStatus {
   latestEventSeq: number;
@@ -11,10 +11,9 @@ interface SessionSyncStatus {
   discussionState: string;
 }
 
-type LoadState = 'idle' | 'loading' | 'ready' | 'error';
-
 export interface RuntimeStatusBadgeProps {
   sessionId?: string | null;
+  refreshSignal?: number;
   fetch?: typeof fetch;
 }
 
@@ -62,7 +61,7 @@ function normalizeErrorMessage(error: unknown): string {
   return '加载运行状态失败';
 }
 
-function useRuntimeStatus(sessionId: string | null | undefined, fetchImpl?: typeof fetch) {
+function useRuntimeStatus(_sessionId: string | null | undefined, fetchImpl?: typeof fetch) {
   const runtimeConfig = getMergedRuntimeConfig();
   const baseUrl = typeof runtimeConfig.apiBaseUrl === 'string' ? runtimeConfig.apiBaseUrl : undefined;
   const client = useMemo(() => {
@@ -71,57 +70,24 @@ function useRuntimeStatus(sessionId: string | null | undefined, fetchImpl?: type
       fetch: fetchImpl
     });
   }, [baseUrl, fetchImpl]);
-  const signal = useSessionEventSignal(sessionId);
-
-  const [loadState, setLoadState] = useState<LoadState>(sessionId ? 'loading' : 'idle');
-  const [status, setStatus] = useState<SessionSyncStatus | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!sessionId) {
-      setLoadState('idle');
-      setStatus(null);
-      setErrorMessage(null);
-      return undefined;
-    }
-
-    let cancelled = false;
-    setLoadState('loading');
-    setErrorMessage(null);
-
-    client.request(`/api/sessions/${encodeURIComponent(sessionId)}/sync-status`, {
-      credentials: 'include',
-      cache: 'no-store'
-    })
-      .then((payload) => {
-        if (cancelled) {
-          return;
-        }
-        setStatus(normalizeSyncStatus(payload));
-        setLoadState('ready');
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setLoadState('error');
-        setErrorMessage(normalizeErrorMessage(error));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [client, sessionId, signal]);
-
-  return {
-    loadState,
-    status,
-    errorMessage
-  };
+  return client;
 }
 
-export function RuntimeStatusBadge({ sessionId = null, fetch }: RuntimeStatusBadgeProps) {
-  const runtimeStatus = useRuntimeStatus(sessionId, fetch);
+export function RuntimeStatusBadge({ sessionId = null, refreshSignal = 0, fetch }: RuntimeStatusBadgeProps) {
+  const client = useRuntimeStatus(sessionId, fetch);
+  const runtimeStatus = useSessionPanelResource<SessionSyncStatus | null>({
+    sessionId,
+    refreshSignal,
+    initialData: null,
+    load: (targetSessionId, signal) => {
+      return client.request(`/api/sessions/${encodeURIComponent(targetSessionId)}/sync-status`, {
+        credentials: 'include',
+        cache: 'no-store',
+        signal
+      }).then((payload) => normalizeSyncStatus(payload));
+    },
+    normalizeErrorMessage
+  });
 
   return (
     <Card title="运行状态">
@@ -133,7 +99,7 @@ export function RuntimeStatusBadge({ sessionId = null, fetch }: RuntimeStatusBad
           />
         ) : null}
 
-        {sessionId && runtimeStatus.loadState === 'loading' && !runtimeStatus.status ? (
+        {sessionId && runtimeStatus.loadState === 'loading' && !runtimeStatus.data ? (
           <Spinner label="正在加载同步状态…" />
         ) : null}
 
@@ -144,23 +110,23 @@ export function RuntimeStatusBadge({ sessionId = null, fetch }: RuntimeStatusBad
           />
         ) : null}
 
-        {sessionId && runtimeStatus.loadState === 'ready' && runtimeStatus.status ? (
+        {sessionId && runtimeStatus.loadState === 'ready' && runtimeStatus.data ? (
           <dl style={{ display: 'grid', gap: 'var(--space-2)', margin: 0 }}>
             <div>
               <dt style={{ color: 'var(--color-text-muted)' }}>最新事件序号</dt>
-              <dd style={{ margin: 0 }}>{runtimeStatus.status.latestEventSeq}</dd>
+              <dd style={{ margin: 0 }}>{runtimeStatus.data.latestEventSeq}</dd>
             </div>
             <div>
               <dt style={{ color: 'var(--color-text-muted)' }}>最新时间线序号</dt>
-              <dd style={{ margin: 0 }}>{runtimeStatus.status.latestTimelineSeq ?? '未生成'}</dd>
+              <dd style={{ margin: 0 }}>{runtimeStatus.data.latestTimelineSeq ?? '未生成'}</dd>
             </div>
             <div>
               <dt style={{ color: 'var(--color-text-muted)' }}>时间线条目数</dt>
-              <dd style={{ margin: 0 }}>{runtimeStatus.status.timelineRowCount}</dd>
+              <dd style={{ margin: 0 }}>{runtimeStatus.data.timelineRowCount}</dd>
             </div>
             <div>
               <dt style={{ color: 'var(--color-text-muted)' }}>讨论状态</dt>
-              <dd style={{ margin: 0 }}>{toDiscussionStateLabel(runtimeStatus.status.discussionState)}</dd>
+              <dd style={{ margin: 0 }}>{toDiscussionStateLabel(runtimeStatus.data.discussionState)}</dd>
             </div>
           </dl>
         ) : null}

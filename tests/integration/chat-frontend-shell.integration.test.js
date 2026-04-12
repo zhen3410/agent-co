@@ -408,6 +408,20 @@ test('chat markdown 渲染能力位于 chat 共享边界并在功能组件复用
   assert.match(messageListSource, /from '\.\.\/\.\.\/services\/chat-markdown'/);
 });
 
+test('chat realtime URL 解析逻辑位于共享 service 边界并被 ChatPage 复用', () => {
+  const realtimeUrlPath = path.resolve(rootDir, 'frontend/src/chat/services/chat-realtime-url.ts');
+  const chatPagePath = path.resolve(rootDir, 'frontend/src/chat/pages/ChatPage.tsx');
+
+  assert.equal(fs.existsSync(realtimeUrlPath), true, 'chat realtime url resolver should live under chat/services');
+
+  const realtimeUrlSource = fs.readFileSync(realtimeUrlPath, 'utf8');
+  const chatPageSource = fs.readFileSync(chatPagePath, 'utf8');
+
+  assert.match(realtimeUrlSource, /export function resolveChatRealtimeUrl\(/);
+  assert.match(chatPageSource, /from '\.\.\/services\/chat-realtime-url'/);
+  assert.doesNotMatch(chatPageSource, /function resolveRealtimeUrl\(/);
+});
+
 class FakeSocket {
   constructor(url) {
     this.url = url;
@@ -457,6 +471,86 @@ class FakeSocket {
     this.readyState = 1;
     this.emit('open', {});
   }
+}
+
+class BrowserLikeWebSocket {
+  static instances = [];
+
+  constructor(url) {
+    this.url = url;
+    this.readyState = 0;
+    this.closed = false;
+    this.sentPayloads = [];
+    this.listeners = new Map();
+    BrowserLikeWebSocket.instances.push(this);
+  }
+
+  static reset() {
+    BrowserLikeWebSocket.instances = [];
+  }
+
+  addEventListener(type, listener) {
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, new Set());
+    }
+    this.listeners.get(type).add(listener);
+  }
+
+  removeEventListener(type, listener) {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  send(data) {
+    this.sentPayloads.push(data);
+  }
+
+  close(code = 1000, reason = 'client disconnect') {
+    this.closed = true;
+    this.readyState = 3;
+    this.emit('close', { code, reason, wasClean: true });
+  }
+
+  emit(type, event) {
+    const entries = this.listeners.get(type);
+    if (!entries) {
+      return;
+    }
+    for (const listener of entries) {
+      listener(event);
+    }
+  }
+
+  open() {
+    this.readyState = 1;
+    this.emit('open', {});
+  }
+}
+
+function countPanelEndpointCalls(calls) {
+  return calls.reduce((result, call) => {
+    if (typeof call.url !== 'string') {
+      return result;
+    }
+
+    if (call.url.includes('/sync-status')) {
+      result.syncStatus += 1;
+    }
+    if (call.url.includes('/timeline')) {
+      result.timeline += 1;
+    }
+    if (call.url.includes('/call-graph')) {
+      result.callGraph += 1;
+    }
+    return result;
+  }, { syncStatus: 0, timeline: 0, callGraph: 0 });
+}
+
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
 }
 
 test('realtime 适配器可驱动消息追加并反映到可见渲染列表', () => {
@@ -681,6 +775,281 @@ test('ChatPage realtime 生命周期稳定并推进 afterSeq 游标', async () =
     });
     assert.equal(connectionState.disconnectCalls, 1);
     global.window = originalWindow;
+  }
+});
+
+test('ChatPage 在浏览器 WebSocket 场景中仅创建单一订阅并避免初始重复 refetch', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const originalWindow = global.window;
+  const originalFetch = global.fetch;
+  const originalWebSocket = global.WebSocket;
+  BrowserLikeWebSocket.reset();
+
+  const fetchCalls = [];
+  const fetchImpl = async (url, init = {}) => {
+    fetchCalls.push({ url: String(url), init });
+
+    if (String(url).includes('/sync-status')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({
+          latestEventSeq: 1,
+          latestTimelineSeq: 1,
+          timelineRowCount: 1,
+          discussionState: 'active'
+        }),
+        text: async () => '{}'
+      };
+    }
+
+    if (String(url).includes('/timeline')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ timeline: createSampleTimelineRows() }),
+        text: async () => '{}'
+      };
+    }
+
+    if (String(url).includes('/call-graph')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ callGraph: createSampleCallGraphProjection() }),
+        text: async () => '{}'
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ error: 'not found' }),
+      text: async () => '{"error":"not found"}'
+    };
+  };
+
+  global.window = {
+    location: {
+      protocol: 'http:',
+      host: '127.0.0.1:3000'
+    },
+    WebSocket: BrowserLikeWebSocket
+  };
+  global.WebSocket = BrowserLikeWebSocket;
+  global.fetch = fetchImpl;
+
+  const api = {
+    async loadHistory() {
+      return createSampleHistoryState();
+    },
+    async sendMessage() {
+      return { accepted: true };
+    }
+  };
+
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(ChatPage, {
+        initialState: createSampleHistoryState(),
+        api
+      }));
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    assert.equal(BrowserLikeWebSocket.instances.length, 1, 'chat page should only create one realtime websocket subscription');
+
+    const initialCounts = countPanelEndpointCalls(fetchCalls);
+    assert.deepEqual(initialCounts, {
+      syncStatus: 1,
+      timeline: 1,
+      callGraph: 1
+    });
+
+    const socket = BrowserLikeWebSocket.instances[0];
+    await act(async () => {
+      socket.open();
+      socket.emit('message', {
+        data: JSON.stringify({
+          type: 'subscribed',
+          sessionId: 'session-1',
+          latestSeq: 9
+        })
+      });
+      await Promise.resolve();
+    });
+
+    const subscribedCounts = countPanelEndpointCalls(fetchCalls);
+    assert.deepEqual(subscribedCounts, initialCounts, 'initial subscribe ack should not trigger duplicate panel refetch');
+  } finally {
+    await act(async () => {
+      renderer?.unmount();
+    });
+    global.window = originalWindow;
+    global.fetch = originalFetch;
+    global.WebSocket = originalWebSocket;
+    BrowserLikeWebSocket.reset();
+  }
+});
+
+test('ChatPage 二级面板在事件突发时避免重叠请求并合并为有限重拉取', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const originalWindow = global.window;
+  const originalFetch = global.fetch;
+  const originalWebSocket = global.WebSocket;
+  BrowserLikeWebSocket.reset();
+
+  const stats = {
+    syncStatus: { count: 0, inFlight: 0, maxInFlight: 0, deferred: [] },
+    timeline: { count: 0, inFlight: 0, maxInFlight: 0, deferred: [] },
+    callGraph: { count: 0, inFlight: 0, maxInFlight: 0, deferred: [] }
+  };
+
+  const createPayloadByType = (type) => {
+    if (type === 'syncStatus') {
+      return {
+        latestEventSeq: 2,
+        latestTimelineSeq: 2,
+        timelineRowCount: 2,
+        discussionState: 'active'
+      };
+    }
+    if (type === 'timeline') {
+      return { timeline: createSampleTimelineRows() };
+    }
+    return { callGraph: createSampleCallGraphProjection() };
+  };
+
+  const fetchImpl = (url) => {
+    const normalized = String(url);
+    let statKey = null;
+    if (normalized.includes('/sync-status')) {
+      statKey = 'syncStatus';
+    } else if (normalized.includes('/timeline')) {
+      statKey = 'timeline';
+    } else if (normalized.includes('/call-graph')) {
+      statKey = 'callGraph';
+    }
+
+    if (!statKey) {
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ error: 'not found' }),
+        text: async () => '{"error":"not found"}'
+      });
+    }
+
+    const stat = stats[statKey];
+    stat.count += 1;
+    stat.inFlight += 1;
+    stat.maxInFlight = Math.max(stat.maxInFlight, stat.inFlight);
+    const deferred = createDeferred();
+    stat.deferred.push(deferred);
+
+    return deferred.promise.then(() => {
+      stat.inFlight -= 1;
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => createPayloadByType(statKey),
+        text: async () => '{}'
+      };
+    });
+  };
+
+  global.window = {
+    location: {
+      protocol: 'http:',
+      host: '127.0.0.1:3000'
+    },
+    WebSocket: BrowserLikeWebSocket
+  };
+  global.WebSocket = BrowserLikeWebSocket;
+  global.fetch = fetchImpl;
+
+  const api = {
+    async loadHistory() {
+      return createSampleHistoryState();
+    },
+    async sendMessage() {
+      return { accepted: true };
+    }
+  };
+
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(ChatPage, {
+        initialState: createSampleHistoryState(),
+        api
+      }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    assert.equal(BrowserLikeWebSocket.instances.length, 1);
+    const socket = BrowserLikeWebSocket.instances[0];
+    socket.open();
+
+    for (let index = 0; index < 6; index += 1) {
+      socket.emit('message', {
+        data: JSON.stringify({
+          type: 'session_event',
+          sessionId: 'session-1',
+          event: { seq: 10 + index, eventId: `event-${index}`, eventType: 'dispatch_task_created' }
+        })
+      });
+    }
+
+    assert.equal(stats.syncStatus.maxInFlight <= 1, true);
+    assert.equal(stats.timeline.maxInFlight <= 1, true);
+    assert.equal(stats.callGraph.maxInFlight <= 1, true);
+
+    const resolveAll = async () => {
+      for (const stat of Object.values(stats)) {
+        const pending = [...stat.deferred];
+        stat.deferred.length = 0;
+        for (const deferred of pending) {
+          deferred.resolve();
+        }
+      }
+      await Promise.resolve();
+    };
+
+    await act(async () => {
+      await resolveAll();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    assert.equal(stats.syncStatus.count <= 2, true, 'sync-status refetches should be deduped under burst');
+    assert.equal(stats.timeline.count <= 2, true, 'timeline refetches should be deduped under burst');
+    assert.equal(stats.callGraph.count <= 2, true, 'call-graph refetches should be deduped under burst');
+  } finally {
+    await act(async () => {
+      renderer?.unmount();
+    });
+    global.window = originalWindow;
+    global.fetch = originalFetch;
+    global.WebSocket = originalWebSocket;
+    BrowserLikeWebSocket.reset();
   }
 });
 

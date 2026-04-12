@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { createHttpClient } from '../../../shared/lib/http/http-client';
 import { Card, EmptyState, ErrorState, Spinner } from '../../../shared/ui';
 import { getMergedRuntimeConfig } from '../../../shared/config/runtime-config';
-import { useSessionEventSignal } from '../shared/useSessionEventSignal';
-
-type LoadState = 'idle' | 'loading' | 'ready' | 'error';
+import { useSessionPanelResource } from '../shared/useSessionPanelResource';
 
 interface CallGraphNode {
   id: string;
@@ -28,6 +26,7 @@ interface CallGraphProjection {
 
 export interface CallGraphPanelProps {
   sessionId?: string | null;
+  refreshSignal?: number;
   fetch?: typeof fetch;
 }
 
@@ -79,7 +78,7 @@ function normalizeErrorMessage(error: unknown): string {
   return '加载调用图失败';
 }
 
-function useCallGraph(sessionId: string | null | undefined, fetchImpl?: typeof fetch) {
+function useCallGraph(_sessionId: string | null | undefined, fetchImpl?: typeof fetch) {
   const runtimeConfig = getMergedRuntimeConfig();
   const baseUrl = typeof runtimeConfig.apiBaseUrl === 'string' ? runtimeConfig.apiBaseUrl : undefined;
   const client = useMemo(() => {
@@ -88,53 +87,7 @@ function useCallGraph(sessionId: string | null | undefined, fetchImpl?: typeof f
       fetch: fetchImpl
     });
   }, [baseUrl, fetchImpl]);
-  const signal = useSessionEventSignal(sessionId);
-
-  const [loadState, setLoadState] = useState<LoadState>(sessionId ? 'loading' : 'idle');
-  const [graph, setGraph] = useState<CallGraphProjection>({ nodes: [], edges: [] });
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!sessionId) {
-      setLoadState('idle');
-      setGraph({ nodes: [], edges: [] });
-      setErrorMessage(null);
-      return undefined;
-    }
-
-    let cancelled = false;
-    setLoadState('loading');
-    setErrorMessage(null);
-
-    client.request(`/api/sessions/${encodeURIComponent(sessionId)}/call-graph`, {
-      credentials: 'include',
-      cache: 'no-store'
-    })
-      .then((payload) => {
-        if (cancelled) {
-          return;
-        }
-        setGraph(normalizeCallGraph(payload));
-        setLoadState('ready');
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setLoadState('error');
-        setErrorMessage(normalizeErrorMessage(error));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [client, sessionId, signal]);
-
-  return {
-    loadState,
-    graph,
-    errorMessage
-  };
+  return client;
 }
 
 function buildNodeLabel(node: CallGraphNode): string {
@@ -150,8 +103,21 @@ function buildNodeLabel(node: CallGraphNode): string {
   return node.id;
 }
 
-export function CallGraphPanel({ sessionId = null, fetch }: CallGraphPanelProps) {
-  const callGraph = useCallGraph(sessionId, fetch);
+export function CallGraphPanel({ sessionId = null, refreshSignal = 0, fetch }: CallGraphPanelProps) {
+  const client = useCallGraph(sessionId, fetch);
+  const callGraph = useSessionPanelResource<CallGraphProjection>({
+    sessionId,
+    refreshSignal,
+    initialData: { nodes: [], edges: [] },
+    load: (targetSessionId, signal) => {
+      return client.request(`/api/sessions/${encodeURIComponent(targetSessionId)}/call-graph`, {
+        credentials: 'include',
+        cache: 'no-store',
+        signal
+      }).then((payload) => normalizeCallGraph(payload));
+    },
+    normalizeErrorMessage
+  });
 
   return (
     <Card title="调用图谱">
@@ -163,7 +129,7 @@ export function CallGraphPanel({ sessionId = null, fetch }: CallGraphPanelProps)
           />
         ) : null}
 
-        {sessionId && callGraph.loadState === 'loading' && callGraph.graph.nodes.length === 0 ? (
+        {sessionId && callGraph.loadState === 'loading' && callGraph.data.nodes.length === 0 ? (
           <Spinner label="正在加载调用图…" />
         ) : null}
 
@@ -174,23 +140,23 @@ export function CallGraphPanel({ sessionId = null, fetch }: CallGraphPanelProps)
           />
         ) : null}
 
-        {sessionId && callGraph.loadState === 'ready' && callGraph.graph.nodes.length === 0 ? (
+        {sessionId && callGraph.loadState === 'ready' && callGraph.data.nodes.length === 0 ? (
           <EmptyState
             title="暂无调用图节点"
             description="当前会话还没有形成调用链路。"
           />
         ) : null}
 
-        {sessionId && callGraph.graph.nodes.length > 0 ? (
+        {sessionId && callGraph.data.nodes.length > 0 ? (
           <>
             <p style={{ color: 'var(--color-text-muted)', margin: 0 }}>
-              节点 {callGraph.graph.nodes.length} · 连线 {callGraph.graph.edges.length}
+              节点 {callGraph.data.nodes.length} · 连线 {callGraph.data.edges.length}
             </p>
 
             <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
               <strong style={{ color: 'var(--color-text)' }}>节点</strong>
               <ul style={{ display: 'grid', gap: 'var(--space-1)', margin: 0, paddingLeft: 'var(--space-4)' }}>
-                {callGraph.graph.nodes.slice(0, 12).map((node) => (
+                {callGraph.data.nodes.slice(0, 12).map((node) => (
                   <li key={node.id}>
                     {node.id} · {buildNodeLabel(node)}
                   </li>
@@ -198,11 +164,11 @@ export function CallGraphPanel({ sessionId = null, fetch }: CallGraphPanelProps)
               </ul>
             </div>
 
-            {callGraph.graph.edges.length > 0 ? (
+            {callGraph.data.edges.length > 0 ? (
               <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
                 <strong style={{ color: 'var(--color-text)' }}>连线</strong>
                 <ul style={{ display: 'grid', gap: 'var(--space-1)', margin: 0, paddingLeft: 'var(--space-4)' }}>
-                  {callGraph.graph.edges.slice(0, 12).map((edge) => (
+                  {callGraph.data.edges.slice(0, 12).map((edge) => (
                     <li key={edge.id}>
                       {edge.type} · {edge.source} → {edge.target}
                     </li>

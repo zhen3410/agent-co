@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { createHttpClient } from '../../../shared/lib/http/http-client';
 import { Card, EmptyState, ErrorState, Spinner } from '../../../shared/ui';
 import { getMergedRuntimeConfig } from '../../../shared/config/runtime-config';
-import { useSessionEventSignal } from '../shared/useSessionEventSignal';
-
-type LoadState = 'idle' | 'loading' | 'ready' | 'error';
+import { useSessionPanelResource } from '../shared/useSessionPanelResource';
 
 type TimelineRowKind = 'message' | 'thinking' | 'dispatch' | 'review';
 
@@ -28,6 +26,7 @@ interface TimelineRow {
 
 export interface TimelinePanelProps {
   sessionId?: string | null;
+  refreshSignal?: number;
   fetch?: typeof fetch;
 }
 
@@ -107,7 +106,7 @@ function normalizeErrorMessage(error: unknown): string {
   return '加载时间线失败';
 }
 
-function useTimelineRows(sessionId: string | null | undefined, fetchImpl?: typeof fetch) {
+function useTimelineRows(_sessionId: string | null | undefined, fetchImpl?: typeof fetch) {
   const runtimeConfig = getMergedRuntimeConfig();
   const baseUrl = typeof runtimeConfig.apiBaseUrl === 'string' ? runtimeConfig.apiBaseUrl : undefined;
   const client = useMemo(() => {
@@ -116,57 +115,24 @@ function useTimelineRows(sessionId: string | null | undefined, fetchImpl?: typeo
       fetch: fetchImpl
     });
   }, [baseUrl, fetchImpl]);
-  const signal = useSessionEventSignal(sessionId);
-
-  const [loadState, setLoadState] = useState<LoadState>(sessionId ? 'loading' : 'idle');
-  const [rows, setRows] = useState<TimelineRow[]>([]);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!sessionId) {
-      setLoadState('idle');
-      setRows([]);
-      setErrorMessage(null);
-      return undefined;
-    }
-
-    let cancelled = false;
-    setLoadState('loading');
-    setErrorMessage(null);
-
-    client.request(`/api/sessions/${encodeURIComponent(sessionId)}/timeline`, {
-      credentials: 'include',
-      cache: 'no-store'
-    })
-      .then((payload) => {
-        if (cancelled) {
-          return;
-        }
-        setRows(normalizeTimelineRows(payload));
-        setLoadState('ready');
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setLoadState('error');
-        setErrorMessage(normalizeErrorMessage(error));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [client, sessionId, signal]);
-
-  return {
-    loadState,
-    rows,
-    errorMessage
-  };
+  return client;
 }
 
-export function TimelinePanel({ sessionId = null, fetch }: TimelinePanelProps) {
-  const timeline = useTimelineRows(sessionId, fetch);
+export function TimelinePanel({ sessionId = null, refreshSignal = 0, fetch }: TimelinePanelProps) {
+  const client = useTimelineRows(sessionId, fetch);
+  const timeline = useSessionPanelResource<TimelineRow[]>({
+    sessionId,
+    refreshSignal,
+    initialData: [],
+    load: (targetSessionId, signal) => {
+      return client.request(`/api/sessions/${encodeURIComponent(targetSessionId)}/timeline`, {
+        credentials: 'include',
+        cache: 'no-store',
+        signal
+      }).then((payload) => normalizeTimelineRows(payload));
+    },
+    normalizeErrorMessage
+  });
 
   return (
     <Card title="会话时间线">
@@ -178,7 +144,7 @@ export function TimelinePanel({ sessionId = null, fetch }: TimelinePanelProps) {
           />
         ) : null}
 
-        {sessionId && timeline.loadState === 'loading' && timeline.rows.length === 0 ? (
+        {sessionId && timeline.loadState === 'loading' && timeline.data.length === 0 ? (
           <Spinner label="正在加载时间线…" />
         ) : null}
 
@@ -189,16 +155,16 @@ export function TimelinePanel({ sessionId = null, fetch }: TimelinePanelProps) {
           />
         ) : null}
 
-        {sessionId && timeline.loadState === 'ready' && timeline.rows.length === 0 ? (
+        {sessionId && timeline.loadState === 'ready' && timeline.data.length === 0 ? (
           <EmptyState
             title="暂无时间线事件"
             description="当前会话还没有可展示的事件。"
           />
         ) : null}
 
-        {sessionId && timeline.rows.length > 0 ? (
+        {sessionId && timeline.data.length > 0 ? (
           <ol style={{ display: 'grid', gap: 'var(--space-2)', margin: 0, paddingLeft: 'var(--space-4)' }}>
-            {timeline.rows.slice(-12).reverse().map((row) => (
+            {timeline.data.slice(-12).reverse().map((row) => (
               <li key={row.id} style={{ color: 'var(--color-text)' }}>
                 <span style={{ color: 'var(--color-text-muted)' }}>#{row.seq} </span>
                 <span>{describeTimelineRow(row)}</span>
