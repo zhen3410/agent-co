@@ -1,5 +1,5 @@
 import { Button, Card } from '../../../shared/ui';
-import { renderMarkdownHtml } from '../message-list/chat-markdown';
+import { renderMarkdownHtml } from '../../services/chat-markdown';
 import { useChatComposer } from './useChatComposer';
 
 export interface ChatComposerProps {

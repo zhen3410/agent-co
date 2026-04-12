@@ -1,6 +1,6 @@
 import { Card, EmptyState, ErrorState, Spinner } from '../../../shared/ui';
 import type { ChatMessage } from '../../types';
-import { renderMarkdownHtml } from './chat-markdown';
+import { renderMarkdownHtml } from '../../services/chat-markdown';
 
 export interface ChatMessageListProps {
   messages: ChatMessage[];

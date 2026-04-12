@@ -200,10 +200,75 @@ test('消息列表保留基础 Markdown 渲染能力', () => {
   assert.match(html, /<code>pwd<\/code>/);
 });
 
-test('realtime 适配器可以把传入事件和消息追加到当前可见列表', () => {
-  const { appendIncomingChatRealtimeData } = loadTsModule('frontend/src/chat/services/chat-realtime.ts');
+test('chat markdown 渲染能力位于 chat 共享边界并在功能组件复用', () => {
+  const markdownServicePath = path.resolve(rootDir, 'frontend/src/chat/services/chat-markdown.ts');
+  const composerPath = path.resolve(rootDir, 'frontend/src/chat/features/composer/ChatComposer.tsx');
+  const messageListPath = path.resolve(rootDir, 'frontend/src/chat/features/message-list/ChatMessageList.tsx');
 
-  const initialMessages = [
+  assert.equal(fs.existsSync(markdownServicePath), true, 'chat markdown renderer should live under chat/services');
+
+  const composerSource = fs.readFileSync(composerPath, 'utf8');
+  const messageListSource = fs.readFileSync(messageListPath, 'utf8');
+  assert.match(composerSource, /from '\.\.\/\.\.\/services\/chat-markdown'/);
+  assert.match(messageListSource, /from '\.\.\/\.\.\/services\/chat-markdown'/);
+});
+
+class FakeSocket {
+  constructor(url) {
+    this.url = url;
+    this.readyState = 0;
+    this.closed = false;
+    this.sentPayloads = [];
+    this.listeners = new Map();
+  }
+
+  addEventListener(type, listener) {
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, new Set());
+    }
+    this.listeners.get(type).add(listener);
+  }
+
+  removeEventListener(type, listener) {
+    const entries = this.listeners.get(type);
+    entries?.delete(listener);
+  }
+
+  send(data) {
+    this.sentPayloads.push(data);
+  }
+
+  close() {
+    this.closed = true;
+    this.readyState = 3;
+    this.emit('close', {
+      code: 1000,
+      reason: 'client disconnect',
+      wasClean: true
+    });
+  }
+
+  emit(type, event) {
+    const entries = this.listeners.get(type);
+    if (!entries) {
+      return;
+    }
+    for (const listener of entries) {
+      listener(event);
+    }
+  }
+
+  open() {
+    this.readyState = 1;
+    this.emit('open', {});
+  }
+}
+
+test('realtime 适配器可驱动消息追加并反映到可见渲染列表', () => {
+  const { createChatRealtimeConnection } = loadTsModule('frontend/src/chat/services/chat-realtime.ts');
+  const { ChatMessageList } = loadTsModule('frontend/src/chat/features/message-list/ChatMessageList.tsx');
+
+  let currentMessages = [
     {
       id: 'user-1',
       role: 'user',
@@ -213,40 +278,108 @@ test('realtime 适配器可以把传入事件和消息追加到当前可见列�
     }
   ];
 
-  const fromEvent = appendIncomingChatRealtimeData(initialMessages, {
-    type: 'session_event',
+  let latestHtml = renderToStaticMarkup(React.createElement(ChatMessageList, {
+    messages: currentMessages
+  }));
+
+  assert.match(latestHtml, /先前消息/);
+
+  let createdSocket = null;
+  const connection = createChatRealtimeConnection({
     sessionId: 'session-1',
-    event: {
-      seq: 2,
-      eventId: 'event-2',
-      eventType: 'agent_message_created',
-      payload: {
-        message: {
-          id: 'assistant-2',
-          role: 'assistant',
-          sender: 'Alice',
-          text: '来自事件流的回复',
-          timestamp: 2
-        }
-      }
+    url: 'ws://127.0.0.1:19999/api/ws/session-events',
+    getMessages: () => currentMessages,
+    onMessage: (nextMessages) => {
+      currentMessages = nextMessages;
+      latestHtml = renderToStaticMarkup(React.createElement(ChatMessageList, {
+        messages: currentMessages
+      }));
+    },
+    webSocketFactory: (url) => {
+      createdSocket = new FakeSocket(url);
+      return createdSocket;
     }
   });
 
-  assert.equal(fromEvent.length, 2);
-  assert.equal(fromEvent[1].text, '来自事件流的回复');
+  connection.connect();
+  assert.ok(createdSocket, 'socket should be created by realtime connection');
 
-  const fromDirectMessage = appendIncomingChatRealtimeData(fromEvent, {
+  createdSocket.open();
+  assert.equal(createdSocket.sentPayloads.length, 1, 'realtime connect should send subscribe payload');
+  assert.deepEqual(JSON.parse(createdSocket.sentPayloads[0]), {
+    type: 'subscribe',
+    sessionId: 'session-1',
+    afterSeq: 0
+  });
+
+  createdSocket.emit('message', {
+    data: JSON.stringify({
+      type: 'session_event',
+      sessionId: 'session-1',
+      event: {
+        seq: 2,
+        eventId: 'event-2',
+        eventType: 'agent_message_created',
+        payload: {
+          message: {
+            id: 'assistant-2',
+            role: 'assistant',
+            sender: 'Alice',
+            text: '来自事件流的回复',
+            timestamp: 2
+          }
+        }
+      }
+    })
+  });
+  assert.match(latestHtml, /来自事件流的回复/);
+
+  createdSocket.emit('message', {
+    data: JSON.stringify({
+      type: 'message',
+      message: {
+        id: 'system-3',
+        role: 'system',
+        sender: '系统',
+        text: '直接消息补丁',
+        timestamp: 3
+      }
+    })
+  });
+  assert.match(latestHtml, /直接消息补丁/);
+
+  connection.disconnect();
+  assert.equal(createdSocket.closed, true);
+  assert.equal(currentMessages.length, 3);
+  assert.deepEqual(currentMessages.map((message) => message.id), [
+    'user-1',
+    'assistant-2',
+    'system-3'
+  ]);
+});
+
+test('ChatPage 与 realtime 适配器组合后，新增消息会出现在渲染结果中', () => {
+  const { appendIncomingChatRealtimeData } = loadTsModule('frontend/src/chat/services/chat-realtime.ts');
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+  const initialState = createSampleHistoryState();
+
+  const nextMessages = appendIncomingChatRealtimeData(initialState.messages, {
     type: 'message',
     message: {
-      id: 'system-3',
-      role: 'system',
-      sender: '系统',
-      text: '直接消息补丁',
+      id: 'assistant-next-1',
+      role: 'assistant',
+      sender: 'Alice',
+      text: 'realtime 补充消息',
       timestamp: 3
     }
   });
 
-  assert.equal(fromDirectMessage.length, 3);
-  assert.equal(fromDirectMessage[2].role, 'system');
-  assert.equal(fromDirectMessage[2].text, '直接消息补丁');
+  const html = renderToStaticMarkup(React.createElement(ChatPage, {
+    initialState: {
+      ...initialState,
+      messages: nextMessages
+    }
+  }));
+
+  assert.match(html, /realtime 补充消息/);
 });
