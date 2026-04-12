@@ -15,6 +15,12 @@ export const SESSION_EVENT_TYPES = [
   'dispatch_task_completed',
   'agent_review_requested',
   'agent_review_submitted',
+  'agent_invocation_enqueued',
+  'agent_invocation_started',
+  'agent_invocation_completed',
+  'agent_invocation_failed',
+  'agent_invocation_cancelled',
+  'invocation_lane_drained',
 ] as const;
 
 export type SessionEventType = (typeof SESSION_EVENT_TYPES)[number];
