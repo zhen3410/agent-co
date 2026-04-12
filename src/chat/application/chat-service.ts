@@ -3,6 +3,7 @@ import { addBlock, getStatus as getBlockBufferStatus } from '../../block-buffer'
 import { AppErrorOptions } from '../../shared/errors/app-error';
 import { AppError } from '../../shared/errors/app-error';
 import { APP_ERROR_CODES, AppErrorCode } from '../../shared/errors/app-error-codes';
+import { enrichMessagesWithCallGraphs } from '../domain/message-call-graph';
 import { createChatAgentExecution } from './chat-agent-execution';
 import { createChatDispatchOrchestrator } from './chat-dispatch-orchestrator';
 import { createChatResumeService } from './chat-resume-service';
@@ -197,7 +198,6 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       notice: ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined
     };
   }
-
   function createBlock(payload: { sessionId?: string; block: RichBlock }) {
     const { sessionId = 'default', block } = payload;
     if (!block) {
@@ -226,7 +226,7 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
       throw new ChatServiceError('会话不存在', APP_ERROR_CODES.NOT_FOUND);
     }
 
-    return { sessionId, messages: session.history };
+    return { sessionId, messages: enrichMessagesWithCallGraphs(session.history) };
   }
 
   async function stopExecution(

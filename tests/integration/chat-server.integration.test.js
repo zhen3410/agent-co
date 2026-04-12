@@ -2509,6 +2509,58 @@ test('被调用者回复会回传给调用者做 accept 复核', async () => {
   }
 });
 
+test('调用链相关 assistant 消息会在历史记录中携带 callGraph 快照，且 /api/chat 保持 accepted 契约', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-call-graph-'));
+  createReviewLoopClaudeScript(tempDir, 'accept');
+
+  const fixture = await createChatServerFixture({
+    env: {
+      PATH: `${tempDir}:${process.env.PATH || ''}`
+    }
+  });
+
+  try {
+    await fixture.login();
+    await enableAgents(fixture, ['Alice', 'Bob']);
+
+    const chatResponse = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: '@Alice 发起调用并要求 Bob 给出落地方案' }
+    });
+
+    assert.equal(chatResponse.status, 200);
+    assert.equal(chatResponse.body.success, true);
+    assert.equal(chatResponse.body.accepted, true);
+    assert.equal(Array.isArray(chatResponse.body.aiMessages), false);
+    assert.equal(chatResponse.body.userMessage, undefined);
+
+    const historyResponse = await waitForCondition(async () => {
+      const history = await fixture.request('/api/history');
+      const graphMessages = Array.isArray(history.body?.messages)
+        ? history.body.messages.filter(item => item.taskId && item.callGraph)
+        : [];
+      const reviewMessage = history.body?.messages?.find(item => item.messageSubtype === 'invocation_review');
+      return graphMessages.length >= 2 && reviewMessage?.callGraph ? history : null;
+    }, 4000, 100);
+
+    assert.equal(historyResponse.status, 200);
+    const historyGraphMessages = historyResponse.body.messages.filter(item => item.taskId);
+    assert.equal(historyGraphMessages.length >= 2, true);
+    assert.equal(historyGraphMessages.every(item => item.callGraph && item.callGraph.focusNodeId === `message:${item.id}`), true);
+    assert.equal(historyGraphMessages.some(item => item.callGraph && item.callGraph.hasCycle), false);
+    const historyReviewMessage = historyResponse.body.messages.find(item => item.messageSubtype === 'invocation_review');
+    assert.ok(historyReviewMessage.callGraph);
+    assert.equal(historyReviewMessage.callGraph.focusNodeId, `message:${historyReviewMessage.id}`);
+    assert.equal(historyReviewMessage.callGraph.summary.participantNames.includes('Alice'), true);
+    assert.equal(historyReviewMessage.callGraph.summary.participantNames.includes('Bob'), true);
+    assert.equal(Array.isArray(historyReviewMessage.callGraph.nodes), true);
+    assert.equal(Array.isArray(historyReviewMessage.callGraph.edges), true);
+  } finally {
+    await fixture.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('peer 模式下调用者复核结果会写入可见历史', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-review-loop-peer-visible-'));
   createReviewLoopClaudeScript(tempDir, 'accept');

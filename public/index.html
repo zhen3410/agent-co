@@ -548,6 +548,7 @@
     };
     let activeSessionSyncNonce = 0;
     let statusNoticeText = '';
+    const messageGraphUiState = new Map();
     let groups = [];
     let expandedGroups = new Set();
     let activeGroup = null;
@@ -2044,6 +2045,403 @@
       `;
     }
 
+    function renderGraphDetailGroups(callGraph) {
+      if (!callGraph || !Array.isArray(callGraph.nodes) || callGraph.nodes.length === 0) {
+        return '<div class="message__graph-empty">暂无可展示的调用图详情</div>';
+      }
+
+      const sourceNodes = callGraph.nodes.filter(node => node.kind === 'message' && node.subtype === 'user');
+      const executionNodes = callGraph.nodes.filter(node => node.kind === 'execution');
+      const focusNodes = callGraph.nodes.filter(node => node.isFocus);
+      const cycleEdges = callGraph.edges.filter(edge => edge.isCycleEdge);
+
+      const groups = [
+        { title: '触发源', items: sourceNodes.map(node => `${node.label}${node.actorName ? ` · ${node.actorName}` : ''}`) },
+        { title: '执行', items: executionNodes.map(node => `${node.label}${node.status ? ` · ${node.status}` : ''}`) },
+        { title: '当前消息', items: focusNodes.map(node => `${node.label}${node.actorName ? ` · ${node.actorName}` : ''}`) },
+        { title: '环回关系', items: cycleEdges.map(edge => `${edge.from.replace(/^execution:/, '')} → ${edge.to.replace(/^execution:/, '')}`) }
+      ].filter(group => group.items.length > 0);
+
+      return groups.map(group => `
+        <section class="message__graph-group">
+          <h4>${escapeHtml(group.title)}</h4>
+          <ul>
+            ${group.items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
+          </ul>
+        </section>
+      `).join('');
+    }
+
+    const MINI_GRAPH_CORE_LIMIT = 8;
+    const NODE_CENTER_OFFSET = 24;
+
+    function getMessageGraphUiState(messageId) {
+      if (!messageId) {
+        return {
+          isExpanded: false,
+          panX: 0,
+          panY: 0,
+          isDragging: false,
+          pointerId: null,
+          dragOriginX: 0,
+          dragOriginY: 0,
+          dragStartPanX: 0,
+          dragStartPanY: 0
+        };
+      }
+
+      const existingState = messageGraphUiState.get(messageId);
+      if (existingState) {
+        return existingState;
+      }
+
+      const nextState = {
+        isExpanded: false,
+        panX: 0,
+        panY: 0,
+        isDragging: false,
+        pointerId: null,
+        dragOriginX: 0,
+        dragOriginY: 0,
+        dragStartPanX: 0,
+        dragStartPanY: 0
+      };
+      messageGraphUiState.set(messageId, nextState);
+      return nextState;
+    }
+
+    function selectFullGraph(callGraph) {
+      if (!callGraph || !Array.isArray(callGraph.nodes)) {
+        return null;
+      }
+
+      return {
+        focusNodeId: callGraph.focusNodeId,
+        nodes: callGraph.nodes,
+        edges: Array.isArray(callGraph.edges) ? callGraph.edges : []
+      };
+    }
+
+    function selectCoreGraph(callGraph) {
+      if (!callGraph || !Array.isArray(callGraph.nodes)) {
+        return null;
+      }
+
+      const nodeIndex = new Map();
+      callGraph.nodes.forEach((node, index) => {
+        nodeIndex.set(node.id, index);
+      });
+
+      const neighborMap = new Map();
+      const addNeighbor = (id, target) => {
+        if (!target || id === target) return;
+        const neighbors = neighborMap.get(id) || new Set();
+        neighbors.add(target);
+        neighborMap.set(id, neighbors);
+      };
+
+      if (Array.isArray(callGraph.edges)) {
+        for (const edge of callGraph.edges) {
+          addNeighbor(edge.from, edge.to);
+          addNeighbor(edge.to, edge.from);
+        }
+      }
+
+      const limit = MINI_GRAPH_CORE_LIMIT;
+      const focusId = callGraph.focusNodeId;
+      const ordered = [];
+      const seen = new Set();
+      const enqueue = [];
+
+      const enqueueNeighbors = (rootId) => {
+        const neighbors = Array.from(neighborMap.get(rootId) || []);
+        neighbors.sort((a, b) => (nodeIndex.get(a) ?? Infinity) - (nodeIndex.get(b) ?? Infinity));
+        for (const neighbor of neighbors) {
+          if (seen.has(neighbor)) continue;
+          enqueue.push(neighbor);
+          seen.add(neighbor);
+        }
+      };
+
+      if (focusId && nodeIndex.has(focusId)) {
+        ordered.push(callGraph.nodes[nodeIndex.get(focusId)]);
+        seen.add(focusId);
+        enqueueNeighbors(focusId);
+      }
+
+      while (enqueue.length > 0 && ordered.length < limit) {
+        const nextId = enqueue.shift();
+        if (!nextId) continue;
+        const node = callGraph.nodes[nodeIndex.get(nextId)];
+        if (!node) continue;
+        ordered.push(node);
+        enqueueNeighbors(nextId);
+      }
+
+      if (ordered.length < limit) {
+        for (const node of callGraph.nodes) {
+          if (ordered.length >= limit) break;
+          if (seen.has(node.id)) continue;
+          ordered.push(node);
+          seen.add(node.id);
+        }
+      }
+
+      const selectedIds = new Set(ordered.map(node => node.id));
+      const edges = Array.isArray(callGraph.edges)
+        ? callGraph.edges.filter(edge => selectedIds.has(edge.from) && selectedIds.has(edge.to))
+        : [];
+
+      return {
+        focusNodeId: focusId,
+        nodes: ordered,
+        edges
+      };
+    }
+
+    function assignGraphDepths(nodes, edges = [], focusNodeId) {
+      if (!Array.isArray(nodes)) {
+        return { depthMap: {}, columnCounter: {}, layoutNodes: [], incoming: new Map() };
+      }
+
+      const depthMap = {};
+      const incoming = new Map();
+      const outgoing = new Map();
+
+      for (const edge of edges) {
+        const forward = outgoing.get(edge.from) || [];
+        forward.push(edge.to);
+        outgoing.set(edge.from, forward);
+
+        const backward = incoming.get(edge.to) || [];
+        backward.push(edge.from);
+        incoming.set(edge.to, backward);
+      }
+
+      const queue = [];
+      const seedDepth = (id, depth) => {
+        if (depthMap[id] === undefined) {
+          depthMap[id] = depth;
+          queue.push(id);
+        }
+      };
+
+      if (focusNodeId) {
+        seedDepth(focusNodeId, 0);
+      }
+
+      while (queue.length > 0) {
+        const current = queue.shift();
+        const currentDepth = depthMap[current] ?? 0;
+        let depth = currentDepth;
+        depth += 1;
+
+        const forward = outgoing.get(current) || [];
+        for (const target of forward) {
+          seedDepth(target, depth);
+        }
+
+        const backward = incoming.get(current) || [];
+        const prevDepth = currentDepth - 1;
+        for (const source of backward) {
+          seedDepth(source, prevDepth);
+        }
+      }
+
+      for (const node of nodes) {
+        if (depthMap[node.id] === undefined) {
+          depthMap[node.id] = 0;
+        }
+      }
+
+      const columnCounter = {};
+      const layoutNodes = nodes.map(node => {
+        const depth = depthMap[node.id] ?? 0;
+        const columnIndex = (columnCounter[depth] || 0) + 1;
+        columnCounter[depth] = columnIndex;
+        return {
+          ...node,
+          depth,
+          column: columnIndex
+        };
+      });
+
+      return { depthMap, columnCounter, layoutNodes, incoming };
+    }
+
+    function layoutGraphNodes(nodes) {
+      const spacingX = 140;
+      const spacingY = 90;
+      const normalized = Array.isArray(nodes) ? nodes : [];
+      const depths = normalized.map(node => node.depth ?? 0);
+      const minDepth = depths.length === 0 ? 0 : Math.min(0, ...depths);
+      const depthShift = minDepth < 0 ? -minDepth : 0;
+      const columnHeights = {};
+      const layoutNodes = normalized.map(node => {
+        const depth = node.depth ?? 0;
+        const column = Math.max(1, node.column ?? 1);
+        const adjustedDepth = depth + depthShift;
+        const x = adjustedDepth * spacingX;
+        const baseY = (column - 1) * spacingY;
+        const columnKey = `${adjustedDepth}-${column}`;
+        const y = columnHeights[columnKey] ?? baseY;
+        columnHeights[columnKey] = y + spacingY;
+        return {
+          ...node,
+          x,
+          y
+        };
+      });
+      const width = Math.max(0, ...layoutNodes.map(node => node.x)) + spacingX;
+      const height = Math.max(0, ...layoutNodes.map(node => node.y)) + spacingY;
+      return { layoutNodes, width, height, spacingX, spacingY };
+    }
+
+    function buildGraphEdgePaths(layoutNodes, edges = []) {
+      const nodeMap = new Map((Array.isArray(layoutNodes) ? layoutNodes : []).map(node => [node.id, node]));
+      return edges.map(edge => {
+        const from = nodeMap.get(edge.from);
+        const to = nodeMap.get(edge.to);
+        if (!from || !to) return null;
+        const loopback = from.id === to.id;
+        const highlightCycle = edge.isCycleEdge === true;
+        const startX = from.x + NODE_CENTER_OFFSET;
+        const startY = from.y + NODE_CENTER_OFFSET;
+        const endX = to.x + NODE_CENTER_OFFSET;
+        const endY = to.y + NODE_CENTER_OFFSET;
+        let path;
+        if (loopback) {
+          path = `M${startX} ${startY} c 16 -12 40 -12 40 0`;
+        } else if (highlightCycle) {
+          const midX = (startX + endX) / 2;
+          const minY = Math.min(startY, endY);
+          const midY = Math.max(NODE_CENTER_OFFSET, minY - 40);
+          path = `M${startX} ${startY} Q${midX} ${midY} ${endX} ${endY}`;
+        } else {
+          path = `M${startX} ${startY} L${endX} ${endY}`;
+        }
+        return {
+          edgeId: edge.id,
+          path,
+          loopback: loopback || highlightCycle,
+          highlightCycle
+        };
+      }).filter(Boolean);
+    }
+
+    function renderMessageGraphSvg(graphView, messageId = '') {
+      const nodes = Array.isArray(graphView?.nodes) ? graphView.nodes : [];
+      const edges = Array.isArray(graphView?.edges) ? graphView.edges : [];
+      const width = typeof graphView?.width === 'number' && graphView.width > 0 ? graphView.width : 400;
+      const height = typeof graphView?.height === 'number' && graphView.height > 0 ? graphView.height : 220;
+      const viewBoxWidth = Math.max(width, 1);
+      const viewBoxHeight = Math.max(height, 1);
+      const messageAttr = messageId ? ` data-message-id="${escapeHtml(messageId)}"` : '';
+      const graphMode = escapeHtml(graphView?.graphMode || 'core');
+      const edgeMarkup = edges.map(edge => {
+        const d = escapeHtml(edge.path || 'M0 0 L0 0');
+        const classes = ['message__graph-edge'];
+        if (edge.loopback) classes.push('message__graph-edge--loopback');
+        if (edge.highlightCycle) classes.push('message__graph-edge--cycle');
+        return `<path class="${classes.join(' ')}" data-edge-id="${escapeHtml(edge.edgeId || edge.id || '')}" data-loopback="${edge.loopback ? '1' : '0'}" d="${d}"></path>`;
+      }).join('');
+      const nodeMarkup = nodes.map(node => {
+        const nodeRole = node.isFocus ? 'focus' : 'core';
+        const cx = typeof node.x === 'number' ? node.x + NODE_CENTER_OFFSET : NODE_CENTER_OFFSET;
+        const cy = typeof node.y === 'number' ? node.y + NODE_CENTER_OFFSET : NODE_CENTER_OFFSET;
+        return `<circle class="message__graph-node" data-node-id="${escapeHtml(node.id || '')}" data-graph-node-role="${nodeRole}" cx="${cx}" cy="${cy}" r="6"></circle>`;
+      }).join('');
+      return `
+        <svg class="message__graph-svg" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="${viewBoxWidth}" height="${viewBoxHeight}" role="presentation" xmlns="http://www.w3.org/2000/svg"${messageAttr} data-graph-mode="${graphMode}">
+          ${edgeMarkup}
+          ${nodeMarkup}
+        </svg>
+      `;
+    }
+
+    function renderMessageGraphCanvas(callGraph, messageId = '') {
+      const graphState = getMessageGraphUiState(messageId);
+      const graphView = graphState.isExpanded ? selectFullGraph(callGraph) : selectCoreGraph(callGraph);
+      const depthInfo = graphView && graphView.nodes.length > 0
+        ? assignGraphDepths(graphView.nodes, graphView.edges, graphView.focusNodeId)
+        : null;
+      const layoutInfo = depthInfo ? layoutGraphNodes(depthInfo.layoutNodes) : { layoutNodes: [], width: 0, height: 0 };
+      const edgePaths = graphView ? buildGraphEdgePaths(layoutInfo.layoutNodes, graphView.edges) : [];
+      const messageAttr = messageId ? ` data-message-id="${escapeHtml(messageId)}"` : '';
+      const graphMode = graphState.isExpanded ? 'full' : 'core';
+      const graphTransform = `translate(${graphState.panX}px, ${graphState.panY}px)`;
+      const expandLabel = graphState.isExpanded ? '收起全图' : '展开全部';
+      const resetAttrs = (!graphState.isExpanded && graphState.panX === 0 && graphState.panY === 0)
+        ? ' disabled aria-disabled="true"'
+        : '';
+      return `
+        <div
+          class="message__graph-canvas-wrap"
+          data-graph-canvas${messageAttr} data-graph-mode="${graphMode}" data-graph-pan-x="${escapeHtml(String(graphState.panX))}" data-graph-pan-y="${escapeHtml(String(graphState.panY))}"
+        >
+          <div class="message__graph-toolbar">
+            <button type="button" class="message__graph-btn" data-action="expand-call-graph">${expandLabel}</button>
+            <button type="button" class="message__graph-btn" data-action="reset-call-graph-view"${resetAttrs}>重置</button>
+          </div>
+          <div data-graph-stage style="transform: ${graphTransform};">
+            ${renderMessageGraphSvg({
+              nodes: layoutInfo.layoutNodes,
+              edges: edgePaths,
+              width: layoutInfo.width,
+              height: layoutInfo.height,
+              graphMode
+            }, messageId)}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderMessageGraphSummary(callGraph) {
+      if (!callGraph) return '';
+
+      const cycleBadge = callGraph.hasCycle
+        ? '<span class="message__graph-badge message__graph-badge--cycle">含环</span>'
+        : '';
+      const truncatedBadge = callGraph.truncated
+        ? '<span class="message__graph-badge">已裁剪</span>'
+        : '';
+
+      return `
+        <div class="message__graph-summary">
+          <span class="message__graph-badge">调用图 ${escapeHtml(String(callGraph.summary.nodeCount))} 节点</span>
+          ${cycleBadge}
+          ${truncatedBadge}
+          <button class="message__graph-toggle" type="button" data-action="toggle-call-graph">展开</button>
+        </div>
+      `;
+    }
+
+    function renderMessageGraphPanel(callGraph, messageId = '') {
+      if (!callGraph) return '';
+
+      const participantText = Array.isArray(callGraph.summary.participantNames) && callGraph.summary.participantNames.length > 0
+        ? `参与者 ${escapeHtml(callGraph.summary.participantNames.join(' / '))}`
+        : '参与者未知';
+      const cycleText = callGraph.hasCycle ? ` · 含 ${escapeHtml(String(callGraph.summary.cycleCount || 1))} 个环` : '';
+      const truncatedText = callGraph.truncated ? ` · 已折叠 ${escapeHtml(String(callGraph.summary.truncatedNodeCount || 0))} 个节点` : '';
+      const miniGraphMarkup = renderMessageGraphCanvas(callGraph, messageId);
+
+      return `
+        <div class="message__graph-panel" hidden>
+          <div class="message__graph-meta">
+            ${escapeHtml(String(callGraph.summary.nodeCount))} 节点 · ${escapeHtml(String(callGraph.summary.edgeCount))} 边 · ${participantText}${cycleText}${truncatedText}
+          </div>
+          <div class="message__graph-details-title">查看结构详情</div>
+          <div class="message__graph-mini">
+            ${miniGraphMarkup}
+          </div>
+          <div class="message__graph-details">
+            ${renderGraphDetailGroups(callGraph)}
+          </div>
+        </div>
+      `;
+    }
+
     function renderMessage(msg, options = {}) {
       const isUser = msg.role === 'user';
       const isInvocationReview = msg.messageSubtype === 'invocation_review';
@@ -2062,23 +2460,32 @@
         role: msg.role || 'assistant',
         enableMentions: true
       });
-
       if (isUser) {
-        content = `<div class="message__text message__text--markdown">${renderedMarkdown}</div>`;
+        content = `
+          <div class="message__text message__text--markdown">${renderedMarkdown}</div>
+          ${renderMessageGraphSummary(msg.callGraph)}
+          ${renderMessageGraphPanel(msg.callGraph, msg.id)}
+        `;
       } else {
         if (isInvocationReview) {
-          content = renderInvocationReviewMessageContent(msg, colorStyle);
+          content = `
+            ${renderInvocationReviewMessageContent(msg, colorStyle)}
+            ${renderMessageGraphSummary(msg.callGraph)}
+            ${renderMessageGraphPanel(msg.callGraph, msg.id)}
+          `;
         } else {
           content = `
             <div class="message__sender" ${colorStyle}>${escapeHtml(msg.sender || 'AI')}</div>
             <div class="message__text message__text--markdown">${renderedMarkdown}</div>
             <div class="message__blocks">${renderBlocks(msg.blocks)}</div>
+            ${renderMessageGraphSummary(msg.callGraph)}
+            ${renderMessageGraphPanel(msg.callGraph, msg.id)}
           `;
         }
       }
 
       return `
-        <div class="message ${roleClass}${extraClass}"${extraAttrs} ${colorStyle}>
+        <div class="message ${roleClass}${extraClass}"${extraAttrs} ${colorStyle} data-message-id="${escapeHtml(msg.id || '')}">
           <div class="message__avatar">${avatar}</div>
           <div class="message__content">${content}</div>
         </div>
@@ -2954,6 +3361,36 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    function getHistoryMessageById(messageId) {
+      if (!messageId) return null;
+      const matchedRow = timelineRows.find((row) => row && row.kind === 'message' && row.message && row.message.id === messageId);
+      return matchedRow ? matchedRow.message : null;
+    }
+
+    function getRenderedMessageById(messageId) {
+      if (!messageId) return null;
+      return Array.from(messagesEl.querySelectorAll('.message[data-message-id]'))
+        .find((el) => el.getAttribute('data-message-id') === messageId) || null;
+    }
+
+    function rerenderMessageGraphPanel(messageEl, messageId) {
+      if (!messageEl || !messageId) return;
+      const message = getHistoryMessageById(messageId);
+      if (!message || !message.callGraph) return;
+      const miniGraphEl = messageEl.querySelector('.message__graph-mini');
+      if (!miniGraphEl) return;
+      miniGraphEl.innerHTML = renderMessageGraphCanvas(message.callGraph, messageId);
+    }
+
+    function releaseMessageGraphDrag(pointerId = null) {
+      for (const [, graphState] of messageGraphUiState.entries()) {
+        if (!graphState.isDragging) continue;
+        if (pointerId !== null && graphState.pointerId !== pointerId) continue;
+        graphState.isDragging = false;
+        graphState.pointerId = null;
+      }
+    }
+
     function showSystemNotice(notice) {
       if (!notice) return;
       setStatusNotice(notice);
@@ -3122,6 +3559,7 @@
         const response = await fetch('/api/history', { credentials: 'include', cache: 'no-store' });
         if (response.ok) {
           const data = await response.json();
+          messageGraphUiState.clear();
           if (data.agents) {
             agents = data.agents;
           }
@@ -3169,6 +3607,7 @@
         const data = await response.json();
         timelineRows = [];
         lastSeenEventSeq = 0;
+        messageGraphUiState.clear();
         currentAgent = data.currentAgent;
         currentAgentWillExpire = false;
         updateCurrentAgentUI();
@@ -3382,6 +3821,107 @@
       });
 
       agentWorkdirLevel3El.addEventListener('change', onChatWorkdirLevel3Change);
+
+      messagesEl.addEventListener('click', (event) => {
+        const target = event.target.closest('[data-action]');
+        if (!target) return;
+
+        const messageEl = target.closest('[data-message-id]');
+        const messageId = messageEl ? messageEl.getAttribute('data-message-id') : '';
+        const action = target.getAttribute('data-action');
+
+        if (action === 'expand-call-graph' || action === 'reset-call-graph-view') {
+          if (!messageEl || !messageId) return;
+          const graphState = getMessageGraphUiState(messageId);
+          if (action === 'expand-call-graph') {
+            graphState.isExpanded = !graphState.isExpanded;
+            if (!graphState.isExpanded) {
+              graphState.panX = 0;
+              graphState.panY = 0;
+            }
+          } else {
+            graphState.isExpanded = false;
+            graphState.panX = 0;
+            graphState.panY = 0;
+          }
+          graphState.isDragging = false;
+          graphState.pointerId = null;
+          rerenderMessageGraphPanel(messageEl, messageId);
+          return;
+        }
+
+        if (action !== 'toggle-call-graph') return;
+
+        const panel = messageEl ? messageEl.querySelector('.message__graph-panel') : null;
+        if (!panel) return;
+
+        const willOpen = panel.hasAttribute('hidden');
+
+        document.querySelectorAll('.message__graph-panel').forEach((el) => {
+          el.setAttribute('hidden', '');
+        });
+        document.querySelectorAll('[data-action="toggle-call-graph"]').forEach((button) => {
+          button.textContent = '展开';
+        });
+
+        if (!willOpen) {
+          panel.setAttribute('hidden', '');
+          return;
+        }
+
+        panel.removeAttribute('hidden');
+        target.textContent = '收起';
+      });
+
+      messagesEl.addEventListener('pointerdown', (event) => {
+        const canvasEl = event.target.closest('[data-graph-canvas]');
+        if (!canvasEl) return;
+
+        const messageEl = canvasEl.closest('[data-message-id]');
+        const messageId = messageEl ? messageEl.getAttribute('data-message-id') : '';
+        if (!messageId) return;
+
+        const graphState = getMessageGraphUiState(messageId);
+        if (!graphState.isExpanded) return;
+
+        graphState.isDragging = true;
+        graphState.pointerId = event.pointerId;
+        graphState.dragOriginX = event.clientX;
+        graphState.dragOriginY = event.clientY;
+        graphState.dragStartPanX = graphState.panX;
+        graphState.dragStartPanY = graphState.panY;
+      });
+
+      messagesEl.addEventListener('pointermove', (event) => {
+        const draggingEntry = Array.from(messageGraphUiState.entries())
+          .find(([, graphState]) => graphState.isDragging && graphState.pointerId === event.pointerId);
+        if (!draggingEntry) return;
+
+        const [messageId, graphState] = draggingEntry;
+        const deltaX = event.clientX - graphState.dragOriginX;
+        const deltaY = event.clientY - graphState.dragOriginY;
+        graphState.panX = graphState.dragStartPanX + deltaX;
+        graphState.panY = graphState.dragStartPanY + deltaY;
+
+        const messageEl = getRenderedMessageById(messageId);
+        const stageEl = messageEl ? messageEl.querySelector('[data-graph-stage]') : null;
+        const canvasEl = messageEl ? messageEl.querySelector('[data-graph-canvas]') : null;
+        if (stageEl) {
+          stageEl.style.transform = `translate(${graphState.panX}px, ${graphState.panY}px)`;
+        }
+        if (canvasEl) {
+          canvasEl.setAttribute('data-graph-pan-x', String(graphState.panX));
+          canvasEl.setAttribute('data-graph-pan-y', String(graphState.panY));
+        }
+      });
+
+      messagesEl.addEventListener('pointerup', (event) => {
+        releaseMessageGraphDrag(event.pointerId);
+      });
+
+      messagesEl.addEventListener('pointercancel', (event) => {
+        releaseMessageGraphDrag(event.pointerId);
+      });
     }
 
     // ============================================
