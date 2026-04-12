@@ -26,6 +26,9 @@ test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /asset
     assert.equal(assetResponse.status, 200);
     assert.match(assetResponse.headers.get('content-type') || '', /javascript/i);
     assert.ok(assetBody.length > 0, 'chat asset body should not be empty');
+
+    const missingAssetResponse = await fetch(`http://127.0.0.1:${fixture.port}/assets/does-not-exist.js`);
+    assert.equal(missingAssetResponse.status, 404);
   } finally {
     await fixture.cleanup();
   }

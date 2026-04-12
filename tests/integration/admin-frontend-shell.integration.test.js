@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { tmpdir } = require('node:os');
 const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
 
 function extractFirstJsAssetPath(html) {
@@ -36,19 +37,24 @@ test('admin 服务在管理入口 URL 返回 Vite 构建 shell，并可访问 /a
     assert.equal(assetResponse.status, 200);
     assert.match(assetResponse.headers.get('content-type') || '', /javascript/i);
     assert.ok(assetBody.length > 0, 'admin asset body should not be empty');
+
+    const missingAssetResponse = await fetch(`http://127.0.0.1:${fixture.port}/assets/does-not-exist.js`);
+    assert.equal(missingAssetResponse.status, 404);
   } finally {
     await fixture.cleanup();
   }
 });
 
 test('admin 入口 URL 在缺失前端构建产物时返回清晰错误', async () => {
-  const adminShellPath = path.join(process.cwd(), 'dist', 'frontend', 'admin.html');
-  const backupPath = `${adminShellPath}.bak.integration`;
-  fs.renameSync(adminShellPath, backupPath);
+  const isolatedFrontendRoot = fs.mkdtempSync(path.join(tmpdir(), 'agent-co-admin-frontend-missing-'));
 
   let fixture = null;
   try {
-    fixture = await createAuthAdminFixture();
+    fixture = await createAuthAdminFixture({
+      env: {
+        AGENT_CO_FRONTEND_DIST_DIR: isolatedFrontendRoot
+      }
+    });
     const response = await fetch(`http://127.0.0.1:${fixture.port}/`);
     const body = await response.json();
 
@@ -59,6 +65,6 @@ test('admin 入口 URL 在缺失前端构建产物时返回清晰错误', async 
     if (fixture) {
       await fixture.cleanup();
     }
-    fs.renameSync(backupPath, adminShellPath);
+    fs.rmSync(isolatedFrontendRoot, { recursive: true, force: true });
   }
 });
