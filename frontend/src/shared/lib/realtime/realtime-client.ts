@@ -61,13 +61,13 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
   };
 
   const scheduleReconnect = (event: RealtimeDisconnectDetail): void => {
-    reconnectAttempt += 1;
-
-    if (!reconnectPolicy.shouldReconnect(reconnectAttempt, event as unknown as CloseEvent)) {
+    const nextRetryAttempt = reconnectAttempt;
+    if (!reconnectPolicy.shouldReconnect(nextRetryAttempt, event as unknown as CloseEvent)) {
       return;
     }
 
-    const delayMs = reconnectPolicy.getDelayMs(reconnectAttempt);
+    const delayMs = reconnectPolicy.getDelayMs(nextRetryAttempt);
+    reconnectAttempt += 1;
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       connect();
@@ -129,6 +129,10 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
   const send = (payload: unknown): void => {
     if (!socket) {
       throw new Error('Cannot send realtime message before connection is established');
+    }
+
+    if (socket.readyState !== 1) {
+      throw new Error('Cannot send realtime message while socket is not OPEN');
     }
 
     socket.send(typeof payload === 'string' ? payload : JSON.stringify(payload));

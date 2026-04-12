@@ -7,6 +7,15 @@ export interface RuntimeConfig {
 
 export const PAGE_BOOTSTRAP_SCRIPT_ID = 'page-bootstrap-config';
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function parseJsonObject(text: string | null | undefined): Record<string, unknown> {
   if (!text) {
     return {};
@@ -14,7 +23,7 @@ function parseJsonObject(text: string | null | undefined): Record<string, unknow
 
   try {
     const parsed = JSON.parse(text);
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    return isPlainObject(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -26,7 +35,7 @@ export function getRuntimeConfig(): RuntimeConfig {
   }
 
   const candidate = (window as Window & { __AGENT_CO_RUNTIME_CONFIG__?: RuntimeConfig }).__AGENT_CO_RUNTIME_CONFIG__;
-  if (!candidate || typeof candidate !== 'object') {
+  if (!isPlainObject(candidate)) {
     return {};
   }
 

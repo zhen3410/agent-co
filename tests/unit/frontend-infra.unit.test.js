@@ -87,6 +87,9 @@ class FakeSocket {
   }
 
   send(payload) {
+    if (this.readyState !== 1) {
+      throw new Error('socket is not open');
+    }
     this.sentFrames.push(payload);
   }
 
@@ -228,6 +231,8 @@ test('realtime client emits connect/message/disconnect lifecycle callbacks', asy
   assert.equal(sockets.length, 1);
   assert.equal(sockets[0].url, 'wss://unit.test/ws/events');
 
+  assert.throws(() => client.send({ type: 'client.ping' }), /open/i);
+
   sockets[0].emit('open');
   sockets[0].emit('message', { data: JSON.stringify({ type: 'session.updated' }) });
   client.send({ type: 'client.ping' });
@@ -238,6 +243,71 @@ test('realtime client emits connect/message/disconnect lifecycle callbacks', asy
 
   client.disconnect();
   assert.equal(sockets[0].closed, true);
+});
+
+test('realtime reconnect attempt indexing starts at 0 and increments per retry scheduling', async () => {
+  const { createRealtimeClient } = loadTsModule('frontend/src/shared/lib/realtime/realtime-client.ts');
+
+  const attemptCalls = [];
+  const sockets = [];
+  const reconnectPolicy = {
+    shouldReconnect: (attempt) => {
+      attemptCalls.push({ kind: 'should', attempt });
+      return attempt < 2;
+    },
+    getDelayMs: (attempt) => {
+      attemptCalls.push({ kind: 'delay', attempt });
+      return 0;
+    }
+  };
+
+  const client = createRealtimeClient({
+    url: 'wss://unit.test/ws/retry',
+    reconnectPolicy,
+    webSocketFactory: (url) => {
+      const socket = new FakeSocket(url);
+      sockets.push(socket);
+      return socket;
+    }
+  });
+
+  client.connect();
+  sockets[0].emit('close', { code: 1006, reason: 'drop-1', wasClean: false });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  sockets[1].emit('close', { code: 1006, reason: 'drop-2', wasClean: false });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  sockets[2].emit('close', { code: 1006, reason: 'drop-3', wasClean: false });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(attemptCalls, [
+    { kind: 'should', attempt: 0 },
+    { kind: 'delay', attempt: 0 },
+    { kind: 'should', attempt: 1 },
+    { kind: 'delay', attempt: 1 },
+    { kind: 'should', attempt: 2 }
+  ]);
+  assert.equal(sockets.length, 3);
+});
+
+test('reconnect policy treats first retry as attempt 0 and caps max attempts deterministically', () => {
+  const { createExponentialBackoffPolicy } = loadTsModule('frontend/src/shared/lib/realtime/reconnect-policy.ts');
+
+  const policy = createExponentialBackoffPolicy({
+    baseDelayMs: 100,
+    maxDelayMs: 1000,
+    maxAttempts: 2,
+    jitterRatio: 0,
+    random: () => 0.5
+  });
+
+  assert.equal(policy.shouldReconnect(0), true);
+  assert.equal(policy.shouldReconnect(1), true);
+  assert.equal(policy.shouldReconnect(2), false);
+  assert.equal(policy.getDelayMs(0), 100);
+  assert.equal(policy.getDelayMs(1), 200);
+  assert.equal(policy.getDelayMs(2), 400);
 });
 
 test('layouts render shared shell chrome and tool page slots', () => {
@@ -299,36 +369,77 @@ test('runtime config helpers read bootstrap config from window and script tags',
   const originalWindow = global.window;
   const originalDocument = global.document;
 
-  global.window = {
-    __AGENT_CO_RUNTIME_CONFIG__: {
-      apiBaseUrl: '/api',
-      realtimeBaseUrl: '/api/ws',
-      page: 'chat'
-    }
-  };
+  try {
+    global.window = {
+      __AGENT_CO_RUNTIME_CONFIG__: {
+        apiBaseUrl: '/api',
+        realtimeBaseUrl: '/api/ws',
+        page: 'chat'
+      }
+    };
 
-  global.document = {
-    getElementById: () => ({
-      textContent: JSON.stringify({
-        apiBaseUrl: '/api-from-script',
-        page: 'admin',
-        featureFlags: {
-          showOps: true
-        }
+    global.document = {
+      getElementById: () => ({
+        textContent: JSON.stringify({
+          apiBaseUrl: '/api-from-script',
+          page: 'admin',
+          featureFlags: {
+            showOps: true
+          }
+        })
       })
-    })
-  };
+    };
 
-  const runtimeConfig = getRuntimeConfig();
-  assert.equal(runtimeConfig.apiBaseUrl, '/api');
-  assert.equal(runtimeConfig.realtimeBaseUrl, '/api/ws');
-  assert.equal(runtimeConfig.page, 'chat');
+    const runtimeConfig = getRuntimeConfig();
+    assert.equal(runtimeConfig.apiBaseUrl, '/api');
+    assert.equal(runtimeConfig.realtimeBaseUrl, '/api/ws');
+    assert.equal(runtimeConfig.page, 'chat');
 
-  const bootstrapConfig = getPageBootstrapConfig();
-  assert.equal(bootstrapConfig.apiBaseUrl, '/api-from-script');
-  assert.equal(bootstrapConfig.page, 'admin');
-  assert.deepEqual(bootstrapConfig.featureFlags, { showOps: true });
+    const bootstrapConfig = getPageBootstrapConfig();
+    assert.equal(bootstrapConfig.apiBaseUrl, '/api-from-script');
+    assert.equal(bootstrapConfig.page, 'admin');
+    assert.deepEqual(bootstrapConfig.featureFlags, { showOps: true });
+  } finally {
+    global.window = originalWindow;
+    global.document = originalDocument;
+  }
+});
 
-  global.window = originalWindow;
-  global.document = originalDocument;
+test('runtime config helpers reject array and non-plain object payloads', () => {
+  const runtimeModulePath = path.join(rootDir, 'frontend/src/shared/config/runtime-config.ts');
+  const source = fs.readFileSync(runtimeModulePath, 'utf8');
+
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2020,
+      module: ts.ModuleKind.CommonJS,
+      esModuleInterop: true
+    },
+    fileName: runtimeModulePath
+  });
+
+  const mod = { exports: {} };
+  const fn = new Function('require', 'module', 'exports', '__filename', '__dirname', transpiled.outputText);
+  fn(require, mod, mod.exports, runtimeModulePath, path.dirname(runtimeModulePath));
+
+  const { getRuntimeConfig, getPageBootstrapConfig } = mod.exports;
+  const originalWindow = global.window;
+  const originalDocument = global.document;
+
+  try {
+    global.window = {
+      __AGENT_CO_RUNTIME_CONFIG__: []
+    };
+    global.document = {
+      getElementById: () => ({
+        textContent: JSON.stringify([])
+      })
+    };
+
+    assert.deepEqual(getRuntimeConfig(), {});
+    assert.deepEqual(getPageBootstrapConfig(), {});
+  } finally {
+    global.window = originalWindow;
+    global.document = originalDocument;
+  }
 });

@@ -1,6 +1,6 @@
 export interface ReconnectPolicy {
-  shouldReconnect(attempt: number, event?: CloseEvent | null): boolean;
-  getDelayMs(attempt: number): number;
+  shouldReconnect(retryAttempt: number, event?: CloseEvent | null): boolean;
+  getDelayMs(retryAttempt: number): number;
 }
 
 export interface ExponentialBackoffPolicyOptions {
@@ -19,11 +19,12 @@ export function createExponentialBackoffPolicy(options: ExponentialBackoffPolicy
   const random = options.random ?? Math.random;
 
   return {
-    shouldReconnect(attempt: number): boolean {
-      return attempt < maxAttempts;
+    shouldReconnect(retryAttempt: number): boolean {
+      return retryAttempt < maxAttempts;
     },
-    getDelayMs(attempt: number): number {
-      const exponentialDelay = Math.min(maxDelayMs, baseDelayMs * (2 ** Math.max(0, attempt - 1)));
+    getDelayMs(retryAttempt: number): number {
+      const normalizedAttempt = Math.max(0, retryAttempt);
+      const exponentialDelay = Math.min(maxDelayMs, baseDelayMs * (2 ** normalizedAttempt));
       const jitterRange = exponentialDelay * jitterRatio;
       const jitter = (random() * 2 - 1) * jitterRange;
       return Math.max(0, Math.round(exponentialDelay + jitter));
