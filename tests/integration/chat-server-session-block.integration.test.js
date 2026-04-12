@@ -5,6 +5,7 @@ const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 const { withIsolatedChatSessionState, isRedisSessionStateAvailable } = require('./helpers/redis-session-state-fixture');
+const { waitForTimelineMessages } = require('./helpers/timeline-assertions');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const distDir = path.join(repoRoot, 'dist');
@@ -13,26 +14,6 @@ function requireBuiltModule(...segments) {
   const modulePath = path.join(distDir, ...segments);
   delete require.cache[require.resolve(modulePath)];
   return require(modulePath);
-}
-
-async function waitForCondition(check, timeoutMs = 3000, intervalMs = 80) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = await check();
-    if (value) {
-      return value;
-    }
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
-  }
-  throw new Error('condition not met before timeout');
-}
-
-function extractTimelineMessages(timelineBody) {
-  return Array.isArray(timelineBody && timelineBody.timeline)
-    ? timelineBody.timeline
-      .filter(item => item && item.kind === 'message' && item.message)
-      .map(item => item.message)
-    : [];
 }
 
 function parseSetCookiePair(setCookieHeader) {
@@ -435,14 +416,11 @@ test('已停用的智能体不能被 @，零启用会话会返回明确提示', 
       body: { message: '@Bob 你好' }
     });
     assert.equal(mentionEnabled.status, 200);
-    const mentionEnabledMessages = await waitForCondition(async () => {
-      const timelineResponse = await fixture.request(`/api/sessions/${mentionEnabled.body.session.id}/timeline`);
-      if (timelineResponse.status !== 200) {
-        return null;
-      }
-      const messages = extractTimelineMessages(timelineResponse.body);
-      return messages.some(msg => msg.sender === 'Bob') ? messages : null;
-    });
+    const mentionEnabledMessages = await waitForTimelineMessages(
+      fixture,
+      mentionEnabled.body.session.id,
+      messages => messages.some(msg => msg.sender === 'Bob')
+    );
     assert.equal(mentionEnabledMessages.some(msg => msg.sender === 'Bob'), true);
     assert.equal(mentionEnabled.body.currentAgent, 'Bob');
   } finally {

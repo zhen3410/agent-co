@@ -7,6 +7,11 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
+const {
+  waitForCondition,
+  extractTimelineMessages,
+  waitForTimelineMessages
+} = require('./helpers/timeline-assertions');
 
 const repoRoot = join(__dirname, '..', '..');
 const distDir = join(repoRoot, 'dist');
@@ -1080,40 +1085,6 @@ printf '%s\n' '{"output_text":"CLI provider reply"}'
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
-
-async function waitForCondition(check, timeoutMs = 3000, intervalMs = 80) {
-  const deadline = Date.now() + timeoutMs;
-  let lastValue;
-  while (Date.now() < deadline) {
-    lastValue = await check();
-    if (lastValue) {
-      return lastValue;
-    }
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
-  }
-  throw new Error('condition not met before timeout');
-}
-
-function extractTimelineMessages(timelineBody) {
-  return Array.isArray(timelineBody && timelineBody.timeline)
-    ? timelineBody.timeline
-      .filter(item => item && item.kind === 'message' && item.message)
-      .map(item => item.message)
-    : [];
-}
-
-async function fetchTimelineMessages(fixture, sessionId) {
-  const response = await fixture.request(`/api/sessions/${sessionId}/timeline`);
-  assert.equal(response.status, 200);
-  return extractTimelineMessages(response.body);
-}
-
-async function waitForTimelineMessages(fixture, sessionId, predicate, timeoutMs = 3000, intervalMs = 80) {
-  return waitForCondition(async () => {
-    const messages = await fetchTimelineMessages(fixture, sessionId);
-    return predicate(messages) ? messages : null;
-  }, timeoutMs, intervalMs);
-}
 
 async function waitForAgentThinkingEvent(reader, expectedAgent, timeoutMs = 5000) {
   const decoder = new TextDecoder();
