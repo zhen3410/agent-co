@@ -48,6 +48,42 @@ function upsertById<T extends { id: string }>(items: T[], nextItem: T): T[] {
   return next.sort((left, right) => left.id.localeCompare(right.id, 'zh-CN'));
 }
 
+function normalizeGroupAgentNames(agentNames: string[]): string[] {
+  return agentNames.map((item) => item.trim()).filter(Boolean);
+}
+
+function validateGroupMembers(group: AdminGroup, agents: AdminAgent[]): AdminGroup {
+  const normalizedAgentNames = normalizeGroupAgentNames(group.agentNames);
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+
+  for (const name of normalizedAgentNames) {
+    if (seen.has(name)) {
+      duplicates.add(name);
+      continue;
+    }
+    seen.add(name);
+  }
+
+  const knownAgents = new Set(agents.map((agent) => agent.name));
+  const unknown = normalizedAgentNames.filter((name) => !knownAgents.has(name));
+  if (duplicates.size > 0 || unknown.length > 0) {
+    const parts: string[] = [];
+    if (duplicates.size > 0) {
+      parts.push(`成员中包含重复智能体: ${Array.from(duplicates).join(', ')}`);
+    }
+    if (unknown.length > 0) {
+      parts.push(`成员中包含未知智能体: ${Array.from(new Set(unknown)).join(', ')}`);
+    }
+    throw new Error(parts.join('；'));
+  }
+
+  return {
+    ...group,
+    agentNames: normalizedAgentNames
+  };
+}
+
 export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
   const runtimeConfig = getMergedRuntimeConfig();
   const [authToken, setAuthToken] = useState(initialAuthToken);
@@ -102,6 +138,7 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
         connections: connectionsResult.connections
       });
       setLoadState('ready');
+      setErrorMessage(null);
     } catch (error) {
       setLoadState('error');
       setErrorMessage(toErrorMessage(error, '加载管理资源失败'));
@@ -120,228 +157,217 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
     setNotice({ tone: 'error', message: toErrorMessage(error, fallback) });
   }
 
-  async function runMutation(action: () => Promise<void>) {
+  async function runMutation<T>(action: () => Promise<T>, fallbackMessage: string): Promise<T> {
     setErrorMessage(null);
-    await action();
+    try {
+      return await action();
+    } catch (error) {
+      showError(error, fallbackMessage);
+      throw error;
+    }
   }
 
-  async function handleCreateGroup(group: AdminGroup) {
-    await runMutation(async () => {
-      try {
-        const result = await adminApi.createGroup(group);
-        setResources((current) => ({
-          ...current,
-          groups: upsertById(current.groups, result.group)
-        }));
-        showSuccess(`已保存分组 ${result.group.id}`);
-      } catch (error) {
-        showError(error, '保存分组失败');
-      }
-    });
+  async function handleCreateGroup(group: AdminGroup): Promise<boolean> {
+    const result = await runMutation(() => {
+      const nextGroup = validateGroupMembers(group, resources.agents);
+      return adminApi.createGroup(nextGroup);
+    }, '保存分组失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      groups: upsertById(current.groups, result.group)
+    }));
+    showSuccess(`已保存分组 ${result.group.id}`);
+    return true;
   }
 
-  async function handleUpdateGroup(id: string, group: Omit<AdminGroup, 'id'>) {
-    await runMutation(async () => {
-      try {
-        const result = await adminApi.updateGroup(id, group);
-        setResources((current) => ({
-          ...current,
-          groups: upsertById(current.groups, result.group)
-        }));
-        showSuccess(`已保存分组 ${result.group.id}`);
-      } catch (error) {
-        showError(error, '保存分组失败');
-      }
-    });
+  async function handleUpdateGroup(id: string, group: Omit<AdminGroup, 'id'>): Promise<boolean> {
+    const result = await runMutation(() => {
+      const nextGroup = validateGroupMembers({ ...group, id }, resources.agents);
+      return adminApi.updateGroup(id, {
+        name: nextGroup.name,
+        icon: nextGroup.icon,
+        agentNames: nextGroup.agentNames
+      });
+    }, '保存分组失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      groups: upsertById(current.groups, result.group)
+    }));
+    showSuccess(`已保存分组 ${result.group.id}`);
+    return true;
   }
 
-  async function handleDeleteGroup(id: string) {
-    await runMutation(async () => {
-      try {
-        await adminApi.deleteGroup(id);
-        setResources((current) => ({
-          ...current,
-          groups: current.groups.filter((group) => group.id !== id)
-        }));
-        showSuccess(`已删除分组 ${id}`);
-      } catch (error) {
-        showError(error, '删除分组失败');
-      }
-    });
+  async function handleDeleteGroup(id: string): Promise<boolean> {
+    const result = await runMutation(() => adminApi.deleteGroup(id), '删除分组失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      groups: current.groups.filter((group) => group.id !== id)
+    }));
+    showSuccess(`已删除分组 ${id}`);
+    return true;
   }
 
-  async function handleCreateConnection(draft: AdminModelConnectionDraft) {
-    await runMutation(async () => {
-      try {
-        const result = await adminApi.createModelConnection(draft);
-        setResources((current) => ({
-          ...current,
-          connections: upsertById(current.connections, result.connection)
-        }));
-        showSuccess(`已保存连接 ${result.connection.name}`);
-      } catch (error) {
-        showError(error, '保存连接失败');
-      }
-    });
+  async function handleCreateConnection(draft: AdminModelConnectionDraft): Promise<boolean> {
+    const result = await runMutation(() => adminApi.createModelConnection(draft), '保存连接失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      connections: upsertById(current.connections, result.connection)
+    }));
+    showSuccess(`已保存连接 ${result.connection.name}`);
+    return true;
   }
 
-  async function handleUpdateConnection(id: string, draft: AdminModelConnectionDraft) {
-    await runMutation(async () => {
-      try {
-        const result = await adminApi.updateModelConnection(id, draft);
-        setResources((current) => ({
-          ...current,
-          connections: upsertById(current.connections, result.connection)
-        }));
-        showSuccess(`已保存连接 ${result.connection.name}`);
-      } catch (error) {
-        showError(error, '保存连接失败');
-      }
-    });
+  async function handleUpdateConnection(id: string, draft: AdminModelConnectionDraft): Promise<boolean> {
+    const result = await runMutation(() => adminApi.updateModelConnection(id, draft), '保存连接失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      connections: upsertById(current.connections, result.connection)
+    }));
+    showSuccess(`已保存连接 ${result.connection.name}`);
+    return true;
   }
 
-  async function handleDeleteConnection(id: string) {
-    await runMutation(async () => {
-      try {
-        await adminApi.deleteModelConnection(id);
-        setResources((current) => ({
-          ...current,
-          connections: current.connections.filter((connection) => connection.id !== id)
-        }));
-        showSuccess(`已删除连接 ${id}`);
-      } catch (error) {
-        showError(error, '删除连接失败');
-      }
-    });
+  async function handleDeleteConnection(id: string): Promise<boolean> {
+    const result = await runMutation(() => adminApi.deleteModelConnection(id), '删除连接失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      connections: current.connections.filter((connection) => connection.id !== id)
+    }));
+    showSuccess(`已删除连接 ${id}`);
+    return true;
   }
 
-  async function handleTestConnection(id: string) {
-    await runMutation(async () => {
-      try {
-        const result = await adminApi.testModelConnection(id);
-        if (result.success) {
-          showSuccess(`连接 ${id} 测试成功`);
-        } else {
-          showError(new Error(result.error || '连接测试失败'), '连接测试失败');
-        }
-      } catch (error) {
-        showError(error, '连接测试失败');
-      }
-    });
+  async function handleTestConnection(id: string): Promise<boolean> {
+    const result = await runMutation(() => adminApi.testModelConnection(id), '连接测试失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    if (result.success) {
+      showSuccess(`连接 ${id} 测试成功`);
+      return true;
+    }
+
+    const error = new Error(result.error || '连接测试失败');
+    showError(error, '连接测试失败');
+    return false;
   }
 
-  async function handleCreateAgent(input: { agent: AdminAgent }) {
-    await runMutation(async () => {
-      try {
-        const result = await adminApi.createAgent({ agent: input.agent, applyMode: 'immediate' });
-        setResources((current) => ({
-          ...current,
-          agents: upsertByName(current.agents, result.agent)
-        }));
-        showSuccess(`已保存智能体 ${result.agent.name}`);
-      } catch (error) {
-        showError(error, '保存智能体失败');
-      }
-    });
+  async function handleCreateAgent(input: { agent: AdminAgent }): Promise<boolean> {
+    const result = await runMutation(() => adminApi.createAgent({ agent: input.agent, applyMode: 'immediate' }), '保存智能体失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      agents: upsertByName(current.agents, result.agent)
+    }));
+    showSuccess(`已保存智能体 ${result.agent.name}`);
+    return true;
   }
 
-  async function handleUpdateAgent(name: string, input: { agent: AdminAgent }) {
-    await runMutation(async () => {
-      try {
-        const result = await adminApi.updateAgent(name, { agent: input.agent, applyMode: 'immediate' });
-        setResources((current) => ({
-          ...current,
-          agents: upsertByName(current.agents.filter((item) => item.name !== name), result.agent)
-        }));
-        showSuccess(`已保存智能体 ${result.agent.name}`);
-      } catch (error) {
-        showError(error, '保存智能体失败');
-      }
-    });
+  async function handleUpdateAgent(name: string, input: { agent: AdminAgent }): Promise<boolean> {
+    const result = await runMutation(() => adminApi.updateAgent(name, { agent: input.agent, applyMode: 'immediate' }), '保存智能体失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      agents: upsertByName(current.agents.filter((item) => item.name !== name), result.agent)
+    }));
+    showSuccess(`已保存智能体 ${result.agent.name}`);
+    return true;
   }
 
-  async function handleDeleteAgent(name: string) {
-    await runMutation(async () => {
-      try {
-        await adminApi.deleteAgent(name);
-        setResources((current) => ({
-          ...current,
-          agents: current.agents.filter((agent) => agent.name !== name)
-        }));
-        showSuccess(`已删除智能体 ${name}`);
-      } catch (error) {
-        showError(error, '删除智能体失败');
-      }
-    });
+  async function handleDeleteAgent(name: string): Promise<boolean> {
+    const result = await runMutation(() => adminApi.deleteAgent(name), '删除智能体失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      agents: current.agents.filter((agent) => agent.name !== name)
+    }));
+    showSuccess(`已删除智能体 ${name}`);
+    return true;
   }
 
-  async function handleApplyPendingAgents() {
-    await runMutation(async () => {
-      try {
-        const result = await adminApi.applyPendingAgents();
-        setResources((current) => ({
-          ...current,
-          agents: [...result.agents].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')),
-          pendingAgents: null,
-          pendingReason: null,
-          pendingUpdatedAt: null
-        }));
-        showSuccess('已应用待生效智能体配置');
-      } catch (error) {
-        showError(error, '应用待生效配置失败');
-      }
-    });
+  async function handleApplyPendingAgents(): Promise<boolean> {
+    const result = await runMutation(() => adminApi.applyPendingAgents(), '应用待生效配置失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      agents: [...result.agents].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')),
+      pendingAgents: null,
+      pendingReason: null,
+      pendingUpdatedAt: null
+    }));
+    showSuccess('已应用待生效智能体配置');
+    return true;
   }
 
-  async function handleCreateUser(input: { username: string; password: string }) {
-    await runMutation(async () => {
-      try {
-        const result = await adminApi.createUser(input);
-        setResources((current) => ({
-          ...current,
-          users: [...current.users, {
-            username: result.username,
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-          }].sort((left, right) => left.username.localeCompare(right.username, 'zh-CN'))
-        }));
-        showSuccess(`已创建用户 ${result.username}`);
-      } catch (error) {
-        showError(error, '创建用户失败');
-      }
-    });
+  async function handleCreateUser(input: { username: string; password: string }): Promise<boolean> {
+    const result = await runMutation(() => adminApi.createUser(input), '创建用户失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      users: [...current.users, {
+        username: result.username,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }].sort((left, right) => left.username.localeCompare(right.username, 'zh-CN'))
+    }));
+    showSuccess(`已创建用户 ${result.username}`);
+    return true;
   }
 
-  async function handleChangeUserPassword(username: string, input: { password: string }) {
-    await runMutation(async () => {
-      try {
-        await adminApi.updateUserPassword(username, input);
-        setResources((current) => ({
-          ...current,
-          users: current.users.map((user) => user.username === username
-            ? { ...user, updatedAt: Date.now() }
-            : user)
-        }));
-        showSuccess(`已更新 ${username} 的密码`);
-      } catch (error) {
-        showError(error, '更新密码失败');
-      }
-    });
+  async function handleChangeUserPassword(username: string, input: { password: string }): Promise<boolean> {
+    const result = await runMutation(() => adminApi.updateUserPassword(username, input), '更新密码失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      users: current.users.map((user) => user.username === username
+        ? { ...user, updatedAt: Date.now() }
+        : user)
+    }));
+    showSuccess(`已更新 ${username} 的密码`);
+    return true;
   }
 
-  async function handleDeleteUser(username: string) {
-    await runMutation(async () => {
-      try {
-        await adminApi.deleteUser(username);
-        setResources((current) => ({
-          ...current,
-          users: current.users.filter((user) => user.username !== username)
-        }));
-        showSuccess(`已删除用户 ${username}`);
-      } catch (error) {
-        showError(error, '删除用户失败');
-      }
-    });
+  async function handleDeleteUser(username: string): Promise<boolean> {
+    const result = await runMutation(() => adminApi.deleteUser(username), '删除用户失败').catch(() => null);
+    if (!result) {
+      return false;
+    }
+    setResources((current) => ({
+      ...current,
+      users: current.users.filter((user) => user.username !== username)
+    }));
+    showSuccess(`已删除用户 ${username}`);
+    return true;
   }
 
   const navigation = (
@@ -353,6 +379,9 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
     </nav>
   );
 
+  const activeNotice = loadState === 'error' && errorMessage
+    ? { tone: 'error' as const, message: errorMessage }
+    : notice;
   let content = null;
 
   if (!canLoad) {
@@ -424,7 +453,7 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
         </Button>
       )}
     >
-      <AdminFeatureNotice notice={notice}>
+      <AdminFeatureNotice notice={activeNotice}>
         {content}
       </AdminFeatureNotice>
     </ToolPageLayout>

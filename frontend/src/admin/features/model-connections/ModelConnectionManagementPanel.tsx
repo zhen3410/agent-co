@@ -4,10 +4,10 @@ import type { AdminModelConnection, AdminModelConnectionDraft } from '../../type
 
 export interface ModelConnectionManagementPanelProps {
   connections: AdminModelConnection[];
-  onCreate: (draft: AdminModelConnectionDraft) => Promise<void>;
-  onUpdate: (id: string, draft: AdminModelConnectionDraft) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
-  onTest: (id: string) => Promise<void>;
+  onCreate: (draft: AdminModelConnectionDraft) => Promise<boolean>;
+  onUpdate: (id: string, draft: AdminModelConnectionDraft) => Promise<boolean>;
+  onDelete: (id: string) => Promise<boolean>;
+  onTest: (id: string) => Promise<boolean>;
 }
 
 interface ConnectionFormState {
@@ -64,13 +64,14 @@ export function ModelConnectionManagementPanel({
 
     setBusyAction(editingId ? 'update' : 'create');
     try {
-      if (editingId) {
-        await onUpdate(editingId, draft);
-      } else {
-        await onCreate(draft);
+      const succeeded = editingId
+        ? await onUpdate(editingId, draft)
+        : await onCreate(draft);
+
+      if (succeeded) {
+        setEditingId(null);
+        setFormState(EMPTY_FORM);
       }
-      setEditingId(null);
-      setFormState(EMPTY_FORM);
     } finally {
       setBusyAction(null);
     }

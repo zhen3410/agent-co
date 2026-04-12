@@ -7,10 +7,10 @@ export interface AgentManagementPanelProps {
   pendingReason: string | null;
   pendingUpdatedAt: number | null;
   connections: AdminModelConnection[];
-  onCreate: (input: { agent: AdminAgent; applyMode?: ApplyMode }) => Promise<void>;
-  onUpdate: (name: string, input: { agent: AdminAgent; applyMode?: ApplyMode }) => Promise<void>;
-  onDelete: (name: string) => Promise<void>;
-  onApplyPending: () => Promise<void>;
+  onCreate: (input: { agent: AdminAgent; applyMode?: ApplyMode }) => Promise<boolean>;
+  onUpdate: (name: string, input: { agent: AdminAgent; applyMode?: ApplyMode }) => Promise<boolean>;
+  onDelete: (name: string) => Promise<boolean>;
+  onApplyPending: () => Promise<boolean>;
 }
 
 interface AgentFormState {
@@ -91,14 +91,14 @@ export function AgentManagementPanel({
       apiModel: formState.executionMode === 'api' ? formState.apiModel || undefined : undefined
     };
 
-    if (editingName) {
-      await onUpdate(editingName, { agent, applyMode: 'immediate' });
-    } else {
-      await onCreate({ agent, applyMode: 'immediate' });
-    }
+    const succeeded = editingName
+      ? await onUpdate(editingName, { agent, applyMode: 'immediate' })
+      : await onCreate({ agent, applyMode: 'immediate' });
 
-    setEditingName(null);
-    setFormState(EMPTY_FORM);
+    if (succeeded) {
+      setEditingName(null);
+      setFormState(EMPTY_FORM);
+    }
   }
 
   return (

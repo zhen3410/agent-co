@@ -5,9 +5,9 @@ import type { AdminAgent, AdminGroup } from '../../types';
 export interface GroupManagementPanelProps {
   groups: AdminGroup[];
   agents: AdminAgent[];
-  onCreate: (group: AdminGroup) => Promise<void>;
-  onUpdate: (id: string, group: Omit<AdminGroup, 'id'>) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
+  onCreate: (group: AdminGroup) => Promise<boolean>;
+  onUpdate: (id: string, group: Omit<AdminGroup, 'id'>) => Promise<boolean>;
+  onDelete: (id: string) => Promise<boolean>;
 }
 
 interface GroupFormState {
@@ -64,17 +64,18 @@ export function GroupManagementPanel({ groups, agents, onCreate, onUpdate, onDel
 
     setBusyAction(editingId ? 'update' : 'create');
     try {
-      if (editingId) {
-        await onUpdate(editingId, {
+      const succeeded = editingId
+        ? await onUpdate(editingId, {
           name: nextGroup.name,
           icon: nextGroup.icon,
           agentNames: nextGroup.agentNames
-        });
-      } else {
-        await onCreate(nextGroup);
+        })
+        : await onCreate(nextGroup);
+
+      if (succeeded) {
+        setEditingId(null);
+        setFormState(EMPTY_FORM);
       }
-      setEditingId(null);
-      setFormState(EMPTY_FORM);
     } finally {
       setBusyAction(null);
     }

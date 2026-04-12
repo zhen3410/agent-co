@@ -128,6 +128,10 @@ function findByAction(renderer, action) {
   return renderer.root.findByProps({ 'data-admin-action': action });
 }
 
+function findButtonByText(renderer, label) {
+  return renderer.root.find((node) => node.type === 'button' && collectText(node.children).includes(label));
+}
+
 async function changeField(renderer, name, value) {
   await act(async () => {
     findByName(renderer, name).props.onChange({
@@ -464,4 +468,289 @@ test('AdminPage 的 create\/edit 操作使用一致的成功\/失败状态提示
   notice = renderer.root.findByProps({ 'data-admin-notice': 'true' });
   assert.equal(notice.props['data-tone'], 'error');
   assert.match(collectText(notice.children), /连接测试失败/);
+});
+
+test('编辑保存失败时保留当前草稿与编辑态，避免静默清空表单', async () => {
+  const api = {
+    async listUsers() {
+      return { users: [{ username: 'admin', createdAt: 1, updatedAt: 2 }] };
+    },
+    async createUser() {
+      throw new Error('not used');
+    },
+    async updateUserPassword() {
+      throw new Error('not used');
+    },
+    async deleteUser() {
+      throw new Error('not used');
+    },
+    async listAgents() {
+      return {
+        agents: [{
+          name: 'planner',
+          avatar: '🧭',
+          personality: '计划',
+          color: '#111827',
+          systemPrompt: 'plan',
+          executionMode: 'cli',
+          cliName: 'codex'
+        }],
+        pendingAgents: null,
+        pendingReason: null,
+        pendingUpdatedAt: null
+      };
+    },
+    async createAgent() {
+      throw new Error('not used');
+    },
+    async updateAgent() {
+      throw new Error('not used');
+    },
+    async deleteAgent() {
+      throw new Error('not used');
+    },
+    async applyPendingAgents() {
+      throw new Error('not used');
+    },
+    async listGroups() {
+      return { groups: [], updatedAt: 1 };
+    },
+    async createGroup() {
+      throw new Error('not used');
+    },
+    async updateGroup() {
+      throw new Error('not used');
+    },
+    async deleteGroup() {
+      throw new Error('not used');
+    },
+    async listModelConnections() {
+      return {
+        connections: [{
+          id: 'conn-1',
+          name: 'Primary',
+          baseURL: 'https://models.example.com/v1',
+          apiKeyMasked: 'sk-***',
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 2
+        }]
+      };
+    },
+    async createModelConnection() {
+      throw new Error('not used');
+    },
+    async updateModelConnection() {
+      throw new Error('连接更新失败');
+    },
+    async deleteModelConnection() {
+      throw new Error('not used');
+    },
+    async testModelConnection() {
+      throw new Error('not used');
+    }
+  };
+
+  const renderer = await renderAdminPage({ api, initialAuthToken: 'token-123' });
+
+  await act(async () => {
+    findByAction(renderer, 'edit-model-connection:conn-1').props.onClick();
+    await flushEffects();
+  });
+
+  await changeField(renderer, 'connection-baseURL', 'https://broken.example.com/v2');
+  await submitForm(renderer, 'model-connection-editor');
+
+  const notice = renderer.root.findByProps({ 'data-admin-notice': 'true' });
+  assert.equal(notice.props['data-tone'], 'error');
+  assert.match(collectText(notice.children), /连接更新失败/);
+  assert.equal(findByName(renderer, 'connection-baseURL').props.value, 'https://broken.example.com/v2');
+  assert.match(collectText(renderer.toJSON()), /取消编辑/);
+});
+
+test('已加载旧数据后刷新失败仍会显式暴露错误，同时保留旧列表内容', async () => {
+  let loadUsersCalls = 0;
+  const api = {
+    async listUsers() {
+      loadUsersCalls += 1;
+      if (loadUsersCalls === 1) {
+        return { users: [{ username: 'admin', createdAt: 1, updatedAt: 2 }] };
+      }
+      throw new Error('刷新用户列表失败');
+    },
+    async createUser() {
+      throw new Error('not used');
+    },
+    async updateUserPassword() {
+      throw new Error('not used');
+    },
+    async deleteUser() {
+      throw new Error('not used');
+    },
+    async listAgents() {
+      return {
+        agents: [{
+          name: 'planner',
+          avatar: '🧭',
+          personality: '计划',
+          color: '#111827',
+          systemPrompt: 'plan',
+          executionMode: 'cli',
+          cliName: 'codex'
+        }],
+        pendingAgents: null,
+        pendingReason: null,
+        pendingUpdatedAt: null
+      };
+    },
+    async createAgent() {
+      throw new Error('not used');
+    },
+    async updateAgent() {
+      throw new Error('not used');
+    },
+    async deleteAgent() {
+      throw new Error('not used');
+    },
+    async applyPendingAgents() {
+      throw new Error('not used');
+    },
+    async listGroups() {
+      return { groups: [{ id: 'core', name: '核心组', icon: '🧩', agentNames: ['planner'] }], updatedAt: 1 };
+    },
+    async createGroup() {
+      throw new Error('not used');
+    },
+    async updateGroup() {
+      throw new Error('not used');
+    },
+    async deleteGroup() {
+      throw new Error('not used');
+    },
+    async listModelConnections() {
+      return {
+        connections: [{
+          id: 'conn-1',
+          name: 'Primary',
+          baseURL: 'https://models.example.com/v1',
+          apiKeyMasked: 'sk-***',
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 2
+        }]
+      };
+    },
+    async createModelConnection() {
+      throw new Error('not used');
+    },
+    async updateModelConnection() {
+      throw new Error('not used');
+    },
+    async deleteModelConnection() {
+      throw new Error('not used');
+    },
+    async testModelConnection() {
+      throw new Error('not used');
+    }
+  };
+
+  const renderer = await renderAdminPage({ api, initialAuthToken: 'token-123' });
+  assert.match(collectText(renderer.toJSON()), /planner/);
+
+  await act(async () => {
+    findButtonByText(renderer, '刷新').props.onClick();
+    await flushEffects();
+  });
+
+  const text = collectText(renderer.toJSON());
+  assert.match(text, /planner/);
+  assert.match(text, /刷新用户列表失败/);
+});
+
+test('分组成员输入会拒绝重复项与未知智能体，避免提交明显无效的数据', async () => {
+  let createGroupCalls = 0;
+  const api = {
+    async listUsers() {
+      return { users: [{ username: 'admin', createdAt: 1, updatedAt: 2 }] };
+    },
+    async createUser() {
+      throw new Error('not used');
+    },
+    async updateUserPassword() {
+      throw new Error('not used');
+    },
+    async deleteUser() {
+      throw new Error('not used');
+    },
+    async listAgents() {
+      return {
+        agents: [{
+          name: 'planner',
+          avatar: '🧭',
+          personality: '计划',
+          color: '#111827',
+          systemPrompt: 'plan',
+          executionMode: 'cli',
+          cliName: 'codex'
+        }],
+        pendingAgents: null,
+        pendingReason: null,
+        pendingUpdatedAt: null
+      };
+    },
+    async createAgent() {
+      throw new Error('not used');
+    },
+    async updateAgent() {
+      throw new Error('not used');
+    },
+    async deleteAgent() {
+      throw new Error('not used');
+    },
+    async applyPendingAgents() {
+      throw new Error('not used');
+    },
+    async listGroups() {
+      return { groups: [], updatedAt: 1 };
+    },
+    async createGroup() {
+      createGroupCalls += 1;
+      return { success: true, group: { id: 'core', name: '核心组', icon: '🧩', agentNames: ['planner'] } };
+    },
+    async updateGroup() {
+      throw new Error('not used');
+    },
+    async deleteGroup() {
+      throw new Error('not used');
+    },
+    async listModelConnections() {
+      return { connections: [] };
+    },
+    async createModelConnection() {
+      throw new Error('not used');
+    },
+    async updateModelConnection() {
+      throw new Error('not used');
+    },
+    async deleteModelConnection() {
+      throw new Error('not used');
+    },
+    async testModelConnection() {
+      throw new Error('not used');
+    }
+  };
+
+  const renderer = await renderAdminPage({ api, initialAuthToken: 'token-123' });
+
+  await changeField(renderer, 'group-id', 'core');
+  await changeField(renderer, 'group-name', '核心组');
+  await changeField(renderer, 'group-icon', '🧩');
+  await changeField(renderer, 'group-agentNames', ' planner, planner , ghost ');
+  await submitForm(renderer, 'group-editor');
+
+  const notice = renderer.root.findByProps({ 'data-admin-notice': 'true' });
+  assert.equal(createGroupCalls, 0);
+  assert.equal(notice.props['data-tone'], 'error');
+  assert.match(collectText(notice.children), /重复|未知/);
+  assert.equal(findByName(renderer, 'group-agentNames').props.value, ' planner, planner , ghost ');
 });

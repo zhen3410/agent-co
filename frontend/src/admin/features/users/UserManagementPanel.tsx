@@ -4,9 +4,9 @@ import type { AdminUser } from '../../types';
 
 export interface UserManagementPanelProps {
   users: AdminUser[];
-  onCreate: (input: { username: string; password: string }) => Promise<void>;
-  onChangePassword: (username: string, input: { password: string }) => Promise<void>;
-  onDelete: (username: string) => Promise<void>;
+  onCreate: (input: { username: string; password: string }) => Promise<boolean>;
+  onChangePassword: (username: string, input: { password: string }) => Promise<boolean>;
+  onDelete: (username: string) => Promise<boolean>;
 }
 
 export function UserManagementPanel({ users, onCreate, onChangePassword, onDelete }: UserManagementPanelProps) {
@@ -20,11 +20,13 @@ export function UserManagementPanel({ users, onCreate, onChangePassword, onDelet
 
   async function handleCreateSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await onCreate({
+    const succeeded = await onCreate({
       username: createState.username.trim(),
       password: createState.password
     });
-    setCreateState({ username: '', password: '' });
+    if (succeeded) {
+      setCreateState({ username: '', password: '' });
+    }
   }
 
   return (
