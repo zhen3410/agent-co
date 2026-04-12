@@ -30,7 +30,23 @@ function getFunctionBody(source, functionName) {
   assert.ok(match, `should contain function: ${functionName}`);
 
   const startIndex = match.index;
-  const openBraceIndex = source.indexOf('{', startIndex);
+  const openParenIndex = source.indexOf('(', startIndex);
+  assert.notEqual(openParenIndex, -1, `should contain function params: ${functionName}`);
+  let parenDepth = 0;
+  let closeParenIndex = -1;
+  for (let index = openParenIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '(') parenDepth += 1;
+    if (char === ')') {
+      parenDepth -= 1;
+      if (parenDepth === 0) {
+        closeParenIndex = index;
+        break;
+      }
+    }
+  }
+  assert.notEqual(closeParenIndex, -1, `should close function params: ${functionName}`);
+  const openBraceIndex = source.indexOf('{', closeParenIndex);
   assert.notEqual(openBraceIndex, -1, `should contain function body: ${functionName}`);
 
   let depth = 0;
@@ -138,39 +154,182 @@ test('PWA service worker 不应长期缓存 HTML 与 CSS 旧版本，避免界�
   assert.ok(!shellBranch.includes('if (cached) return cached;'), 'should not use cache-first strategy for shell assets');
 });
 
-test('React 页面仅在流式连接尚未收到 AI 可见回复时才降级到 /api/chat，避免重复执行同一条消息', () => {
+test('React 页面通过 HTTP 提交命令，并移除 /api/chat-stream 与 SSE 降级逻辑', () => {
   const html = readPublicFile('public', 'index.html');
 
-  assert.ok(html.includes('async function recoverViaDirectChat(text) {'), 'should provide stream failure fallback');
-  assert.ok(html.includes("fetch('/api/chat', {"), 'fallback should call /api/chat');
-  assert.ok(html.includes('statusEl.textContent = \'流式连接失败，尝试降级...\';'), 'should show downgrade status');
-  assert.ok(html.includes('statusEl.textContent = \'已连接（已自动降级到普通模式）\';'), 'should expose downgrade success state');
-  assert.ok(html.includes('let streamReceivedAgentMessage = false;'), 'should track whether stream already delivered a visible AI message');
-  assert.ok(html.includes('streamReceivedAgentMessage = true;'), 'should mark visible agent messages before fallback logic');
-  assert.ok(html.includes('if (!streamReceivedAgentMessage) {'), 'should only downgrade before visible AI output arrives');
+  assert.ok(html.includes("fetch('/api/chat', {"), 'should submit chat commands via /api/chat');
+  assert.ok(!html.includes('/api/chat-stream'), 'should remove legacy /api/chat-stream usage');
+  assert.ok(!html.includes('recoverViaDirectChat'), 'should remove direct chat downgrade helper');
+  assert.ok(!html.includes('streamReceivedAgentMessage'), 'should remove SSE message tracking');
+  assert.ok(!html.includes('streamReceivedAgentDelta'), 'should remove SSE delta tracking');
+  assert.ok(!html.includes('streamReceivedError'), 'should remove SSE error tracking');
 });
 
-test('React 页面在流式收到 error 事件或空回复结束时会明确提示失败，而不是静默停留', () => {
+test('React 页面通过 WebSocket 订阅 session events，并通过 timeline 路由刷新权威展示', () => {
   const html = readPublicFile('public', 'index.html');
 
-  assert.ok(html.includes("statusEl.textContent = '连接失败';"), 'should expose a failure status when stream reports an error');
-  assert.ok(html.includes('let streamReceivedError = false;'), 'should track terminal stream errors');
-  assert.ok(html.includes('streamReceivedError = true;'), 'should mark error events explicitly');
-  assert.ok(html.includes('if (!streamReceivedAgentMessage && !streamReceivedError) {'), 'should detect silent empty stream completions');
-  assert.ok(html.includes('text: \'❌ 智能体未返回可见消息，请稍后重试或查看日志\''), 'should show an explicit empty-stream failure message');
-  assert.ok(html.includes('function normalizeStreamErrorMessage(error) {'), 'should normalize raw stream errors for users');
-  assert.ok(html.includes('账号或工作区异常'), 'should surface a friendly workspace/account hint');
-  assert.ok(html.includes('请检查 Codex 登录状态、套餐/额度或 workspace 是否已恢复'), 'should include an actionable recovery hint');
+  assertContainsAll(html, [
+    "function refreshActiveSessionTimeline(",
+    'const requestUrl = shouldUseIncremental',
+    "function ensureSessionEventSocket(",
+    "function subscribeToSessionEvents(",
+    "function refreshSyncStatus()",
+    "function markRefreshPending()",
+    "function scheduleReconnectCompensation(",
+    '/api/ws/session-events',
+    "type: 'subscribe'",
+    'afterSeq: lastSeenEventSeq',
+    "message.type === 'session_event'",
+    'scheduleTimelineRefresh(',
+    'socketConnectionState',
+    'timelineRefreshState',
+    'activeSessionSyncNonce'
+  ], 'missing websocket/timeline binding');
 });
 
-test('React 页面会在收到部分回复后提供继续剩余执行入口，而不是提示手动重发', () => {
+test('React 页面使用显式同步状态机、会话防串护栏与增量补偿回退策略', () => {
+  const html = readPublicFile('public', 'index.html');
+  const socketMessageBody = getFunctionBody(html, 'handleSessionEventSocketMessage');
+  const compensationBody = getFunctionBody(html, 'scheduleReconnectCompensation');
+  const sessionEventBranchStart = socketMessageBody.indexOf("if (message.type === 'session_event') {");
+  const sessionEventBranch = socketMessageBody.slice(
+    sessionEventBranchStart,
+    socketMessageBody.indexOf("if (message.type === 'subscribed') {")
+  );
+
+  assertContainsAll(html, [
+    'const SOCKET_CONNECTION_STATES = Object.freeze(',
+    'const TIMELINE_REFRESH_STATES = Object.freeze(',
+    'let socketConnectionState = SOCKET_CONNECTION_STATES.idle;',
+    'let timelineRefreshState = {',
+    'inFlight: false,',
+    'pending: false,',
+    'preferIncremental: false',
+    'let activeSessionSyncNonce = 0;',
+    'function resetTimelineRefreshState(',
+    'function beginActiveSessionSyncScope(',
+    'clearSocketReconnectTimer();'
+  ], 'missing explicit sync state model');
+
+  assertContainsAll(html, [
+    'const requestSessionId = activeSessionId;',
+    'const requestSyncNonce = activeSessionSyncNonce;',
+    'if (requestSessionId !== activeSessionId || requestSyncNonce !== activeSessionSyncNonce) {',
+    'timelineRefreshState.inFlight = true;',
+    'timelineRefreshState.inFlight = false;',
+    'if (timelineRefreshState.pending) {'
+  ], 'missing stale-session guard/coalesced refresh contract');
+
+  assertContainsAll(html, [
+    'if (timelineRefreshState.inFlight) {',
+    'timelineRefreshState.pending = true;',
+    'return;',
+    'if (timelineRefreshTimer) {'
+  ], 'missing refresh coalescing schedule behavior');
+
+  assertContainsAll(socketMessageBody, [
+    "if (message.type === 'subscribed') {",
+    'scheduleReconnectCompensation({',
+    'lastAckedSeq: latestSeq',
+    "if (message.type === 'session_event') {",
+    'const eventSessionId = typeof message.sessionId === \'string\'',
+    'if (!eventSessionId || eventSessionId !== activeSessionId) {',
+    'if (socketSubscribedSessionId && eventSessionId !== socketSubscribedSessionId) {',
+    'clearStatusNotice();',
+    'markRefreshPending();'
+  ], 'missing websocket reconnect compensation wiring');
+  assert.ok(
+    sessionEventBranch.indexOf('if (!eventSessionId || eventSessionId !== activeSessionId) {')
+      < sessionEventBranch.indexOf('lastSeenEventSeq = Math.max(lastSeenEventSeq, eventSeq);'),
+    'session_event should verify active session before advancing lastSeenEventSeq'
+  );
+  assert.ok(
+    sessionEventBranch.indexOf('if (socketSubscribedSessionId && eventSessionId !== socketSubscribedSessionId) {')
+      < sessionEventBranch.indexOf('lastSeenEventSeq = Math.max(lastSeenEventSeq, eventSeq);'),
+    'session_event should verify subscribed session before advancing lastSeenEventSeq'
+  );
+
+  assertContainsAll(compensationBody, [
+    'timelineRefreshState.preferIncremental = true;',
+    'runReconnectCompensation('
+  ], 'missing reconnect compensation scheduler');
+
+  assertContainsAll(html, [
+    'const incrementalResponse = await fetch(',
+    '`/api/sessions/${encodeURIComponent(targetSessionId)}/timeline?afterSeq=${encodeURIComponent(afterSeqCursor)}`',
+    'shouldFallbackToFullRefresh(',
+    'timelineRefreshState.preferIncremental = false;',
+    'return refreshActiveSessionTimeline({ ensureSocket: false, mode: TIMELINE_REFRESH_STATES.full })'
+  ], 'missing incremental-then-fallback reconnect flow');
+});
+
+test('React 页面在发送/停止/恢复等动作路径通过显式 notice 状态刷新状态栏，而非直接写 statusEl', () => {
+  const html = readPublicFile('public', 'index.html');
+  const sendBody = getFunctionBody(html, 'sendMessage');
+  const stopBody = getFunctionBody(html, 'requestChatStop');
+  const resumeBody = getFunctionBody(html, 'resumePendingChain');
+  const systemNoticeBody = getFunctionBody(html, 'showSystemNotice');
+  const refreshTimelineBody = getFunctionBody(html, 'refreshActiveSessionTimeline');
+  const socketMessageBody = getFunctionBody(html, 'handleSessionEventSocketMessage');
+
+  assertContainsAll(html, [
+    'function setStatusNotice(message = \'\') {',
+    'clearStatusNoticeTimer();',
+    'statusNoticeClearTimer = setTimeout(() => {',
+    '}, 3000);',
+    'statusNoticeText = message || \'\';',
+    'refreshSyncStatus();',
+    'function clearStatusNotice() {',
+    'clearStatusNoticeTimer();',
+    'function clearStatusNoticeTimer() {',
+    'statusNoticeText = \'\';'
+  ], 'missing explicit notice setter contract');
+
+  assertContainsAll(sendBody, [
+    "setStatusNotice('发送中...');",
+    "setStatusNotice('命令已接受，等待事件同步...');",
+    "setStatusNotice('发送失败');"
+  ], 'missing send path notice-state contract');
+  assert.ok(!sendBody.includes('statusEl.textContent ='), 'send path should not directly mutate statusEl');
+
+  assertContainsAll(stopBody, [
+    'setStatusNotice(scope === \'current\' ? \'正在停止当前智能体...\' : \'正在停止本次执行...\');',
+    "setStatusNotice('停止请求已发送...');",
+    "setStatusNotice('停止失败');"
+  ], 'missing stop path notice-state contract');
+  assert.ok(!stopBody.includes('statusEl.textContent ='), 'stop path should not directly mutate statusEl');
+
+  assertContainsAll(resumeBody, [
+    "setStatusNotice('继续执行剩余链路...');",
+    "setStatusNotice('已同步最新进展');",
+    "setStatusNotice('连接失败');"
+  ], 'missing resume path notice-state contract');
+  assert.ok(!resumeBody.includes('statusEl.textContent ='), 'resume path should not directly mutate statusEl');
+
+  assertContainsAll(systemNoticeBody, [
+    'setStatusNotice(notice);'
+  ], 'missing system notice bridge contract');
+  assert.ok(!systemNoticeBody.includes('statusEl.textContent ='), 'system notice should not directly mutate statusEl');
+
+  assertContainsAll(refreshTimelineBody, [
+    'clearStatusNotice();'
+  ], 'missing notice clear after successful timeline reconciliation');
+  assertContainsAll(socketMessageBody, [
+    'clearStatusNotice();'
+  ], 'missing notice clear on websocket subscribed/event synchronization');
+});
+
+test('React 页面会从 timeline 渲染完整事件流，并保留继续剩余执行入口', () => {
   const html = readPublicFile('public', 'index.html');
 
+  assert.ok(html.includes('let timelineRows = [];'), 'should keep timeline rows as rendered source');
+  assert.ok(html.includes('function renderTimelineRow('), 'should render timeline rows explicitly');
   assert.ok(html.includes('async function resumePendingChain() {'), 'should provide a resume action for interrupted chains');
   assert.ok(html.includes("fetch('/api/chat-resume', {"), 'resume action should call /api/chat-resume');
+  assert.ok(html.includes('await refreshActiveSessionTimeline('), 'resume should reconcile from authoritative timeline');
   assert.ok(html.includes('function showResumeChainNotice() {'), 'should render a dedicated resume notice');
   assert.ok(html.includes('继续剩余执行'), 'should label the resume action clearly');
-  assert.ok(html.includes('本次对话已收到部分回复，连接已中断。'), 'should explain the interrupted-partial-response state');
+  assert.ok(html.includes('本次对话可继续同步最新执行进展。'), 'should explain the event-log resume state');
   assert.ok(!html.includes('如需继续，请手动再发一次。'), 'should no longer instruct users to manually resend');
 });
 
@@ -211,23 +370,16 @@ test('前端流式界面提供停止当前智能体和停止本次执行按钮',
   ], 'missing stop action styles');
 });
 
-test('前端会处理 execution_stopped 事件并更新恢复提示', () => {
+test('前端会在 session_event 推送后刷新 timeline，并更新恢复提示', () => {
   const html = readPublicFile('public', 'index.html');
-  const sendMessageBody = getFunctionBody(html, 'sendMessage');
+  const socketHandlerBody = getFunctionBody(html, 'handleSessionEventSocketMessage');
 
-  assertContainsAll(sendMessageBody, [
-    'let streamStoppedByUser = false;',
-    'let streamResumeAvailable = false;',
-    "eventType === 'execution_stopped'",
-    'streamStoppedByUser = true;',
-    'streamResumeAvailable = data.resumeAvailable === true;',
-    "statusEl.textContent = streamResumeAvailable ? '执行已停止，可继续剩余执行' : '执行已停止';",
-    'if (streamResumeAvailable) {',
-    'showResumeChainNotice();',
-    'clearResumeChainNotice();',
-    'if (!streamReceivedAgentMessage && !streamReceivedError) {',
-    'if (!streamStoppedByUser && !streamReceivedAgentDelta) {',
-    'if (!streamStoppedByUser) {'
+  assertContainsAll(socketHandlerBody, [
+    "message.type === 'session_event'",
+    'lastSeenEventSeq = Math.max(',
+    'scheduleTimelineRefresh(',
+    "message.type === 'subscribed'",
+    'lastSeenEventSeq = Math.max('
   ], 'missing execution_stopped binding contract');
 });
 
@@ -1078,7 +1230,7 @@ test('React 页面会在当前会话设置中支持“不限制”语义并从�
   ], 'missing unlimited render-state behavior');
   assertContainsAll(loadHistoryBody, [
     'chatSessions = data.chatSessions || [];',
-    'activeSessionId = data.activeSessionId || null;',
+    'beginActiveSessionSyncScope(data.activeSessionId || null);',
     'syncSessionSettingsState(data.session || null);'
   ], 'missing history hydration for session settings');
 });
@@ -1109,7 +1261,7 @@ test('React 页面会在当前会话设置中暴露讨论模式控制，并从�
   ], 'missing discussion mode/state sync behavior');
   assertContainsAll(loadHistoryBody, [
     'chatSessions = data.chatSessions || [];',
-    'activeSessionId = data.activeSessionId || null;',
+    'beginActiveSessionSyncScope(data.activeSessionId || null);',
     'syncSessionSettingsState(data.session || null);'
   ], 'missing history hydration path for discussion state');
 });
@@ -1122,8 +1274,8 @@ test('React 页面会在对等讨论暂停时渲染暂停卡片，并将摘要�
   const loadHistoryBody = getFunctionBody(html, 'loadHistory');
 
   assert.ok(renderBody.includes("discussionMode === 'peer' && discussionState === 'paused'"), 'should gate pause-card rendering on peer paused sessions');
-  assert.ok(renderBody.includes("if (history.length === 0 && enabledAgents.size === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {"), 'should not early-return past the pause card for empty paused peer sessions');
-  assert.ok(renderBody.includes("if (history.length === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {"), 'should not append the generic welcome state for empty paused peer sessions');
+  assert.ok(renderBody.includes("if (timelineRows.length === 0 && enabledAgents.size === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {"), 'should not early-return past the pause card for empty paused peer sessions');
+  assert.ok(renderBody.includes("if (timelineRows.length === 0 && !(discussionMode === 'peer' && discussionState === 'paused')) {"), 'should not append the generic welcome state for empty paused peer sessions');
   assert.ok(pauseCardBody.includes('data-session-pause-card'), 'should expose a stable pause-card marker');
   assertContainsAll(pauseCardBody, [
     '讨论已暂停',

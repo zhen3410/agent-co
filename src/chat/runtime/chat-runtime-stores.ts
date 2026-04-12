@@ -3,14 +3,18 @@ import {
   ChatSessionRepository,
   RedisPersistedState,
   UserChatSession,
-  createChatSessionRepository
+  createChatSessionRepository,
 } from '../infrastructure/chat-session-repository';
 import {
   DependencyLogQuery,
   DependencyLogStore,
   DependencyStatusLogEntry,
-  createDependencyLogStore
+  createDependencyLogStore,
 } from '../infrastructure/dependency-log-store';
+import {
+  createSessionEventRepository,
+  SessionEventRepository,
+} from '../infrastructure/session-event-repository';
 
 export interface RuntimeSessionStore {
   ensureUserSessions(userKey: string, factory: () => UserChatSession): Map<string, UserChatSession>;
@@ -52,6 +56,7 @@ interface ChatRuntimeStores {
   callbackMessageStore: RuntimeCallbackMessageStore;
   persistenceStore: ChatRuntimePersistenceStore;
   dependencyLogStore: RuntimeDependencyLogStore;
+  sessionEventRepository: SessionEventRepository;
 }
 
 function createRuntimeSessionStore(repository: ChatSessionRepository): RuntimeSessionStore {
@@ -100,10 +105,12 @@ function createRuntimePersistenceStore(store: RuntimeSessionStore): ChatRuntimeP
 
 export function createChatRuntimeStores(config: { dependencyStatusLogLimit?: number }): ChatRuntimeStores {
   const repository = createChatSessionRepository();
+  const sessionEventRepository = createSessionEventRepository();
   const sessionStore = createRuntimeSessionStore(repository);
 
   return {
     repository,
+    sessionEventRepository,
     sessionStore,
     callbackMessageStore: createRuntimeCallbackMessageStore(repository),
     persistenceStore: createRuntimePersistenceStore(sessionStore),

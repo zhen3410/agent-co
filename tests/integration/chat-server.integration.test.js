@@ -7,6 +7,11 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
+const {
+  waitForCondition,
+  extractTimelineMessages,
+  waitForTimelineMessages
+} = require('./helpers/timeline-assertions');
 
 const repoRoot = join(__dirname, '..', '..');
 const distDir = join(repoRoot, 'dist');
@@ -196,16 +201,6 @@ test('chat service 不再直接改写 session 内部字段', () => {
   assert.equal(chatServiceSource.includes('session.pendingAgentTasks ='), false);
   assert.equal(chatServiceSource.includes('session.pendingVisibleMessages ='), false);
   assert.equal(/session\.discussionState\s*=\s*[^=]/.test(chatServiceSource), false);
-});
-
-test('chat routes 将 SSE 传输细节抽离到独立 helper', () => {
-  const chatRoutesSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'http', 'chat-routes.ts'), 'utf8');
-  const sseHelperSource = readFileSync(join(__dirname, '..', '..', 'src', 'chat', 'http', 'chat-sse.ts'), 'utf8');
-
-  assert.equal(chatRoutesSource.includes('text/event-stream'), false);
-  assert.equal(chatRoutesSource.includes('X-Accel-Buffering'), false);
-  assert.equal(chatRoutesSource.includes('event: ${event}'), false);
-  assert.equal(sseHelperSource.includes('text/event-stream'), true);
 });
 
 test('活动执行状态可记录停止范围并触发 abort', () => {
@@ -1091,19 +1086,6 @@ printf '%s\n' '{"output_text":"CLI provider reply"}'
   }
 });
 
-async function waitForCondition(check, timeoutMs = 3000, intervalMs = 80) {
-  const deadline = Date.now() + timeoutMs;
-  let lastValue;
-  while (Date.now() < deadline) {
-    lastValue = await check();
-    if (lastValue) {
-      return lastValue;
-    }
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
-  }
-  throw new Error('condition not met before timeout');
-}
-
 async function waitForAgentThinkingEvent(reader, expectedAgent, timeoutMs = 5000) {
   const decoder = new TextDecoder();
   let buffer = '';
@@ -1332,70 +1314,6 @@ test('统一 agent 调用入口在 api 模式下会调用 OpenAI-compatible prov
       max_tokens: 2000,
       stream: false
     });
-  } finally {
-    process.env.MODEL_CONNECTION_DATA_FILE = originalConnectionFile;
-    await stub.close();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('统一 agent 调用入口在 api 模式下支持流式增量，并忽略 reasoning_content', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-agent-invoker-api-stream-'));
-  const stub = await createOpenAICompatibleStub((req, res) => {
-    assert.equal(req.method, 'POST');
-    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    res.write('data: {"choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"先思考"}}]}\n\n');
-    res.write('data: {"choices":[{"index":0,"delta":{"content":"你好"}}]}\n\n');
-    res.write('data: {"choices":[{"index":0,"delta":{"content":"，世界"}}]}\n\n');
-    res.write('data: {"choices":[{"index":0,"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":4,"total_tokens":13}}\n\n');
-    res.end('data: [DONE]\n\n');
-  });
-
-  const connectionFile = writeApiConnectionStore(tempDir, [{
-    id: 'conn-1',
-    name: 'Gateway',
-    baseURL: stub.baseURL,
-    apiKey: 'sk-test-123',
-    enabled: true,
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  }]);
-  const originalConnectionFile = process.env.MODEL_CONNECTION_DATA_FILE;
-
-  try {
-    process.env.MODEL_CONNECTION_DATA_FILE = connectionFile;
-    const { invokeAgent } = require('../../dist/agent-invoker.js');
-    const deltas = [];
-    const result = await invokeAgent({
-      userMessage: '你好',
-      agent: {
-        name: 'Alice',
-        avatar: '🤖',
-        systemPrompt: '你是 Alice',
-        color: '#fff',
-        executionMode: 'api',
-        apiConnectionId: 'conn-1',
-        apiModel: 'glm-5.1',
-        apiTemperature: 0.3,
-        apiMaxTokens: 2048
-      },
-      history: [],
-      includeHistory: true,
-      onTextDelta: (delta) => {
-        deltas.push(delta);
-      }
-    });
-
-    assert.equal(result.text, '你好，世界');
-    assert.equal(result.rawText, '你好，世界');
-    assert.equal(result.finishReason, 'stop');
-    assert.deepEqual(result.usage, {
-      inputTokens: 9,
-      outputTokens: 4,
-      totalTokens: 13
-    });
-    assert.deepEqual(deltas, ['你好', '，世界']);
-    assert.equal(stub.requests[0].body.stream, true);
   } finally {
     process.env.MODEL_CONNECTION_DATA_FILE = originalConnectionFile;
     await stub.close();
@@ -1822,8 +1740,15 @@ test('聊天主链在 API 模式下会通过统一 invoker 调用 OpenAI-compati
 
     assert.equal(chatResponse.status, 200);
     assert.equal(chatResponse.body.success, true);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice' && item.text === 'API 聊天主链回复')
+    );
     assert.deepEqual(
-      chatResponse.body.aiMessages.map(item => [item.sender, item.text]),
+      aiMessages
+        .filter(item => item.sender === 'Alice' && item.text === 'API 聊天主链回复')
+        .map(item => [item.sender, item.text]),
       [['Alice', 'API 聊天主链回复']]
     );
     assert.equal(connectionStub.requests.length, 1);
@@ -1855,78 +1780,6 @@ test('依赖状态接口继续返回可解析的 JSON 结构', async () => {
     assert.equal(response.body.dependencies.some(item => item.name === 'redis'), true);
   } finally {
     await fixture.cleanup();
-  }
-});
-
-test('chat-stream 在 API 模式下会先推送 agent_delta，再推送最终 agent_message', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stream-api-agent-'));
-  const connectionStub = await createOpenAICompatibleStub((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    res.write('data: {"choices":[{"index":0,"delta":{"content":"流式"}}]}\n\n');
-    res.write('data: {"choices":[{"index":0,"delta":{"content":"回复"}}]}\n\n');
-    res.write('data: {"choices":[{"index":0,"finish_reason":"stop"}]}\n\n');
-    res.end('data: [DONE]\n\n');
-  });
-  const connectionFile = writeApiConnectionStore(tempDir, [{
-    id: 'conn-1',
-    name: 'Gateway',
-    baseURL: connectionStub.baseURL,
-    apiKey: 'sk-test-123',
-    enabled: true,
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  }]);
-  const agentDataFile = join(tempDir, 'agents.json');
-  writeFileSync(agentDataFile, JSON.stringify({
-    activeAgents: [
-      {
-        name: 'Alice',
-        avatar: '🤖',
-        personality: 'API 智能体',
-        systemPrompt: '你是 API Alice',
-        color: '#3b82f6',
-        executionMode: 'api',
-        apiConnectionId: 'conn-1',
-        apiModel: 'glm-5.1',
-        apiTemperature: 0.3,
-        apiMaxTokens: 2048
-      }
-    ],
-    pendingAgents: null,
-    pendingReason: null,
-    updatedAt: Date.now(),
-    pendingUpdatedAt: null
-  }, null, 2), 'utf8');
-
-  const fixture = await createChatServerFixture({
-    env: {
-      AGENT_DATA_FILE: agentDataFile,
-      MODEL_CONNECTION_DATA_FILE: connectionFile,
-      AGENT_CO_VERBOSE_LOG_DIR: join(tempDir, 'verbose-logs')
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice']);
-
-    const streamResponse = await fixture.request('/api/chat-stream', {
-      method: 'POST',
-      body: { message: '@Alice 请走 API 流式回复' }
-    });
-
-    assert.equal(streamResponse.status, 200);
-    assert.ok(streamResponse.text.includes('event: agent_thinking'));
-    assert.ok(streamResponse.text.includes('event: agent_delta'));
-    assert.ok(streamResponse.text.includes('"delta":"流式"'));
-    assert.ok(streamResponse.text.includes('"delta":"回复"'));
-    assert.ok(streamResponse.text.includes('event: agent_message'));
-    assert.ok(streamResponse.text.includes('"text":"流式回复"'));
-    assert.ok(streamResponse.text.includes('event: done'));
-  } finally {
-    await fixture.cleanup();
-    await connectionStub.close();
-    rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
@@ -1967,308 +1820,6 @@ test('chat-stop scope 非法值会返回校验失败', async () => {
     assert.deepEqual(stopResponse.body, { error: 'scope 必须是 current_agent 或 session' });
   } finally {
     await fixture.cleanup();
-  }
-});
-
-test('chat-stop 可停止当前活动执行并返回 scope', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-active-stream-'));
-  const fakeClaude = join(tempDir, 'claude');
-  writeFileSync(fakeClaude, `#!/usr/bin/env bash
-sleep 2
-printf '{"output_text":"late reply"}\\n'
-`, 'utf8');
-  chmodSync(fakeClaude, 0o755);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Claude']);
-
-    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Claude 保持执行用于 stop 测试' })
-    });
-    assert.equal(streamResponse.status, 200);
-
-    const reader = streamResponse.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let thinkingSeen = false;
-    const thinkingDeadline = Date.now() + 5000;
-
-    while (!thinkingSeen) {
-      assert.ok(Date.now() < thinkingDeadline, 'stream should emit thinking before stop request');
-      const { done, value } = await reader.read();
-      assert.equal(done, false);
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      let eventType = '';
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith('data: ')) {
-          const payload = JSON.parse(line.slice(6));
-          if (eventType === 'agent_thinking' && payload.agent === 'Claude') {
-            thinkingSeen = true;
-            break;
-          }
-          eventType = '';
-        }
-      }
-    }
-
-    const stopResponse = await fixture.request('/api/chat-stop', {
-      method: 'POST',
-      body: { scope: 'session' }
-    });
-    assert.equal(stopResponse.status, 200);
-    assert.deepEqual(stopResponse.body, {
-      success: true,
-      stopped: true,
-      scope: 'session'
-    });
-
-    await reader.cancel().catch(() => {});
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('显式停止当前智能体时只丢弃当前任务并保留后续链路', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-current-agent-'));
-  createStopScopeSemanticsClaudeScript(tempDir);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob']);
-
-    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Alice @Bob 显式停止当前智能体并保留后续链路' })
-    });
-    assert.equal(streamResponse.status, 200);
-
-    const reader = streamResponse.body.getReader();
-    await waitForAgentThinkingEvent(reader, 'Alice');
-
-    const stopResponse = await fixture.request('/api/chat-stop', {
-      method: 'POST',
-      body: { scope: 'current_agent' }
-    });
-    assert.equal(stopResponse.status, 200);
-    assert.deepEqual(stopResponse.body, {
-      success: true,
-      stopped: true,
-      scope: 'current_agent'
-    });
-
-    await drainStreamUntilClosed(reader, 6000);
-
-    const historyResponse = await fixture.request('/api/history');
-    assert.equal(historyResponse.status, 200);
-    assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), true);
-    assert.deepEqual(
-      historyResponse.body.session.pendingAgentTasks.map(item => item.agentName),
-      ['Bob']
-    );
-
-    const assistantSenders = historyResponse.body.messages
-      .filter(item => item.role === 'assistant')
-      .map(item => item.sender);
-    assert.ok(!assistantSenders.includes('Alice'));
-    assert.ok(!assistantSenders.includes('Bob'));
-
-    const resumeResponse = await fixture.request('/api/chat-resume', {
-      method: 'POST',
-      body: {}
-    });
-    assert.equal(resumeResponse.status, 200);
-    assert.equal(resumeResponse.body.success, true);
-    assert.equal(resumeResponse.body.resumed, true);
-    assert.equal(resumeResponse.body.aiMessages.length, 1);
-    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Bob');
-    assert.equal(resumeResponse.body.aiMessages[0].text, 'Bob 已在恢复链路中执行');
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('显式停止当前智能体时 SSE 会发送 execution_stopped 事件', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-sse-current-agent-'));
-  createStopScopeSemanticsClaudeScript(tempDir);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob']);
-
-    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Alice @Bob 显式停止当前智能体时应发送 execution_stopped' })
-    });
-    assert.equal(streamResponse.status, 200);
-
-    const reader = streamResponse.body.getReader();
-    await waitForAgentThinkingEvent(reader, 'Alice');
-
-    const stopResponse = await waitForChatStopAccepted(fixture, 'current_agent', 1800);
-    assert.deepEqual(stopResponse.body, {
-      success: true,
-      stopped: true,
-      scope: 'current_agent'
-    });
-
-    const events = await collectSseEventsUntilClosed(reader, 7000);
-    const stoppedEvent = events.find(item => item.event === 'execution_stopped');
-    assert.ok(stoppedEvent, 'stream should emit execution_stopped event');
-    assert.deepEqual(stoppedEvent.payload, {
-      scope: 'current_agent',
-      currentAgent: 'Alice',
-      resumeAvailable: true
-    });
-    assert.equal(events.some(item => item.event === 'done'), false);
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('显式停止整个执行时会清空剩余链路', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-session-'));
-  createStopScopeSemanticsClaudeScript(tempDir);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob']);
-
-    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Alice @Bob 显式停止整个执行并清空队列' })
-    });
-    assert.equal(streamResponse.status, 200);
-
-    const reader = streamResponse.body.getReader();
-    await waitForAgentThinkingEvent(reader, 'Alice');
-
-    const stopResponse = await fixture.request('/api/chat-stop', {
-      method: 'POST',
-      body: { scope: 'session' }
-    });
-    assert.equal(stopResponse.status, 200);
-    assert.deepEqual(stopResponse.body, {
-      success: true,
-      stopped: true,
-      scope: 'session'
-    });
-
-    await drainStreamUntilClosed(reader, 6000);
-
-    const historyResponse = await fixture.request('/api/history');
-    assert.equal(historyResponse.status, 200);
-    assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), false);
-
-    const resumeResponse = await fixture.request('/api/chat-resume', {
-      method: 'POST',
-      body: {}
-    });
-    assert.equal(resumeResponse.status, 200);
-    assert.equal(resumeResponse.body.success, true);
-    assert.equal(resumeResponse.body.resumed, false);
-    assert.deepEqual(resumeResponse.body.aiMessages, []);
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('显式停止整个执行时 SSE 会标记 resumeAvailable false', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-sse-session-'));
-  createStopScopeSemanticsClaudeScript(tempDir);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob']);
-
-    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Alice @Bob 显式停止整个执行时应发送 execution_stopped' })
-    });
-    assert.equal(streamResponse.status, 200);
-
-    const reader = streamResponse.body.getReader();
-    await waitForAgentThinkingEvent(reader, 'Alice');
-
-    const stopResponse = await waitForChatStopAccepted(fixture, 'session', 1800);
-    assert.deepEqual(stopResponse.body, {
-      success: true,
-      stopped: true,
-      scope: 'session'
-    });
-
-    const events = await collectSseEventsUntilClosed(reader, 7000);
-    const stoppedEvent = events.find(item => item.event === 'execution_stopped');
-    assert.ok(stoppedEvent, 'stream should emit execution_stopped event');
-    assert.deepEqual(stoppedEvent.payload, {
-      scope: 'session',
-      currentAgent: 'Alice',
-      resumeAvailable: false
-    });
-    assert.equal(events.some(item => item.event === 'done'), false);
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
@@ -2600,138 +2151,6 @@ test('恢复中的 session stop 会清空剩余可恢复链路', async () => {
   }
 });
 
-test('显式停止当前智能体后即使该任务已产出可见输出也不会派生新链路', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-stop-visible-output-current-agent-'));
-  createStopAfterVisibleOutputClaudeScript(tempDir);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob', 'Claude']);
-
-    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Alice @Claude 当前任务先产出可见输出再停止' })
-    });
-    assert.equal(streamResponse.status, 200);
-
-    const reader = streamResponse.body.getReader();
-    const aliceVisibleMessage = await waitForAgentMessageEvent(reader, 'Alice', 7000);
-    assert.ok(typeof aliceVisibleMessage.text === 'string' && aliceVisibleMessage.text.includes('Alice 已发出可见接力请求'));
-
-    const stopResponse = await fixture.request('/api/chat-stop', {
-      method: 'POST',
-      body: { scope: 'current_agent' }
-    });
-    assert.equal(stopResponse.status, 200);
-    assert.deepEqual(stopResponse.body, {
-      success: true,
-      stopped: true,
-      scope: 'current_agent'
-    });
-
-    await drainStreamUntilClosed(reader, 7000);
-
-    const historyResponse = await fixture.request('/api/history');
-    assert.equal(historyResponse.status, 200);
-    assert.equal(Array.isArray(historyResponse.body.session.pendingAgentTasks), true);
-    assert.deepEqual(
-      historyResponse.body.session.pendingAgentTasks.map(item => item.agentName),
-      ['Claude']
-    );
-
-    const assistantTexts = historyResponse.body.messages
-      .filter(item => item.role === 'assistant')
-      .map(item => item.text);
-    assert.ok(assistantTexts.some(text => text.includes('Alice 已发出可见接力请求')));
-    assert.ok(!assistantTexts.some(text => text.includes('Bob 不应被显式停止后的当前任务派生触发')));
-    assert.ok(!assistantTexts.some(text => text.includes('Claude 是原队列中的后续任务')));
-
-    const resumeResponse = await fixture.request('/api/chat-resume', {
-      method: 'POST',
-      body: {}
-    });
-    assert.equal(resumeResponse.status, 200);
-    assert.equal(resumeResponse.body.success, true);
-    assert.equal(resumeResponse.body.resumed, true);
-    assert.equal(resumeResponse.body.aiMessages.length, 1);
-    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Claude');
-    assert.equal(resumeResponse.body.aiMessages[0].text, 'Claude 是原队列中的后续任务，应在恢复时继续执行');
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('客户端断流仍保留当前任务以便恢复', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-stream-disconnect-requeue-current-'));
-  createStopScopeSemanticsClaudeScript(tempDir);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice']);
-
-    const abortController = new AbortController();
-    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Alice 客户端断流后应可恢复当前任务' }),
-      signal: abortController.signal
-    });
-    assert.equal(streamResponse.status, 200);
-
-    const reader = streamResponse.body.getReader();
-    await waitForAgentThinkingEvent(reader, 'Alice');
-
-    abortController.abort();
-    await reader.cancel().catch(() => {});
-
-    const historyWithPending = await waitForCondition(async () => {
-      const history = await fixture.request('/api/history');
-      if (!Array.isArray(history.body?.session?.pendingAgentTasks)) return null;
-      if (history.body.session.pendingAgentTasks.length === 0) return null;
-      return history;
-    }, 6000, 120);
-
-    assert.deepEqual(
-      historyWithPending.body.session.pendingAgentTasks.map(item => item.agentName),
-      ['Alice']
-    );
-
-    const resumeResponse = await fixture.request('/api/chat-resume', {
-      method: 'POST',
-      body: {}
-    });
-    assert.equal(resumeResponse.status, 200);
-    assert.equal(resumeResponse.body.success, true);
-    assert.equal(resumeResponse.body.resumed, true);
-    assert.equal(resumeResponse.body.aiMessages.length, 1);
-    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Alice');
-    assert.equal(resumeResponse.body.aiMessages[0].text, 'Alice 慢回复，断流恢复后应继续执行');
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
 test('未登录时聊天相关接口会返回 401，登录后可正常聊天', async () => {
   const fixture = await createChatServerFixture();
 
@@ -2766,8 +2185,12 @@ test('未登录时聊天相关接口会返回 401，登录后可正常聊天', a
     });
     assert.equal(chatResponse.status, 200);
     assert.equal(chatResponse.body.success, true);
-    assert.ok(Array.isArray(chatResponse.body.aiMessages));
-    assert.ok(chatResponse.body.aiMessages.length >= 1);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice')
+    );
+    assert.ok(aiMessages.length >= 1);
   } finally {
     await fixture.cleanup();
   }
@@ -2813,9 +2236,12 @@ test('登录后支持多智能体协作回复', async () => {
 
     assert.equal(chatResponse.status, 200);
     assert.equal(chatResponse.body.success, true);
-    assert.ok(Array.isArray(chatResponse.body.aiMessages));
-
-    const senders = new Set(chatResponse.body.aiMessages.map(item => item.sender));
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice') && messages.some(item => item.sender === 'Bob')
+    );
+    const senders = new Set(aiMessages.map(item => item.sender));
     assert.ok(senders.has('Alice'));
     assert.ok(senders.has('Bob'));
   } finally {
@@ -2885,8 +2311,15 @@ EOF
 
     assert.equal(chatResponse.status, 200);
     assert.equal(chatResponse.body.success, true);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice' && item.text.includes('请 @@Bob')) && messages.some(item => item.sender === 'Bob')
+    );
     assert.deepEqual(
-      chatResponse.body.aiMessages.map(item => [item.sender, item.text]),
+      aiMessages
+        .filter(item => item.sender === 'Alice' || item.sender === 'Bob')
+        .map(item => [item.sender, item.text]),
       [
         ['Alice', '请 @@Bob 补充工程实现建议'],
         ['Bob', 'Bob 已收到 Alice 的邀请，并补充了工程实现建议']
@@ -2919,8 +2352,18 @@ test('agent 间调用会默认创建待复核任务', async () => {
 
     assert.equal(chatResponse.status, 200);
     assert.equal(chatResponse.body.success, true);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => {
+        const senders = messages.map(item => item.sender);
+        return senders.includes('Alice') && senders.includes('Bob') && messages.some(item => item.messageSubtype === 'invocation_review');
+      }
+    );
     assert.deepEqual(
-      chatResponse.body.aiMessages.map(item => item.sender),
+      aiMessages
+        .filter(item => item.sender === 'Alice' || item.sender === 'Bob')
+        .map(item => item.sender),
       ['Alice', 'Bob', 'Alice']
     );
 
@@ -2968,8 +2411,15 @@ test('用户直接 @agent 不会创建调用者复核任务', async () => {
 
     assert.equal(chatResponse.status, 200);
     assert.equal(chatResponse.body.success, true);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.filter(item => item.sender === 'Alice').length >= 1
+    );
     assert.deepEqual(
-      chatResponse.body.aiMessages.map(item => item.sender),
+      aiMessages
+        .filter(item => item.sender === 'Alice')
+        .map(item => item.sender),
       ['Alice']
     );
 
@@ -3059,7 +2509,7 @@ test('被调用者回复会回传给调用者做 accept 复核', async () => {
   }
 });
 
-test('调用链相关 assistant 消息会在聊天响应与历史记录中携带 callGraph 快照', async () => {
+test('调用链相关 assistant 消息会在历史记录中携带 callGraph 快照，且 /api/chat 保持 accepted 契约', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-call-graph-'));
   createReviewLoopClaudeScript(tempDir, 'accept');
 
@@ -3080,20 +2530,24 @@ test('调用链相关 assistant 消息会在聊天响应与历史记录中携带
 
     assert.equal(chatResponse.status, 200);
     assert.equal(chatResponse.body.success, true);
-    assert.equal(chatResponse.body.userMessage.callGraph, undefined);
-
-    const graphMessages = chatResponse.body.aiMessages.filter(item => item.taskId);
-    assert.equal(graphMessages.length >= 2, true);
-    assert.equal(graphMessages.every(item => item.callGraph && item.callGraph.focusNodeId === `message:${item.id}`), true);
-    assert.equal(graphMessages.some(item => item.callGraph && item.callGraph.hasCycle), false);
+    assert.equal(chatResponse.body.accepted, true);
+    assert.equal(Array.isArray(chatResponse.body.aiMessages), false);
+    assert.equal(chatResponse.body.userMessage, undefined);
 
     const historyResponse = await waitForCondition(async () => {
       const history = await fixture.request('/api/history');
+      const graphMessages = Array.isArray(history.body?.messages)
+        ? history.body.messages.filter(item => item.taskId && item.callGraph)
+        : [];
       const reviewMessage = history.body?.messages?.find(item => item.messageSubtype === 'invocation_review');
-      return reviewMessage?.callGraph ? history : null;
+      return graphMessages.length >= 2 && reviewMessage?.callGraph ? history : null;
     }, 4000, 100);
 
     assert.equal(historyResponse.status, 200);
+    const historyGraphMessages = historyResponse.body.messages.filter(item => item.taskId);
+    assert.equal(historyGraphMessages.length >= 2, true);
+    assert.equal(historyGraphMessages.every(item => item.callGraph && item.callGraph.focusNodeId === `message:${item.id}`), true);
+    assert.equal(historyGraphMessages.some(item => item.callGraph && item.callGraph.hasCycle), false);
     const historyReviewMessage = historyResponse.body.messages.find(item => item.messageSubtype === 'invocation_review');
     assert.ok(historyReviewMessage.callGraph);
     assert.equal(historyReviewMessage.callGraph.focusNodeId, `message:${historyReviewMessage.id}`);
@@ -3827,255 +3281,6 @@ test('超出 retry 或 follow_up 上限会将任务标记为 failed 且停止循
   }
 });
 
-test('流式连接中断后不会继续执行后续被 @ 的智能体链路', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-stream-abort-'));
-  const fakeClaude = join(tempDir, 'claude');
-  writeFileSync(fakeClaude, `#!/usr/bin/env bash
-node - <<'EOF'
-const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
-const sessionId = process.env.AGENT_CO_SESSION_ID || '';
-const apiUrl = process.env.AGENT_CO_API_URL || '';
-const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
-
-async function post(content, invokeAgents) {
-  const encodedAgentName = encodeURIComponent(agentName);
-  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
-    method: 'POST',
-    headers: {
-      Authorization: \`Bearer \${token}\`,
-      'Content-Type': 'application/json',
-      'x-agent-co-callback-token': token,
-      'x-agent-co-session-id': sessionId,
-      'x-agent-co-agent': encodedAgentName
-    },
-    body: JSON.stringify({ content, invokeAgents })
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-}
-
-(async () => {
-  if (agentName === 'Alice') {
-    await post('请 @Bob 继续跟进', ['Bob']);
-  } else if (agentName === 'Bob') {
-    await post('Bob 不应该在断流后继续执行');
-  } else {
-    await post(\`\${agentName} 未命中测试分支\`);
-  }
-  await new Promise(resolve => setTimeout(resolve, 120));
-  process.stdout.write('{"output_text":"callback sent"}\\n');
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-EOF
-`, 'utf8');
-  chmodSync(fakeClaude, 0o755);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob']);
-
-    const controller = new AbortController();
-    const response = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Alice 发起协作' }),
-      signal: controller.signal
-    });
-
-    assert.equal(response.status, 200);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let thinkingSeen = false;
-
-    const thinkingDeadline = Date.now() + 5000;
-    while (!thinkingSeen) {
-      assert.ok(Date.now() < thinkingDeadline, 'stream should emit Alice thinking before timeout');
-      const { done, value } = await reader.read();
-      assert.equal(done, false, 'stream should emit thinking event before closing');
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      let eventType = '';
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith('data: ')) {
-          const payload = JSON.parse(line.slice(6));
-          if (eventType === 'agent_thinking' && payload.agent === 'Alice') {
-            thinkingSeen = true;
-            break;
-          }
-          eventType = '';
-        }
-      }
-    }
-
-    controller.abort();
-    await reader.cancel().catch(() => {});
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const historyResponse = await fixture.request('/api/history');
-    assert.equal(historyResponse.status, 200);
-    const assistantSenders = historyResponse.body.messages
-      .filter(item => item.role === 'assistant')
-      .map(item => item.sender);
-
-    assert.ok(assistantSenders.includes('Alice'), 'current in-flight agent may still finish');
-    assert.ok(!assistantSenders.includes('Bob'), 'disconnect should stop chained Bob execution');
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('流式中断后待执行链路会保留调用复核元数据', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-stream-pending-task-metadata-'));
-  const fakeClaude = join(tempDir, 'claude');
-  writeFileSync(fakeClaude, `#!/usr/bin/env bash
-node - <<'EOF'
-const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
-const sessionId = process.env.AGENT_CO_SESSION_ID || '';
-const apiUrl = process.env.AGENT_CO_API_URL || '';
-const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
-
-async function post(content, invokeAgents) {
-  const encodedAgentName = encodeURIComponent(agentName);
-  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
-    method: 'POST',
-    headers: {
-      Authorization: \`Bearer \${token}\`,
-      'Content-Type': 'application/json',
-      'x-agent-co-callback-token': token,
-      'x-agent-co-session-id': sessionId,
-      'x-agent-co-agent': encodedAgentName
-    },
-    body: JSON.stringify({ content, invokeAgents })
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-}
-
-async function sleep(ms) {
-  await new Promise(resolve => setTimeout(resolve, ms));
-}
-
-(async () => {
-  if (agentName === 'Alice') {
-    await post('请 @@Bob 接力补充结论', ['Bob']);
-    await sleep(200);
-  } else if (agentName === 'Bob') {
-    await sleep(2000);
-    await post('Bob 已补充结论，本轮不再继续');
-  } else {
-    await post(\`\${agentName} 已完成\`);
-  }
-  process.stdout.write('{"output_text":"callback sent"}\\n');
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-EOF
-`, 'utf8');
-  chmodSync(fakeClaude, 0o755);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob']);
-
-    const controller = new AbortController();
-    const response = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Alice 发起协作并在首条回复后断开' }),
-      signal: controller.signal
-    });
-    assert.equal(response.status, 200);
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let aliceThinkingSeen = false;
-
-    const deadline = Date.now() + 5000;
-    while (!aliceThinkingSeen) {
-      assert.ok(Date.now() < deadline, 'stream should emit Alice thinking before timeout');
-      const { done, value } = await reader.read();
-      assert.equal(done, false, 'stream should emit thinking event before closing');
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      let eventType = '';
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith('data: ')) {
-          const payload = JSON.parse(line.slice(6));
-          if (eventType === 'agent_thinking' && payload.agent === 'Alice') {
-            aliceThinkingSeen = true;
-            break;
-          }
-          eventType = '';
-        }
-      }
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 260));
-    controller.abort();
-    await reader.cancel().catch(() => {});
-
-    const historyWithPending = await waitForCondition(async () => {
-      const history = await fixture.request('/api/history');
-      if (!Array.isArray(history.body?.session?.pendingAgentTasks)) return null;
-      if (history.body.session.pendingAgentTasks.length === 0) return null;
-      return history;
-    }, 6000, 120);
-
-    const [pendingTask] = historyWithPending.body.session.pendingAgentTasks;
-    assert.equal(pendingTask.agentName, 'Bob');
-    assert.equal(typeof pendingTask.taskId, 'string');
-    assert.equal(pendingTask.taskId.length > 0, true);
-    assert.equal(pendingTask.callerAgentName, 'Alice');
-    assert.equal(pendingTask.reviewMode, 'caller_review');
-    assert.equal(typeof pendingTask.deadlineAt, 'number');
-    assert.equal(Number.isFinite(pendingTask.deadlineAt), true);
-
-    assert.equal(Array.isArray(historyWithPending.body.session.invocationTasks), true);
-    assert.equal(historyWithPending.body.session.invocationTasks.length >= 1, true);
-    const matchedTask = historyWithPending.body.session.invocationTasks.find(item => item.id === pendingTask.taskId);
-    assert.ok(matchedTask);
-    assert.equal(matchedTask.callerAgentName, 'Alice');
-    assert.equal(matchedTask.calleeAgentName, 'Bob');
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
 test('支持带中文标点的 @Codex架构师 提及', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-mention-'));
   const fakeCodex = join(tempDir, 'codex');
@@ -4102,9 +3307,12 @@ printf '{"output_text":"中文标点 mention ok"}\n'
 
     assert.equal(chatResponse.status, 200);
     assert.equal(chatResponse.body.success, true);
-    assert.ok(Array.isArray(chatResponse.body.aiMessages));
-
-    const senders = new Set(chatResponse.body.aiMessages.map(item => item.sender));
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Codex架构师')
+    );
+    const senders = new Set(aiMessages.map(item => item.sender));
     assert.ok(senders.has('Codex架构师'));
   } finally {
     await fixture.cleanup();
@@ -4144,9 +3352,12 @@ printf '{"output_text":"Codex架构师 ok"}\n'
 
     assert.equal(chatResponse.status, 200);
     assert.equal(chatResponse.body.success, true);
-    assert.ok(Array.isArray(chatResponse.body.aiMessages));
-
-    const senders = new Set(chatResponse.body.aiMessages.map(item => item.sender));
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => ['Claude', 'Codex架构师', 'Alice', 'Bob'].every(sender => messages.some(item => item.sender === sender))
+    );
+    const senders = new Set(aiMessages.map(item => item.sender));
     assert.ok(senders.has('Claude'));
     assert.ok(senders.has('Codex架构师'));
     assert.ok(senders.has('Alice'));
@@ -4205,8 +3416,16 @@ printf '{"output_text":"{\\"output_text\\":\\"%s 已收到\\"}\\n"' "\${AGENT_CO
 
     assert.equal(chatResponse.status, 200);
     assert.equal(chatResponse.body.success, true);
-
-    const senders = new Set(chatResponse.body.aiMessages.map(item => item.sender));
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => enabledAgents.every(sender => messages.some(item => item.sender === sender))
+    );
+    const senders = new Set(
+      aiMessages
+        .filter(item => enabledAgents.includes(item.sender))
+        .map(item => item.sender)
+    );
     assert.deepEqual([...senders].sort(), [...enabledAgents].sort());
   } finally {
     await fixture.cleanup();
@@ -4238,7 +3457,12 @@ printf '{"output_text":"这是 Codex 直接回复（无回调）"}\\n'
     });
 
     assert.equal(chatResponse.status, 200);
-    const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Codex架构师')
+    );
+    const codexMessage = aiMessages.find(item => item.sender === 'Codex架构师');
     assert.ok(codexMessage, 'should include Codex visible message');
     assert.equal(codexMessage.text, '这是 Codex 直接回复（无回调）');
 
@@ -4278,7 +3502,12 @@ exit 1
     });
 
     assert.equal(chatResponse.status, 200);
-    const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Codex架构师')
+    );
+    const codexMessage = aiMessages.find(item => item.sender === 'Codex架构师');
     assert.ok(codexMessage, 'should include a visible failure message');
     assert.match(codexMessage.text, /账号或工作区异常/u);
     assert.match(codexMessage.text, /请检查 Codex/u);
@@ -4313,7 +3542,12 @@ exit 1
     });
 
     assert.equal(chatResponse.status, 200);
-    const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Codex架构师')
+    );
+    const codexMessage = aiMessages.find(item => item.sender === 'Codex架构师');
     assert.ok(codexMessage, 'should include a visible failure message');
     assert.match(codexMessage.text, /额度|usage limit|稍后重试/u);
     assert.doesNotMatch(codexMessage.text, /我收到了你的消息/u);
@@ -4356,72 +3590,6 @@ printf '{"output_text":"verbose log test"}\\n'
   }
 });
 
-test('chat-stream 会在 Codex 无回调时推送 agent_message，避免前端一直停留在思考中', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-stream-'));
-  const fakeCodex = join(tempDir, 'codex');
-  writeFileSync(fakeCodex, `#!/usr/bin/env bash
-printf '{"output_text":"SSE 直出回复"}\\n'
-`, 'utf8');
-  chmodSync(fakeCodex, 0o755);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Codex架构师']);
-    const streamResponse = await fixture.request('/api/chat-stream', {
-      method: 'POST',
-      body: { message: '@Codex架构师 走流式' }
-    });
-
-    assert.equal(streamResponse.status, 200);
-    assert.ok(streamResponse.text.includes('event: agent_thinking'));
-    assert.ok(streamResponse.text.includes('event: agent_message'));
-    assert.ok(streamResponse.text.includes('SSE 直出回复'));
-    assert.ok(streamResponse.text.includes('event: done'));
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('chat-stream 在智能体没有任何可见消息时会推送 error 事件，避免前端静默结束', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-empty-stream-'));
-  const fakeCodex = join(tempDir, 'codex');
-  writeFileSync(fakeCodex, `#!/usr/bin/env bash
-printf '{"type":"turn.completed"}\\n'
-`, 'utf8');
-  chmodSync(fakeCodex, 0o755);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Codex架构师']);
-    const streamResponse = await fixture.request('/api/chat-stream', {
-      method: 'POST',
-      body: { message: '@Codex架构师 走流式但不给可见消息' }
-    });
-
-    assert.equal(streamResponse.status, 200);
-    assert.ok(streamResponse.text.includes('event: agent_thinking'));
-    assert.ok(streamResponse.text.includes('event: error'));
-    assert.ok(streamResponse.text.includes('未返回可见消息'));
-    assert.ok(streamResponse.text.includes('event: done'));
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
 test('Codex 直出包含 agent_co 工具编排痕迹时，不应把内部协作过程直接展示给用户', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-codex-internal-leak-'));
   const fakeCodex = join(tempDir, 'codex');
@@ -4446,356 +3614,17 @@ printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","t
     });
 
     assert.equal(chatResponse.status, 200);
-    const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Codex架构师')
+    );
+    const codexMessage = aiMessages.find(item => item.sender === 'Codex架构师');
     assert.ok(codexMessage, 'should include a visible fallback message');
     assert.match(codexMessage.text, /协作工具调用未成功/u);
     assert.doesNotMatch(codexMessage.text, /agent_co_get_context/u);
     assert.doesNotMatch(codexMessage.text, /agent_co_post_message/u);
     assert.doesNotMatch(codexMessage.text, /先读取会话协作技能说明/u);
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('chat-stream 会继续推送由智能体 @ 触发的后续智能体消息', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-claude-stream-chain-'));
-  const fakeClaude = join(tempDir, 'claude');
-  writeFileSync(fakeClaude, `#!/usr/bin/env bash
-node - <<'EOF'
-const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
-const sessionId = process.env.AGENT_CO_SESSION_ID || '';
-const apiUrl = process.env.AGENT_CO_API_URL || '';
-const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
-
-async function post(content, invokeAgents) {
-  const encodedAgentName = encodeURIComponent(agentName);
-  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
-    method: 'POST',
-    headers: {
-      Authorization: \`Bearer \${token}\`,
-      'Content-Type': 'application/json',
-      'x-agent-co-callback-token': token,
-      'x-agent-co-session-id': sessionId,
-      'x-agent-co-agent': encodedAgentName
-    },
-    body: JSON.stringify({ content, invokeAgents })
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-}
-
-(async () => {
-  if (agentName === 'Alice') {
-    await post('请流式继续', ['Bob']);
-  } else if (agentName === 'Bob') {
-    await post('Bob 流式补充完成');
-  }
-  process.stdout.write('{"output_text":"callback sent"}\\n');
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-EOF
-`, 'utf8');
-  chmodSync(fakeClaude, 0o755);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob']);
-
-    const streamResponse = await fixture.request('/api/chat-stream', {
-      method: 'POST',
-      body: { message: '@Alice 开始流式协作' }
-    });
-
-    assert.equal(streamResponse.status, 200);
-    assert.ok(streamResponse.text.includes('event: agent_thinking'));
-    assert.ok(streamResponse.text.includes('"agent":"Alice"'));
-    assert.ok(streamResponse.text.includes('"agent":"Bob"'));
-    assert.ok(streamResponse.text.includes('"sender":"Alice"'));
-    assert.ok(streamResponse.text.includes('"sender":"Bob"'));
-    assert.ok(streamResponse.text.includes('Bob 流式补充完成'));
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('chat-stream 客户端中途断开时会记录明确的断流日志', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-claude-stream-disconnect-log-'));
-  const fakeClaude = join(tempDir, 'claude');
-  writeFileSync(fakeClaude, `#!/usr/bin/env bash
-sleep 2
-printf '{"output_text":"late reply"}\\n'
-`, 'utf8');
-  chmodSync(fakeClaude, 0o755);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Claude']);
-
-    const abortController = new AbortController();
-    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Claude 触发断流日志验证' }),
-      signal: abortController.signal
-    });
-
-    await new Promise(resolve => setTimeout(resolve, 150));
-    abortController.abort();
-    await streamResponse.body?.cancel().catch(() => {});
-
-    await new Promise(resolve => setTimeout(resolve, 1600));
-
-    const logsResponse = await fixture.request('/api/dependencies/logs?dependency=chat-exec&keyword=stream_disconnect');
-    assert.equal(logsResponse.status, 200);
-    const messages = logsResponse.body.logs.map(item => item.message);
-    assert.ok(messages.some(msg => msg.includes('stage=stream_disconnect')));
-    assert.ok(messages.some(msg => msg.includes('reason=client_disconnect')));
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('chat-stream 会在长时间无可见输出时持续推送 heartbeat，避免连接空闲断开', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-claude-stream-heartbeat-'));
-  const fakeClaude = join(tempDir, 'claude');
-  writeFileSync(fakeClaude, `#!/usr/bin/env bash
-sleep 1
-printf '{"output_text":"late reply"}\\n'
-`, 'utf8');
-  chmodSync(fakeClaude, 0o755);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`,
-      AGENT_CO_SSE_HEARTBEAT_INTERVAL_MS: '100'
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Claude']);
-
-    const streamResponse = await fixture.request('/api/chat-stream', {
-      method: 'POST',
-      body: { message: '@Claude 触发 heartbeat' }
-    });
-
-    assert.equal(streamResponse.status, 200);
-    assert.ok(streamResponse.text.includes('event: heartbeat'));
-    assert.ok(streamResponse.text.includes('event: agent_message'));
-    assert.ok(streamResponse.text.includes('late reply'));
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('chat-stream 客户端中途断开时会取消当前正在执行的智能体，避免断流后继续落库', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-claude-stream-abort-current-'));
-  const fakeClaude = join(tempDir, 'claude');
-  writeFileSync(fakeClaude, `#!/usr/bin/env bash
-sleep 2
-printf '{"output_text":"late reply should not persist"}\\n'
-`, 'utf8');
-  chmodSync(fakeClaude, 0o755);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Claude']);
-
-    const abortController = new AbortController();
-    const streamResponse = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Claude 当前执行也要在断流后取消' }),
-      signal: abortController.signal
-    });
-
-    assert.equal(streamResponse.status, 200);
-    const reader = streamResponse.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let thinkingSeen = false;
-
-    const thinkingDeadline = Date.now() + 5000;
-    while (!thinkingSeen) {
-      assert.ok(Date.now() < thinkingDeadline, 'stream should emit Claude thinking before timeout');
-      const { done, value } = await reader.read();
-      assert.equal(done, false, 'stream should emit thinking event before closing');
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      let eventType = '';
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith('data: ')) {
-          const payload = JSON.parse(line.slice(6));
-          if (eventType === 'agent_thinking' && payload.agent === 'Claude') {
-            thinkingSeen = true;
-            break;
-          }
-          eventType = '';
-        }
-      }
-    }
-
-    abortController.abort();
-    await reader.cancel().catch(() => {});
-    await new Promise(resolve => setTimeout(resolve, 2400));
-
-    const historyResponse = await fixture.request('/api/history');
-    assert.equal(historyResponse.status, 200);
-    const assistantMessages = historyResponse.body.messages
-      .filter(item => item.role === 'assistant')
-      .map(item => item.text);
-
-    assert.ok(!assistantMessages.includes('late reply should not persist'));
-  } finally {
-    await fixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('chat-resume 会继续执行流式中断后剩余的智能体链路，避免重复执行已完成节点', async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-fake-stream-resume-chain-'));
-  const fakeClaude = join(tempDir, 'claude');
-  writeFileSync(fakeClaude, `#!/usr/bin/env bash
-node - <<'EOF'
-const agentName = process.env.AGENT_CO_AGENT_NAME || 'AI';
-const sessionId = process.env.AGENT_CO_SESSION_ID || '';
-const apiUrl = process.env.AGENT_CO_API_URL || '';
-const token = process.env.AGENT_CO_CALLBACK_TOKEN || '';
-
-async function post(content) {
-  const encodedAgentName = encodeURIComponent(agentName);
-  const response = await fetch(new URL('/api/callbacks/post-message', apiUrl), {
-    method: 'POST',
-    headers: {
-      Authorization: \`Bearer \${token}\`,
-      'Content-Type': 'application/json',
-      'x-agent-co-callback-token': token,
-      'x-agent-co-session-id': sessionId,
-      'x-agent-co-agent': encodedAgentName
-    },
-    body: JSON.stringify({ content })
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-}
-
-(async () => {
-  if (agentName === 'Alice') {
-    await post('Alice 已完成首段');
-  } else if (agentName === 'Bob') {
-    await new Promise(resolve => setTimeout(resolve, 1200));
-    await post('Bob 已继续完成剩余链路');
-  }
-  process.stdout.write('{"output_text":"callback sent"}\\n');
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-EOF
-`, 'utf8');
-  chmodSync(fakeClaude, 0o755);
-
-  const fixture = await createChatServerFixture({
-    env: {
-      PATH: `${tempDir}:${process.env.PATH || ''}`
-    }
-  });
-
-  try {
-    await fixture.login();
-    await enableAgents(fixture, ['Alice', 'Bob']);
-
-    const abortController = new AbortController();
-    const response = await fetch(`http://127.0.0.1:${fixture.port}/api/chat-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fixture.getCookieHeader()
-      },
-      body: JSON.stringify({ message: '@Alice @Bob 开始后中断，再恢复剩余链路' }),
-      signal: abortController.signal
-    });
-
-    assert.equal(response.status, 200);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let streamText = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      streamText += decoder.decode(value, { stream: true });
-      if (streamText.includes('"sender":"Alice"')) {
-        abortController.abort();
-        break;
-      }
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 1600));
-
-    const resumeResponse = await fixture.request('/api/chat-resume', {
-      method: 'POST',
-      body: {}
-    });
-
-    assert.equal(resumeResponse.status, 200);
-    assert.equal(resumeResponse.body.success, true);
-    assert.equal(resumeResponse.body.resumed, true);
-    assert.ok(Array.isArray(resumeResponse.body.aiMessages));
-    assert.equal(resumeResponse.body.aiMessages.length, 1);
-    assert.equal(resumeResponse.body.aiMessages[0].sender, 'Bob');
-    assert.equal(resumeResponse.body.aiMessages[0].text, 'Bob 已继续完成剩余链路');
-
-    const secondResumeResponse = await fixture.request('/api/chat-resume', {
-      method: 'POST',
-      body: {}
-    });
-    assert.equal(secondResumeResponse.status, 200);
-    assert.equal(secondResumeResponse.body.success, true);
-    assert.equal(secondResumeResponse.body.resumed, false);
-    assert.equal(secondResumeResponse.body.aiMessages.length, 0);
-
-    const historyResponse = await fixture.request('/api/history');
-    assert.equal(historyResponse.status, 200);
-    const senders = historyResponse.body.messages.map(item => item.sender);
-    assert.deepEqual(senders, ['用户', 'Alice', 'Bob']);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -4862,7 +3691,12 @@ EOF
     });
 
     assert.equal(chatResponse.status, 200);
-    const codexMessage = chatResponse.body.aiMessages.find(item => item.sender === 'Codex架构师');
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Codex架构师' && item.text === '已通过 MCP 回调')
+    );
+    const codexMessage = aiMessages.find(item => item.sender === 'Codex架构师');
     assert.ok(codexMessage, 'should include Codex callback message');
     assert.equal(codexMessage.text, '已通过 MCP 回调');
 
@@ -4916,9 +3750,22 @@ test('peer 模式下无显式继续对象时会将讨论标记为 paused', async
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.filter(item => item.sender === 'Alice').length >= 1
+    );
+    assert.deepEqual(aiMessages.filter(item => item.sender === 'Alice').map(item => item.sender), ['Alice']);
 
-    const historyResponse = await fixture.request('/api/history');
+    const historyResponse = await waitForCondition(async () => {
+      const response = await fixture.request('/api/history');
+      if (response.status === 200
+        && response.body.session.discussionMode === 'peer'
+        && response.body.session.discussionState === 'paused') {
+        return response;
+      }
+      return null;
+    });
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'peer');
     assert.equal(historyResponse.body.session.discussionState, 'paused');
@@ -4969,7 +3816,13 @@ test('peer 会话切回 classic 时会将 discussionState 归一化为 active', 
     });
     assert.equal(chatResponse.status, 200);
 
-    const pausedHistoryResponse = await fixture.request('/api/history');
+    const pausedHistoryResponse = await waitForCondition(async () => {
+      const historyResponse = await fixture.request('/api/history');
+      if (historyResponse.status === 200 && historyResponse.body.session.discussionState === 'paused') {
+        return historyResponse;
+      }
+      return null;
+    });
     assert.equal(pausedHistoryResponse.status, 200);
     assert.equal(pausedHistoryResponse.body.session.discussionState, 'paused');
 
@@ -5033,11 +3886,25 @@ test('peer 模式下若最终已无待继续讨论则会标记为 paused，即�
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Alice']);
-    assert.deepEqual(chatResponse.body.aiMessages[0].invokeAgents, ['Bob']);
-    assert.equal(chatResponse.body.aiMessages[1].invokeAgents, undefined);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.filter(item => item.sender === 'Alice').length >= 2
+    );
+    const aliceMessages = aiMessages.filter(item => item.sender === 'Alice');
+    assert.deepEqual(aliceMessages.map(item => item.sender), ['Alice', 'Alice']);
+    assert.deepEqual(aliceMessages[0].invokeAgents, ['Bob']);
+    assert.equal(aliceMessages[1].invokeAgents, undefined);
 
-    const historyResponse = await fixture.request('/api/history');
+    const historyResponse = await waitForCondition(async () => {
+      const response = await fixture.request('/api/history');
+      if (response.status === 200
+        && response.body.session.discussionMode === 'peer'
+        && response.body.session.discussionState === 'paused') {
+        return response;
+      }
+      return null;
+    });
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'peer');
     assert.equal(historyResponse.body.session.discussionState, 'paused');
@@ -5085,11 +3952,25 @@ test('peer 模式下显式继续若因队列限制未实际入队则会标记为
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob']);
-    assert.deepEqual(chatResponse.body.aiMessages[0].invokeAgents, ['Bob']);
-    assert.equal(chatResponse.body.aiMessages[1].invokeAgents, undefined);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice') && messages.some(item => item.sender === 'Bob')
+    );
+    const participantMessages = aiMessages.filter(item => item.sender === 'Alice' || item.sender === 'Bob');
+    assert.deepEqual(participantMessages.map(item => item.sender), ['Alice', 'Bob']);
+    assert.deepEqual(participantMessages[0].invokeAgents, ['Bob']);
+    assert.equal(participantMessages[1].invokeAgents, undefined);
 
-    const historyResponse = await fixture.request('/api/history');
+    const historyResponse = await waitForCondition(async () => {
+      const response = await fixture.request('/api/history');
+      if (response.status === 200
+        && response.body.session.discussionMode === 'peer'
+        && response.body.session.discussionState === 'paused') {
+        return response;
+      }
+      return null;
+    });
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'peer');
     assert.equal(historyResponse.body.session.discussionState, 'paused');
@@ -5136,11 +4017,25 @@ test('peer 模式下单 @ 点名会兼容升级为继续传播', async () => {
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob']);
-    assert.deepEqual(chatResponse.body.aiMessages[0].invokeAgents, ['Bob']);
-    assert.match(chatResponse.body.aiMessages[0].text, /@@Bob/);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice') && messages.some(item => item.sender === 'Bob')
+    );
+    const participantMessages = aiMessages.filter(item => item.sender === 'Alice' || item.sender === 'Bob');
+    assert.deepEqual(participantMessages.map(item => item.sender), ['Alice', 'Bob']);
+    assert.deepEqual(participantMessages[0].invokeAgents, ['Bob']);
+    assert.match(participantMessages[0].text, /@@Bob/);
 
-    const historyResponse = await fixture.request('/api/history');
+    const historyResponse = await waitForCondition(async () => {
+      const response = await fixture.request('/api/history');
+      if (response.status === 200
+        && response.body.session.discussionMode === 'peer'
+        && response.body.session.discussionState === 'paused') {
+        return response;
+      }
+      return null;
+    });
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'peer');
     assert.equal(historyResponse.body.session.discussionState, 'paused');
@@ -5187,9 +4082,15 @@ test('peer 模式下普通引用型单 @ 不会被兼容升级为继续传播', 
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
-    assert.equal(chatResponse.body.aiMessages[0].invokeAgents, undefined);
-    assert.doesNotMatch(chatResponse.body.aiMessages[0].text, /@@Bob/);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice')
+    );
+    const aliceMessages = aiMessages.filter(item => item.sender === 'Alice');
+    assert.deepEqual(aliceMessages.map(item => item.sender), ['Alice']);
+    assert.equal(aliceMessages[0].invokeAgents, undefined);
+    assert.doesNotMatch(aliceMessages[0].text, /@@Bob/);
 
     const historyResponse = await fixture.request('/api/history');
     assert.equal(historyResponse.status, 200);
@@ -5237,9 +4138,15 @@ test('peer 模式下 @所有人 不会被兼容升级为继续传播', async () 
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
-    assert.equal(chatResponse.body.aiMessages[0].invokeAgents, undefined);
-    assert.doesNotMatch(chatResponse.body.aiMessages[0].text, /@@/);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice')
+    );
+    const aliceMessages = aiMessages.filter(item => item.sender === 'Alice');
+    assert.deepEqual(aliceMessages.map(item => item.sender), ['Alice']);
+    assert.equal(aliceMessages[0].invokeAgents, undefined);
+    assert.doesNotMatch(aliceMessages[0].text, /@@/);
 
     const historyResponse = await fixture.request('/api/history');
     assert.equal(historyResponse.status, 200);
@@ -5354,7 +4261,12 @@ test('classic 模式下原有链式传播行为保持不变', async () => {
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob']);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice') && messages.some(item => item.sender === 'Bob')
+    );
+    assert.deepEqual(aiMessages.filter(item => item.sender === 'Alice' || item.sender === 'Bob').map(item => item.sender), ['Alice', 'Bob']);
 
     const historyResponse = await fixture.request('/api/history');
     assert.equal(historyResponse.status, 200);
@@ -5392,8 +4304,14 @@ test('classic 模式下单 @ 点名不会兼容升级为继续传播', async () 
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
-    assert.equal(chatResponse.body.aiMessages[0].invokeAgents, undefined);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice')
+    );
+    const aliceMessages = aiMessages.filter(item => item.sender === 'Alice');
+    assert.deepEqual(aliceMessages.map(item => item.sender), ['Alice']);
+    assert.equal(aliceMessages[0].invokeAgents, undefined);
 
     const historyResponse = await fixture.request('/api/history');
     assert.equal(historyResponse.status, 200);
@@ -5431,8 +4349,14 @@ test('classic 模式下 callback invokeAgents 指向未启用 agent 时会被过
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice']);
-    assert.equal(chatResponse.body.aiMessages[0].invokeAgents, undefined);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.some(item => item.sender === 'Alice')
+    );
+    const aliceMessages = aiMessages.filter(item => item.sender === 'Alice');
+    assert.deepEqual(aliceMessages.map(item => item.sender), ['Alice']);
+    assert.equal(aliceMessages[0].invokeAgents, undefined);
 
     const historyResponse = await fixture.request('/api/history');
     assert.equal(historyResponse.status, 200);
@@ -5483,7 +4407,13 @@ test('peer 模式下可手动触发生成总结', async () => {
     });
     assert.equal(chatResponse.status, 200);
 
-    const pausedHistoryResponse = await fixture.request('/api/history');
+    const pausedHistoryResponse = await waitForCondition(async () => {
+      const historyResponse = await fixture.request('/api/history');
+      if (historyResponse.status === 200 && historyResponse.body.session.discussionState === 'paused') {
+        return historyResponse;
+      }
+      return null;
+    });
     assert.equal(pausedHistoryResponse.status, 200);
     assert.equal(pausedHistoryResponse.body.session.discussionState, 'paused');
 
@@ -5512,7 +4442,15 @@ test('peer 模式下可手动触发生成总结', async () => {
     assert.equal(summaryBody.aiMessages[0].dispatchKind, 'summary');
     assert.match(summaryBody.aiMessages[0].text, /总结/);
 
-    const historyResponse = await fixture.request('/api/history');
+    const historyResponse = await waitForCondition(async () => {
+      const response = await fixture.request('/api/history');
+      if (response.status === 200
+        && response.body.session.discussionMode === 'peer'
+        && response.body.session.discussionState === 'paused') {
+        return response;
+      }
+      return null;
+    });
     assert.equal(historyResponse.status, 200);
     assert.equal(historyResponse.body.session.discussionMode, 'peer');
     assert.equal(historyResponse.body.session.discussionState, 'paused');
@@ -5564,6 +4502,17 @@ test('peer 模式下生成总结支持按 sessionId 指向非当前活跃会话'
     });
     assert.equal(targetChatResponse.status, 200);
 
+    await waitForCondition(async () => {
+      const response = await fixture.request('/api/sessions/select', {
+        method: 'POST',
+        body: { sessionId: targetSessionId }
+      });
+      if (response.status === 200 && response.body.session.discussionState === 'paused') {
+        return response;
+      }
+      return null;
+    });
+
     const otherSessionResponse = await fixture.request('/api/sessions', {
       method: 'POST',
       body: { name: 'active classic session' }
@@ -5581,18 +4530,26 @@ test('peer 模式下生成总结支持按 sessionId 指向非当前活跃会话'
       body: { sessionId: targetSessionId }
     });
     assert.equal(summaryResponse.status, 200);
-    assert.deepEqual(summaryResponse.body.aiMessages.map(item => item.sender), ['Alice']);
-    assert.equal(summaryResponse.body.aiMessages[0].dispatchKind, 'summary');
-    assert.match(summaryResponse.body.aiMessages[0].text, /指定会话的总结/);
+    assert.equal(summaryResponse.body.success, true);
 
     const stillActiveHistory = await fixture.request('/api/history');
     assert.equal(stillActiveHistory.status, 200);
     assert.equal(stillActiveHistory.body.session.id, otherSessionId);
     assert.equal(stillActiveHistory.body.session.discussionMode, 'classic');
 
-    const selectTargetResponse = await fixture.request('/api/sessions/select', {
-      method: 'POST',
-      body: { sessionId: targetSessionId }
+    const selectTargetResponse = await waitForCondition(async () => {
+      const response = await fixture.request('/api/sessions/select', {
+        method: 'POST',
+        body: { sessionId: targetSessionId }
+      });
+      if (response.status === 200
+        && response.body.session.id === targetSessionId
+        && response.body.session.discussionMode === 'peer'
+        && response.body.session.discussionState === 'paused'
+        && response.body.messages.at(-1)?.dispatchKind === 'summary') {
+        return response;
+      }
+      return null;
     });
     assert.equal(selectTargetResponse.status, 200);
     assert.equal(selectTargetResponse.body.session.id, targetSessionId);
@@ -6123,18 +5080,37 @@ test('生成总结不会隐式恢复普通链式传播', async () => {
     });
     assert.equal(chatResponse.status, 200);
 
+    await waitForCondition(async () => {
+      const response = await fixture.request('/api/history');
+      if (response.status === 200 && response.body.session.discussionState === 'paused') {
+        return response;
+      }
+      return null;
+    });
+
     const summaryResponse = await fixture.request('/api/chat-summary', {
       method: 'POST',
       body: {}
     });
     assert.equal(summaryResponse.status, 200);
-    assert.deepEqual(summaryResponse.body.aiMessages.map(item => item.sender), ['Alice']);
-    assert.equal(summaryResponse.body.aiMessages[0].dispatchKind, 'summary');
-    assert.deepEqual(summaryResponse.body.aiMessages[0].invokeAgents, ['Bob']);
+    assert.equal(summaryResponse.body.success, true);
 
-    const historyResponse = await fixture.request('/api/history');
+    const historyResponse = await waitForCondition(async () => {
+      const response = await fixture.request('/api/history');
+      const lastMessage = response.status === 200 ? response.body.messages.at(-1) : null;
+      if (response.status === 200
+        && response.body.session.discussionState === 'paused'
+        && lastMessage?.dispatchKind === 'summary'
+        && Array.isArray(lastMessage.invokeAgents)
+        && lastMessage.invokeAgents.includes('Bob')) {
+        return response;
+      }
+      return null;
+    });
     assert.equal(historyResponse.status, 200);
     assert.deepEqual(historyResponse.body.messages.map(item => item.sender), ['用户', 'Alice', 'Alice']);
+    assert.equal(historyResponse.body.messages.at(-1).dispatchKind, 'summary');
+    assert.deepEqual(historyResponse.body.messages.at(-1).invokeAgents, ['Bob']);
     assert.equal(historyResponse.body.session.discussionState, 'paused');
     assert.equal(historyResponse.body.session.pendingAgentTasks, undefined);
     assert.equal(Array.isArray(historyResponse.body.session.invocationTasks), true);
@@ -6187,17 +5163,36 @@ test('summary 模式仍会绕过 caller review，即使输出里携带 invokeAge
     });
     assert.equal(chatResponse.status, 200);
 
+    await waitForCondition(async () => {
+      const response = await fixture.request('/api/history');
+      if (response.status === 200 && response.body.session.discussionState === 'paused') {
+        return response;
+      }
+      return null;
+    });
+
     const summaryResponse = await fixture.request('/api/chat-summary', {
       method: 'POST',
       body: {}
     });
     assert.equal(summaryResponse.status, 200);
-    assert.deepEqual(summaryResponse.body.aiMessages.map(item => item.sender), ['Alice']);
-    assert.equal(summaryResponse.body.aiMessages[0].dispatchKind, 'summary');
-    assert.deepEqual(summaryResponse.body.aiMessages[0].invokeAgents, ['Bob']);
+    assert.equal(summaryResponse.body.success, true);
 
-    const historyResponse = await fixture.request('/api/history');
+    const historyResponse = await waitForCondition(async () => {
+      const response = await fixture.request('/api/history');
+      const lastMessage = response.status === 200 ? response.body.messages.at(-1) : null;
+      if (response.status === 200
+        && response.body.session.discussionState === 'paused'
+        && lastMessage?.dispatchKind === 'summary'
+        && Array.isArray(lastMessage.invokeAgents)
+        && lastMessage.invokeAgents.includes('Bob')) {
+        return response;
+      }
+      return null;
+    });
     assert.equal(historyResponse.status, 200);
+    assert.equal(historyResponse.body.messages.at(-1).dispatchKind, 'summary');
+    assert.deepEqual(historyResponse.body.messages.at(-1).invokeAgents, ['Bob']);
     assert.equal(Array.isArray(historyResponse.body.session.invocationTasks), true);
     assert.equal(historyResponse.body.session.invocationTasks.length, 0);
     assert.equal(historyResponse.body.session.pendingAgentTasks, undefined);
@@ -6251,7 +5246,12 @@ test('agentChainMaxCallsPerAgent 为 null 时，同智能体循环提及不会�
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob', 'Alice', 'Bob', 'Alice']);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.filter(item => item.sender === 'Alice' || item.sender === 'Bob').length >= 5
+    );
+    assert.deepEqual(aiMessages.filter(item => item.sender === 'Alice' || item.sender === 'Bob').map(item => item.sender), ['Alice', 'Bob', 'Alice', 'Bob', 'Alice']);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -6296,7 +5296,12 @@ test('当前会话的 agentChainMaxHops 会限制链式传播轮数', async () =
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob', 'Alice']);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.filter(item => item.sender === 'Alice' || item.sender === 'Bob').length >= 3
+    );
+    assert.deepEqual(aiMessages.filter(item => item.sender === 'Alice' || item.sender === 'Bob').map(item => item.sender), ['Alice', 'Bob', 'Alice']);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -6341,7 +5346,12 @@ test('agentChainMaxCallsPerAgent 为正整数时，会限制重复同智能体�
     });
 
     assert.equal(chatResponse.status, 200);
-    assert.deepEqual(chatResponse.body.aiMessages.map(item => item.sender), ['Alice', 'Bob']);
+    const aiMessages = await waitForTimelineMessages(
+      fixture,
+      chatResponse.body.session.id,
+      (messages) => messages.filter(item => item.sender === 'Alice' || item.sender === 'Bob').length >= 2
+    );
+    assert.deepEqual(aiMessages.filter(item => item.sender === 'Alice' || item.sender === 'Bob').map(item => item.sender), ['Alice', 'Bob']);
   } finally {
     await fixture.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
+const { waitForTimelineMessages } = require('./helpers/timeline-assertions');
 
 const CALLBACK_TOKEN = 'agent-co-callback-token';
 
@@ -88,7 +89,11 @@ test('callback post-message 的消息可被对应智能体消费并出现在聊�
     });
 
     assert.equal(chatResponse.status, 200);
-    const texts = chatResponse.body.aiMessages.map(item => item.text);
+    const texts = (await waitForTimelineMessages(
+      fixture,
+      sessionId,
+      messages => messages.some(item => item.text === '我完成开发了，请 @Reviewer 做 Code Review。')
+    )).map(item => item.text);
     assert.ok(texts.includes('我完成开发了，请 @Reviewer 做 Code Review。'));
   } finally {
     await fixture.cleanup();
