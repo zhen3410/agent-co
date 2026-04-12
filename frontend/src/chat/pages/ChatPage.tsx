@@ -5,6 +5,9 @@ import { getMergedRuntimeConfig } from '../../shared/config/runtime-config';
 import { ChatComposer } from '../features/composer/ChatComposer';
 import { ChatMessageList } from '../features/message-list/ChatMessageList';
 import { SessionSidebar } from '../features/session-sidebar/SessionSidebar';
+import { TimelinePanel } from '../features/timeline-panel/TimelinePanel';
+import { RuntimeStatusBadge } from '../features/runtime-status/RuntimeStatusBadge';
+import { CallGraphPanel } from '../features/call-graph/CallGraphPanel';
 import { createChatApi, type ChatApi } from '../services/chat-api';
 import {
   appendIncomingChatRealtimeData,
@@ -254,7 +257,7 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
         style={{
           display: 'grid',
           gap: 'var(--space-4)',
-          gridTemplateColumns: 'minmax(16rem, 20rem) minmax(0, 1fr)'
+          gridTemplateColumns: 'minmax(16rem, 20rem) minmax(0, 1fr) minmax(18rem, 24rem)'
         }}
       >
         <SessionSidebar
@@ -275,6 +278,12 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
             onSubmit={handleSubmit}
           />
         </div>
+
+        <aside style={{ display: 'grid', gap: 'var(--space-4)' }}>
+          <RuntimeStatusBadge sessionId={safeState.activeSessionId} />
+          <TimelinePanel sessionId={safeState.activeSessionId} />
+          <CallGraphPanel sessionId={safeState.activeSessionId} />
+        </aside>
       </section>
     </AppShell>
   );

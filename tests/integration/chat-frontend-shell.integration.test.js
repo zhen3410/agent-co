@@ -113,6 +113,71 @@ function createSampleHistoryState() {
   };
 }
 
+function createSampleTimelineRows() {
+  return [
+    {
+      id: 'timeline-1',
+      seq: 4,
+      kind: 'thinking',
+      status: 'started',
+      eventType: 'message_thinking_started',
+      actorType: 'agent',
+      actorName: 'Alice',
+      createdAt: '2026-04-12T00:00:00.000Z',
+      groupId: 'group-1'
+    },
+    {
+      id: 'timeline-2',
+      seq: 5,
+      kind: 'dispatch',
+      status: 'created',
+      eventType: 'dispatch_task_created',
+      actorType: 'agent',
+      actorName: 'Alice',
+      callerAgentName: 'Alice',
+      calleeAgentName: 'Bob',
+      createdAt: '2026-04-12T00:00:01.000Z',
+      groupId: 'group-1'
+    }
+  ];
+}
+
+function createSampleCallGraphProjection() {
+  return {
+    nodes: [
+      {
+        id: 'node-message-1',
+        kind: 'message',
+        messageId: 'message-1',
+        sender: '用户',
+        role: 'user',
+        label: '你好',
+        timestamp: 1,
+        seq: 1,
+        eventId: 'event-1'
+      },
+      {
+        id: 'node-task-1',
+        kind: 'task',
+        taskId: 'task-1',
+        label: 'task-1',
+        metadata: {
+          eventId: 'event-2',
+          seq: 2
+        }
+      }
+    ],
+    edges: [
+      {
+        id: 'edge-1',
+        type: 'invoke',
+        source: 'node-message-1',
+        target: 'node-task-1'
+      }
+    ]
+  };
+}
+
 test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /assets 静态资源', async () => {
   const fixture = await createChatServerFixture();
 
@@ -153,6 +218,134 @@ test('ChatPage 渲染聊天页壳、会话侧边栏、消息列表与输入区',
   assert.match(html, /默认会话/);
   assert.match(html, /你好/);
   assert.match(html, /已收到/);
+});
+
+test('ChatPage 渲染 runtime 状态、timeline 与 call-graph 二级面板', () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const html = renderToStaticMarkup(React.createElement(ChatPage, {
+    initialState: createSampleHistoryState()
+  }));
+
+  assert.match(html, /data-chat-runtime-status="badge"/);
+  assert.match(html, /data-chat-timeline-panel="timeline"/);
+  assert.match(html, /data-chat-call-graph-panel="call-graph"/);
+});
+
+test('RuntimeStatusBadge 使用会话 sync-status 端点并渲染同步信息', async () => {
+  const { RuntimeStatusBadge } = loadTsModule('frontend/src/chat/features/runtime-status/RuntimeStatusBadge.tsx');
+
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({
+        latestEventSeq: 18,
+        latestTimelineSeq: 16,
+        timelineRowCount: 7,
+        discussionState: 'paused'
+      }),
+      text: async () => '{}'
+    };
+  };
+
+  let renderer;
+  await act(async () => {
+    renderer = TestRenderer.create(React.createElement(RuntimeStatusBadge, {
+      sessionId: 'session-1',
+      fetch: fetchImpl
+    }));
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  const rendered = JSON.stringify(renderer.toJSON());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/sessions/session-1/sync-status');
+  assert.equal(calls[0].init.credentials, 'include');
+  assert.equal(calls[0].init.cache, 'no-store');
+  assert.match(rendered, /18/);
+  assert.match(rendered, /16/);
+  assert.match(rendered, /7/);
+});
+
+test('TimelinePanel 使用会话 timeline 端点并渲染事件行', async () => {
+  const { TimelinePanel } = loadTsModule('frontend/src/chat/features/timeline-panel/TimelinePanel.tsx');
+
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({
+        timeline: createSampleTimelineRows()
+      }),
+      text: async () => '{}'
+    };
+  };
+
+  let renderer;
+  await act(async () => {
+    renderer = TestRenderer.create(React.createElement(TimelinePanel, {
+      sessionId: 'session-1',
+      fetch: fetchImpl
+    }));
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  const rendered = JSON.stringify(renderer.toJSON());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/sessions/session-1/timeline');
+  assert.equal(calls[0].init.credentials, 'include');
+  assert.equal(calls[0].init.cache, 'no-store');
+  assert.match(rendered, /Alice/);
+  assert.match(rendered, /Bob/);
+});
+
+test('CallGraphPanel 使用会话 call-graph 端点并渲染节点与边关系', async () => {
+  const { CallGraphPanel } = loadTsModule('frontend/src/chat/features/call-graph/CallGraphPanel.tsx');
+
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({
+        callGraph: createSampleCallGraphProjection()
+      }),
+      text: async () => '{}'
+    };
+  };
+
+  let renderer;
+  await act(async () => {
+    renderer = TestRenderer.create(React.createElement(CallGraphPanel, {
+      sessionId: 'session-1',
+      fetch: fetchImpl
+    }));
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  const rendered = JSON.stringify(renderer.toJSON());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/sessions/session-1/call-graph');
+  assert.equal(calls[0].init.credentials, 'include');
+  assert.equal(calls[0].init.cache, 'no-store');
+  assert.match(rendered, /message-1|你好/);
+  assert.match(rendered, /task-1/);
+  assert.match(rendered, /invoke/);
 });
 
 test('chat API 发送动作保持当前页面的后端请求契约', async () => {
