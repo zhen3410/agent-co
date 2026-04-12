@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
+const ts = require('typescript');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
 function decodeMessageData(data) {
@@ -117,51 +117,70 @@ async function fetchTimeline(fixture, sessionId, options = {}) {
   return timeline;
 }
 
-function getFunctionBody(source, functionName) {
-  const signaturePattern = new RegExp(`(?:async\\s+)?function\\s+${functionName}\\s*\\(`);
-  const match = source.match(signaturePattern);
-  assert.ok(match, `should contain function: ${functionName}`);
+const rootDir = path.resolve(__dirname, '../..');
+const moduleCache = new Map();
 
-  const startIndex = match.index;
-  const openParenIndex = source.indexOf('(', startIndex);
-  assert.notEqual(openParenIndex, -1, `should contain function params: ${functionName}`);
-  let parenDepth = 0;
-  let closeParenIndex = -1;
-  for (let index = openParenIndex; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === '(') parenDepth += 1;
-    if (char === ')') {
-      parenDepth -= 1;
-      if (parenDepth === 0) {
-        closeParenIndex = index;
-        break;
-      }
-    }
-  }
-  assert.notEqual(closeParenIndex, -1, `should close function params: ${functionName}`);
-  const openBraceIndex = source.indexOf('{', closeParenIndex);
-  assert.notEqual(openBraceIndex, -1, `should contain function body: ${functionName}`);
+function resolveExistingFile(basePath) {
+  const candidates = [
+    basePath,
+    `${basePath}.ts`,
+    `${basePath}.tsx`,
+    `${basePath}.js`,
+    path.join(basePath, 'index.ts'),
+    path.join(basePath, 'index.tsx')
+  ];
 
-  let depth = 0;
-  for (let index = openBraceIndex; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === '{') depth += 1;
-    if (char === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        return source.slice(startIndex, index + 1);
-      }
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      return candidate;
     }
   }
 
-  assert.fail(`unable to extract function body: ${functionName}`);
+  throw new Error(`Cannot resolve module path: ${basePath}`);
+}
+
+function loadTsModule(relativePath) {
+  const absolutePath = path.resolve(rootDir, relativePath);
+  const resolvedPath = resolveExistingFile(absolutePath);
+
+  if (moduleCache.has(resolvedPath)) {
+    return moduleCache.get(resolvedPath);
+  }
+
+  const source = fs.readFileSync(resolvedPath, 'utf8');
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2020,
+      module: ts.ModuleKind.CommonJS,
+      jsx: ts.JsxEmit.ReactJSX,
+      esModuleInterop: true
+    },
+    fileName: resolvedPath
+  });
+
+  const mod = { exports: {} };
+  moduleCache.set(resolvedPath, mod.exports);
+
+  const localRequire = (specifier) => {
+    if (specifier.startsWith('.')) {
+      const childBasePath = path.resolve(path.dirname(resolvedPath), specifier);
+      const childRelativePath = path.relative(rootDir, childBasePath);
+      return loadTsModule(childRelativePath);
+    }
+
+    return require(specifier);
+  };
+
+  const fn = new Function('require', 'module', 'exports', '__filename', '__dirname', transpiled.outputText);
+  fn(localRequire, mod, mod.exports, resolvedPath, path.dirname(resolvedPath));
+  moduleCache.set(resolvedPath, mod.exports);
+  return mod.exports;
 }
 
 function createReconnectCompensationHarness(overrides = {}) {
-  const fixtureSource = fs.readFileSync(path.join(__dirname, 'fixtures', 'chat-reconnect-compensation.fixture.js'), 'utf8');
-  const deriveTimelineTailSeqBody = getFunctionBody(fixtureSource, 'deriveTimelineTailSeq');
-  const shouldFallbackBody = getFunctionBody(fixtureSource, 'shouldFallbackToFullRefresh');
-  const runReconnectBody = getFunctionBody(fixtureSource, 'runReconnectCompensation');
+  const {
+    runReconnectCompensation
+  } = loadTsModule('frontend/src/chat/services/chat-reconnect-compensation.ts');
 
   const fetchCalls = [];
   const fullRefreshCalls = [];
@@ -176,7 +195,7 @@ function createReconnectCompensationHarness(overrides = {}) {
       pending: false,
       preferIncremental: true
     },
-    TIMELINE_REFRESH_STATES: {
+    timelineRefreshStates: {
       idle: 'idle',
       full: 'full',
       incremental: 'incremental'
@@ -189,7 +208,7 @@ function createReconnectCompensationHarness(overrides = {}) {
       fullRefreshCalls.push(options);
       return { fallback: true, options };
     },
-    fetch: async (url) => {
+    fetchImpl: async (url) => {
       fetchCalls.push(url);
       return {
         ok: true,
@@ -203,16 +222,9 @@ function createReconnectCompensationHarness(overrides = {}) {
   };
 
   Object.assign(context, overrides);
-  vm.createContext(context);
-  vm.runInContext(`
-${deriveTimelineTailSeqBody}
-${shouldFallbackBody}
-${runReconnectBody}
-this.__runReconnectCompensation = runReconnectCompensation;
-`, context);
 
   return {
-    runReconnectCompensation: context.__runReconnectCompensation.bind(context),
+    runReconnectCompensation: (input) => runReconnectCompensation(context, input),
     context,
     fetchCalls,
     fullRefreshCalls
@@ -388,7 +400,7 @@ test('websocket 重连后先尝试 afterSeq 增量补偿，并在增量序列跳
       lastSeenEventSeq,
       timelineRows: await fetchTimeline(fixture, sessionId)
     });
-    harness.context.fetch = async (url) => {
+    harness.context.fetchImpl = async (url) => {
       harness.fetchCalls.push(url);
       return {
         ok: true,
@@ -414,7 +426,7 @@ test('websocket 重连后先尝试 afterSeq 增量补偿，并在增量序列跳
     assert.equal(harness.fullRefreshCalls.length, 1, 'seq-gap inconsistency should trigger full refresh fallback in real client path');
     assert.equal(
       harness.fullRefreshCalls[0]?.mode,
-      harness.context.TIMELINE_REFRESH_STATES.full,
+      harness.context.timelineRefreshStates.full,
       'fallback should request full timeline mode'
     );
   } finally {
