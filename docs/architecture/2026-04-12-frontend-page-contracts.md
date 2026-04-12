@@ -1,6 +1,8 @@
 # Frontend 页面契约冻结（2026-04-12）
 
 > 目的：在 React + Vite + TS MPA 迁移前，冻结当前页面行为契约，避免回归。
+>
+> 更新（2026-04-12 Task 10）：`public/index.html`、`public-auth/admin.html`、`public/deps-monitor.html`、`public/verbose-logs.html`、`public/chat-markdown.js`、`public/chat-composer.js` 已退役。运行时入口现由 `dist/frontend/chat.html`、`dist/frontend/admin.html`、`dist/frontend/deps-monitor.html`、`dist/frontend/verbose-logs.html` 提供；`public/` 仅保留共享静态资源。本文保留为迁移前行为档案与模块映射参考。
 
 ## 1. `public/index.html`（聊天主页面）
 

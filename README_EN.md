@@ -36,8 +36,8 @@ This repository ships two HTTP services:
 - **Chat service**: `src/server.ts`, default port `3002`
 - **Auth/Admin service**: `src/auth-admin-server.ts`, default port `3003`
 
-The chat service serves the main UI from `public/index.html`.
-The auth/admin service serves the admin page from `public-auth/admin.html`.
+The chat service serves the main UI from the built `dist/frontend/chat.html` artifact (routes `/`, `/index.html`, and `/chat.html`).
+The auth/admin service serves the admin page from the built `dist/frontend/admin.html` artifact (routes `/`, `/index.html`, and `/admin.html`).
 
 #### Chat read/write architecture
 
@@ -184,15 +184,14 @@ src/
     errors/                AppError class, error codes, HTTP status mapping
     http/                  Shared HTTP helpers: body, cors, json, static, error mapper
   providers/               CLI / OpenAI-compatible agent providers
-public/                    Main chat UI and static assets
-public-auth/               Admin UI static assets
+public/                    Shared runtime static assets (PWA/icon/styles, etc.)
 data/                      Runtime data directory
 logs/                      Runtime logs (including ai-cli-verbose/)
 scripts/                   Bootstrap and deployment scripts
 systemd/                   Example systemd service unit files
 tests/unit/                Unit tests
 tests/integration/         Integration tests
-dist/                      Compiled build output
+dist/                      Compiled build output (including `dist/frontend/*.html` MPA assets)
 ```
 
 #### Module Conventions

@@ -2,7 +2,7 @@
 
 This document describes the **runtime contract** of the current event-log-driven chat system: the canonical session event model, projection rules (timeline + call-graph), discussion-state transitions, and the WebSocket + HTTP timeline sync contract.
 
-> Scope note: this doc is intentionally limited to behavior present in the current codebase (see `src/chat/domain/session-events.ts`, `src/chat/application/chat-timeline-projection.ts`, `src/chat/application/call-graph-projection.ts`, `src/chat/http/ws-routes.ts`, `src/chat/http/event-query-routes.ts`, and `public/index.html`).
+> Scope note: this doc is intentionally limited to behavior present in the current codebase (see `src/chat/domain/session-events.ts`, `src/chat/application/chat-timeline-projection.ts`, `src/chat/application/call-graph-projection.ts`, `src/chat/http/ws-routes.ts`, `src/chat/http/event-query-routes.ts`, and the built chat shell served from `dist/frontend/chat.html` / `frontend/src/chat/pages/ChatPage.tsx`).
 
 ---
 
@@ -312,4 +312,3 @@ These endpoints are for debugging and integration tests (not for “client truth
 - `GET /api/sessions/:id/events[?afterSeq=]` → raw event envelopes
 - `GET /api/sessions/:id/sync-status` → `{ latestEventSeq, latestTimelineSeq, timelineRowCount, discussionState }`
   - Empty session contract: `latestEventSeq: 0`, `latestTimelineSeq: null`, `timelineRowCount: 0`
-

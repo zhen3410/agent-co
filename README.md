@@ -36,8 +36,8 @@
 - **聊天服务**：`src/server.ts`，默认端口 `3002`
 - **鉴权管理服务**：`src/auth-admin-server.ts`，默认端口 `3003`
 
-聊天服务负责主聊天 UI，静态页面入口是 `public/index.html`。
-鉴权管理服务负责后台管理页，入口是 `public-auth/admin.html`。
+聊天服务负责主聊天 UI，当前由 `dist/frontend/chat.html` 构建产物提供（路由 `/`、`/index.html`、`/chat.html`）。
+鉴权管理服务负责后台管理页，当前由 `dist/frontend/admin.html` 构建产物提供（路由 `/`、`/index.html`、`/admin.html`）。
 
 #### 聊天读写架构
 
@@ -204,15 +204,14 @@ src/
     errors/                AppError 类、错误码、HTTP 状态映射
     http/                  共享 HTTP 工具：body、cors、json、静态文件、错误映射
   providers/               CLI / OpenAI 兼容智能体提供者
-public/                    主聊天 UI 与静态资源
-public-auth/               管理端 UI 静态资源
+public/                    运行时共享静态资源（PWA / icon / 样式等）
 data/                      运行时数据目录
 logs/                      运行时日志（含 ai-cli-verbose/）
 scripts/                   启动与部署脚本
 systemd/                   systemd 服务配置示例
 tests/unit/                单元测试
 tests/integration/         集成测试
-dist/                      编译输出
+dist/                      编译输出（含 `dist/frontend/*.html` 多页面前端产物）
 ```
 
 #### 模块放置约定

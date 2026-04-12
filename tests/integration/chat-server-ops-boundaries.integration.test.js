@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { existsSync, mkdtempSync, writeFileSync, rmSync } = require('node:fs');
 const path = require('node:path');
 const { tmpdir } = require('node:os');
+const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 
@@ -27,6 +28,12 @@ function parseJsonResponse(res) {
     headers: res.headers,
     body: res.body ? JSON.parse(res.body) : null
   };
+}
+
+function extractFirstJsAssetPath(html, messagePrefix) {
+  const match = html.match(/<script[^>]+src="(\/assets\/[^"]+\.js)"/i);
+  assert.ok(match, `${messagePrefix}: should reference a bundled /assets/*.js entry script`);
+  return match[1];
 }
 
 test('ops route modules 保持稳定的 handler export surface', () => {
@@ -209,4 +216,52 @@ test('ops-routes 继续委托 JSON/ops 路由并对未知路径返回 false', as
     }
   );
   assert.equal(missed, false);
+});
+
+test('ops 页面继续通过当前路由提供 Vite 构建 shell，且 legacy chat 脚本入口不再暴露', async () => {
+  const fixture = await createChatServerFixture();
+
+  try {
+    const depsResponse = await fixture.request('/deps-monitor.html');
+    assert.equal(depsResponse.status, 200);
+    assert.match(depsResponse.text, /<meta name="agent-co-page" content="deps-monitor"\s*\/>/);
+
+    const depsAssetPath = extractFirstJsAssetPath(depsResponse.text, 'deps-monitor shell');
+    const depsAssetResponse = await fixture.request(depsAssetPath);
+    assert.equal(depsAssetResponse.status, 200);
+    assert.ok(depsAssetResponse.text.length > 0, 'deps-monitor asset body should not be empty');
+
+    const verboseResponse = await fixture.request('/verbose-logs.html');
+    assert.equal(verboseResponse.status, 200);
+    assert.match(verboseResponse.text, /<meta name="agent-co-page" content="verbose-logs"\s*\/>/);
+
+    const verboseAssetPath = extractFirstJsAssetPath(verboseResponse.text, 'verbose-logs shell');
+    const verboseAssetResponse = await fixture.request(verboseAssetPath);
+    assert.equal(verboseAssetResponse.status, 200);
+    assert.ok(verboseAssetResponse.text.length > 0, 'verbose-logs asset body should not be empty');
+
+    const markdownResponse = await fixture.request('/chat-markdown.js');
+    const composerResponse = await fixture.request('/chat-composer.js');
+    assert.equal(markdownResponse.status, 404);
+    assert.equal(composerResponse.status, 404);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('legacy static frontend entry files 已从 public 与 public-auth 退役', () => {
+  const retiredFiles = [
+    path.join(repoRoot, 'public', 'index.html'),
+    path.join(repoRoot, 'public', 'chat-markdown.js'),
+    path.join(repoRoot, 'public', 'chat-composer.js'),
+    path.join(repoRoot, 'public', 'deps-monitor.html'),
+    path.join(repoRoot, 'public', 'verbose-logs.html'),
+    path.join(repoRoot, 'public', 'mockup-admin.html'),
+    path.join(repoRoot, 'public', 'mockup-chat.html'),
+    path.join(repoRoot, 'public-auth', 'admin.html')
+  ];
+
+  for (const retiredFile of retiredFiles) {
+    assert.equal(existsSync(retiredFile), false, `retired frontend file should be removed: ${path.relative(repoRoot, retiredFile)}`);
+  }
 });

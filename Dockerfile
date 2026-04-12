@@ -5,10 +5,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+COPY frontend ./frontend
 COPY tsconfig.json ./
 COPY src ./src
 COPY public ./public
-COPY public-auth ./public-auth
 
 RUN npm run build && npm prune --omit=dev
 
@@ -22,7 +22,6 @@ COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/public ./public
-COPY --from=build /app/public-auth ./public-auth
 
 RUN mkdir -p /app/data /app/logs/ai-cli-verbose
 
