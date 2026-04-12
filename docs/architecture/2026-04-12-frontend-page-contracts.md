@@ -36,11 +36,20 @@
 - 智能体启停：`POST /api/session-agents`
 - 工作目录：`GET /api/system/dirs`、`POST /api/workdirs/select`
 - 讨论摘要：`POST /api/chat-summary`
+- 提及与补全（由 `public/index.html` 主脚本负责，不在 `chat-composer.js`）：
+  - 候选包含 `@all`（显示为“所有人”）和当前会话启用的智能体；
+  - 输入区出现 `@` 前缀时打开 `#mentionSuggestions`；
+  - 键盘行为冻结：`ArrowDown/ArrowUp` 在候选中移动，`Enter/Tab` 选中，`Escape` 关闭；
+  - 分组提及预确认区 `#groupMentionPreview` 支持确认/取消并展开为多个 `@智能体名`。
 
 ### 实时依赖
-- WebSocket：`/api/ws/session-events`（订阅当前 session 事件）
-- 时间线拉取：`GET /api/sessions/:id/timeline`（支持 `afterSeq` 增量）
-- 轮询/补偿：重连后补偿拉取、状态定时调度。
+- 事件模型与约束遵循 `docs/architecture/event-log-chat-runtime.md`（前端消费层契约与事件日志语义需一致）。
+- WebSocket：`/api/ws/session-events`，连接打开后发送
+  `{"type":"subscribe","sessionId":"<activeSessionId>","afterSeq":<lastSeenEventSeq>}`。
+- 订阅 ACK：收到 `type='subscribed'` 后才视为订阅成功，并以消息中的 `latestSeq` 与本地 `lastSeenEventSeq` 取最大值。
+- 增量拉取：`GET /api/sessions/:id/timeline?afterSeq=<cursor>`，仅在当前 `activeSessionId` 与 `activeSessionSyncNonce` 未变化时合并。
+- 重连补偿：socket 恢复后必须用“断线前 cursor”触发一次增量补偿；若增量结果出现断档/校验失败则强制回退全量 `GET /api/sessions/:id/timeline`。
+- 刷新并发约束：单次仅允许一个 in-flight timeline 刷新；并发触发时置 `pending`，前一轮结束后立即续跑。
 
 ### 鉴权假设
 - 页面先探测 `authEnabled` + `authenticated`（cookie 会话）。
@@ -53,6 +62,7 @@
 - Composer：`#userInput`、`#sendBtn`、`#composerPreviewBody`、`#composerPreviewStatus`
 - 会话控制：`#sessionSelect`、`#sessionSelectMobile`、`#recentSessions`
 - 智能体控制：`#agentsList`、`#currentAgentBar`、`#agentZeroState`
+- 提及与分组提及：`#mentionSuggestions`、`#groupMentionPreview`
 - 工作目录：`#workdirBar`、`#agentWorkdirRoot/#agentWorkdirLevel2/#agentWorkdirLevel3`
 - 移动端交互：`#mobileComposerDrawer`、`#mobileComposerDrawerBackdrop`、`#mobileControlSheetBackdrop`
 - 顶部状态与动作：`#status`、`#stopCurrentBtn`、`#stopSessionBtn`、`#activeSessionBadge`
@@ -145,6 +155,7 @@
 - 用户：`#addUserCard`、`#usersContainer`、`#passwordModal`
 - 模型连接：`#modelConnectionsCard`、`#connectionsContainer`
 - 智能体：`#agentCard`、`#agentsContainer`、`#pendingTag`
+- 智能体工作目录三级联动：`#agentWorkdirRoot`、`#agentWorkdirLevel2`、`#agentWorkdirLevel3`、`#agentWorkdirPreview`
 - 分组：`#groupsCard`、`#groups-list`、`#group-modal`
 - 模板提示词预览：`#promptPreviewModal`
 
@@ -215,7 +226,8 @@
 | `public/index.html` | `frontend/src/entries/chat-main.tsx` + `frontend/src/chat/pages/ChatPage.tsx` | 用 React 正式接管页面壳与状态，不再依赖内联 Babel/UMD。 |
 | `public/index.html`（会话/智能体/目录/消息区） | `frontend/src/chat/features/session-sidebar/*` + `message-list/*` + `timeline-panel/*` | 保留核心交互契约（会话切换、时间线渲染、call graph 展开、移动端镜像面板）。 |
 | `public/index.html`（API + 实时逻辑） | `frontend/src/chat/services/chat-api.ts` + `chat-realtime.ts` | 抽离 fetch + WebSocket + 增量补偿逻辑，避免 UI 文件内耦合。 |
-| `public/chat-composer.js` | `frontend/src/chat/features/composer/*` | 保留 Markdown 工具栏、预览、移动抽屉、滚动同步与快捷键行为。 |
+| `public/index.html`（mention/autocomplete 与输入键盘路由） | `frontend/src/chat/features/composer/*` + `session-sidebar/*` | `@all`/智能体建议、`#mentionSuggestions`、`#groupMentionPreview`、`ArrowUp/ArrowDown/Enter/Tab/Escape` 行为当前在 `index.html`，迁移时需原位保留。 |
+| `public/chat-composer.js` | `frontend/src/chat/features/composer/*` | 保留 Markdown 工具栏、预览、移动抽屉、滚动同步（不负责 mention 候选与键盘路由）。 |
 | `public/chat-markdown.js` | `frontend/src/chat/features/message-list/*` +（可复用到 shared markdown util） | 渲染/净化/代码块复制/mention 高亮作为明确可测试能力迁移。 |
 | `public-auth/admin.html` | `frontend/src/entries/admin-main.tsx` + `frontend/src/admin/pages/AdminPage.tsx` + `frontend/src/admin/features/*` | 以模块化功能区重建：Token 门禁、用户、连接、智能体、分组、workdir 级联。 |
 | `public/deps-monitor.html` | `frontend/src/entries/deps-monitor-main.tsx` + `frontend/src/ops/pages/DepsMonitorPage.tsx` | 保留“依赖总览 + 日志过滤 + 10 秒轮询”功能契约。 |
