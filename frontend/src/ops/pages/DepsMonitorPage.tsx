@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getMergedRuntimeConfig } from '../../shared/config/runtime-config';
 import { ToolPageLayout } from '../../shared/layouts/ToolPageLayout';
 import { Button, Card, ErrorState, Spinner } from '../../shared/ui';
@@ -43,6 +43,11 @@ export function DepsMonitorPage({ api }: DepsMonitorPageProps) {
   const [logResult, setLogResult] = useState<DependencyLogResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const filtersRef = useRef<DependencyLogQuery>(DEFAULT_FILTERS);
+
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
 
   const loadLogs = useCallback(async (query: DependencyLogQuery) => {
     const response = await opsApi.loadDependencyLogs(query);
@@ -67,6 +72,16 @@ export function DepsMonitorPage({ api }: DepsMonitorPageProps) {
 
   useEffect(() => {
     void refreshAll(DEFAULT_FILTERS);
+  }, [refreshAll]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      void refreshAll(filtersRef.current);
+    }, 10000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
   }, [refreshAll]);
 
   const navigation = (

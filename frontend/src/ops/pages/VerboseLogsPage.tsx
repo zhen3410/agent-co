@@ -49,7 +49,7 @@ export function VerboseLogsPage({ api }: VerboseLogsPageProps) {
     setContent(response.content);
   }, [opsApi]);
 
-  const loadLogsForAgent = useCallback(async (agent: string) => {
+  const loadLogsForAgent = useCallback(async (agent: string, preferredFileName?: string) => {
     if (!agent) {
       setLogs([]);
       setSelectedFile('');
@@ -60,9 +60,16 @@ export function VerboseLogsPage({ api }: VerboseLogsPageProps) {
     const response = await opsApi.listVerboseLogs(agent);
     setSelectedAgent(agent);
     setLogs(response.logs);
-    const nextFile = response.logs.find((item) => item.fileName === selectedFile)?.fileName ?? response.logs[0]?.fileName ?? '';
+    const nextFile = response.logs.find((item) => item.fileName === preferredFileName)?.fileName ?? response.logs[0]?.fileName ?? '';
     await loadLogContent(nextFile);
-  }, [loadLogContent, opsApi, selectedFile]);
+  }, [loadLogContent, opsApi]);
+
+  const handleSelectAgent = useCallback(async (agent: string) => {
+    setSelectedAgent(agent);
+    setSelectedFile('');
+    setContent('');
+    await loadLogsForAgent(agent, '');
+  }, [loadLogsForAgent]);
 
   const refreshAll = useCallback(async (preferredAgent?: string) => {
     setIsLoading(true);
@@ -76,13 +83,13 @@ export function VerboseLogsPage({ api }: VerboseLogsPageProps) {
         || agentResponse.agents[0]?.agent
         || '';
       setSelectedAgent(nextAgent);
-      await loadLogsForAgent(nextAgent);
+      await loadLogsForAgent(nextAgent, selectedFile);
     } catch (error) {
       setErrorMessage(toErrorMessage(error, '加载 verbose 日志失败'));
     } finally {
       setIsLoading(false);
     }
-  }, [loadLogsForAgent, opsApi, selectedAgent]);
+  }, [loadLogsForAgent, opsApi, selectedAgent, selectedFile]);
 
   useEffect(() => {
     void refreshAll();
@@ -131,7 +138,7 @@ export function VerboseLogsPage({ api }: VerboseLogsPageProps) {
               gridTemplateColumns: 'minmax(16rem, 20rem) minmax(16rem, 22rem) minmax(0, 1fr)'
             }}
           >
-            <VerboseAgentList agents={agents} selectedAgent={selectedAgent} onSelect={(agent) => setSelectedAgent(agent)} />
+            <VerboseAgentList agents={agents} selectedAgent={selectedAgent} onSelect={(agent) => void handleSelectAgent(agent)} />
             <VerboseLogList logs={logs} selectedFile={selectedFile} onSelect={(fileName) => void loadLogContent(fileName)} />
             <VerboseLogContent fileName={selectedFile} content={content} />
           </div>

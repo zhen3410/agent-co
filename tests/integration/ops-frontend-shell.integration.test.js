@@ -310,9 +310,19 @@ test('DepsMonitorPage 使用共享 tool layout 并通过 opsApi 加载依赖状�
   assert.match(collectText(renderer.toJSON()), /redis/);
   assert.match(collectText(renderer.toJSON()), /openai/);
   assert.match(collectText(renderer.toJSON()), /ping ok/);
+
+  await act(async () => {
+    renderer.unmount();
+    await flushEffects();
+  });
 });
 
 test('DepsMonitorPage 的过滤器与刷新控件会复用当前筛选条件', async () => {
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  let registeredInterval = null;
+  let registeredDelay = null;
+  const clearedIntervals = [];
   const calls = [];
   const api = {
     async loadDependencyStatus() {
@@ -325,41 +335,36 @@ test('DepsMonitorPage 的过滤器与刷新控件会复用当前筛选条件', a
     }
   };
 
-  const renderer = await renderComponent('frontend/src/ops/pages/DepsMonitorPage.tsx', 'DepsMonitorPage', {
-    api
-  });
+  global.setInterval = (fn, delay) => {
+    registeredInterval = fn;
+    registeredDelay = delay;
+    return 77;
+  };
+  global.clearInterval = (intervalId) => {
+    clearedIntervals.push(intervalId);
+  };
 
-  await changeField(renderer, 'dependency', 'redis');
-  await changeField(renderer, 'keyword', 'timeout');
-  await changeField(renderer, 'level', 'error');
-  await changeField(renderer, 'startDate', '2026-04-10');
-  await changeField(renderer, 'endDate', '2026-04-12');
+  let renderer;
+  try {
+    renderer = await renderComponent('frontend/src/ops/pages/DepsMonitorPage.tsx', 'DepsMonitorPage', {
+      api
+    });
 
-  await act(async () => {
-    findButtonByText(renderer, '应用筛选').props.onClick();
-    await flushEffects();
-  });
+    assert.equal(typeof registeredInterval, 'function');
+    assert.equal(registeredDelay, 10000);
 
-  assert.deepEqual(calls.at(-1), {
-    type: 'logs',
-    query: {
-      startDate: '2026-04-10',
-      endDate: '2026-04-12',
-      keyword: 'timeout',
-      dependency: 'redis',
-      level: 'error',
-      limit: 500
-    }
-  });
+    await changeField(renderer, 'dependency', 'redis');
+    await changeField(renderer, 'keyword', 'timeout');
+    await changeField(renderer, 'level', 'error');
+    await changeField(renderer, 'startDate', '2026-04-10');
+    await changeField(renderer, 'endDate', '2026-04-12');
 
-  await act(async () => {
-    findByDataProp(renderer, 'data-ops-action', 'deps-refresh').props.onClick();
-    await flushEffects();
-  });
+    await act(async () => {
+      findButtonByText(renderer, '应用筛选').props.onClick();
+      await flushEffects();
+    });
 
-  assert.deepEqual(calls.slice(-2), [
-    { type: 'status' },
-    {
+    assert.deepEqual(calls.at(-1), {
       type: 'logs',
       query: {
         startDate: '2026-04-10',
@@ -369,8 +374,59 @@ test('DepsMonitorPage 的过滤器与刷新控件会复用当前筛选条件', a
         level: 'error',
         limit: 500
       }
+    });
+
+    await act(async () => {
+      findByDataProp(renderer, 'data-ops-action', 'deps-refresh').props.onClick();
+      await flushEffects();
+    });
+
+    assert.deepEqual(calls.slice(-2), [
+      { type: 'status' },
+      {
+        type: 'logs',
+        query: {
+          startDate: '2026-04-10',
+          endDate: '2026-04-12',
+          keyword: 'timeout',
+          dependency: 'redis',
+          level: 'error',
+          limit: 500
+        }
+      }
+    ]);
+
+    await act(async () => {
+      await registeredInterval();
+      await flushEffects();
+    });
+
+    assert.deepEqual(calls.slice(-2), [
+      { type: 'status' },
+      {
+        type: 'logs',
+        query: {
+          startDate: '2026-04-10',
+          endDate: '2026-04-12',
+          keyword: 'timeout',
+          dependency: 'redis',
+          level: 'error',
+          limit: 500
+        }
+      }
+    ]);
+  } finally {
+    if (renderer) {
+      await act(async () => {
+        renderer.unmount();
+        await flushEffects();
+      });
     }
-  ]);
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+  }
+
+  assert.deepEqual(clearedIntervals, [77]);
 });
 
 test('VerboseLogsPage 使用共享 tool layout 并通过 opsApi 加载智能体、日志文件与内容', async () => {
@@ -463,6 +519,17 @@ test('VerboseLogsPage 的筛选与刷新控件会保持当前智能体选择', a
   const renderer = await renderComponent('frontend/src/ops/pages/VerboseLogsPage.tsx', 'VerboseLogsPage', {
     api
   });
+
+  await act(async () => {
+    findByDataProp(renderer, 'data-verbose-agent', 'Bob').props.onClick();
+    await flushEffects();
+  });
+
+  assert.deepEqual(calls.slice(-2), [
+    { type: 'logs', agent: 'Bob' },
+    { type: 'content', fileName: 'bob-1.log' }
+  ]);
+  assert.match(collectText(renderer.toJSON()), /content:bob-1.log/);
 
   await changeField(renderer, 'agent', 'Bob');
 
