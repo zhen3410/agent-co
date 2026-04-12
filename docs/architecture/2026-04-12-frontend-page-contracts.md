@@ -125,7 +125,10 @@
    - 初始化目录选择器/连接表单/执行模式
    - 绑定 group form、group list、workdir 级联事件
 3. 用户输入 Token 并点击“验证”触发 `verifyToken()`。
-4. 验证成功后并行加载：`loadWorkdirHierarchy`、`loadModelConnections`、`loadGroups`、`loadUsers`、`loadAgents`。
+4. 验证成功后按顺序执行：
+   - 先 `await loadWorkdirHierarchy()` -> `await loadModelConnections()` -> `await loadGroups()`
+   - 再触发 `loadUsers()` 与 `loadAgents()`（非 await 串行）
+5. 渲染依赖约束：`loadAgents()` 渲染会读取 `groups` 与 `modelConnections`，因此必须在二者加载后再触发。
 
 ### 初始数据来源
 - 验证入口：`GET /api/users`（携带 `x-admin-token`）
