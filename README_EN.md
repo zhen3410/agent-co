@@ -48,7 +48,10 @@ The auth/admin service serves the admin page from `public-auth/admin.html`.
   - `GET /api/sessions/:id/timeline`
   - `GET /api/sessions/:id/call-graph`
 - **WebSocket display egress**: `/api/ws/session-events`
-- **Frontend rendering rule**: the UI renders projections only; agent output first lands in canonical session events, then WebSocket + timeline refresh update the page
+- **Frontend rendering rule**: the UI renders projections only; agent output first lands in canonical session events, then **WebSocket acts as an invalidation/buffer channel** and the **HTTP timeline refresh remains authoritative**. After reconnect, the browser prefers `timeline?afterSeq=` incremental catch-up and falls back to a full refresh when the incremental tail looks inconsistent.
+- **Docs**:
+  - Runtime event model & sync contract: `docs/architecture/event-log-chat-runtime.md`
+  - Long-session strategy (paging/archival/API boundaries): `docs/architecture/event-log-long-session-strategy.md`
 
 ### Quick Start
 
@@ -258,6 +261,7 @@ redis-cli HSET agent-co:config chat_sessions_key agent-co:chat:sessions:v1
 | `/api/sessions/:id/events` | GET | List raw session events (supports `afterSeq`) |
 | `/api/sessions/:id/timeline` | GET | Get the session timeline projection |
 | `/api/sessions/:id/call-graph` | GET | Get the session call-graph projection |
+| `/api/sessions/:id/sync-status` | GET | Read lightweight session event/timeline sync diagnostics (observability only, not client truth) |
 | `/api/ws/session-events` | WS | Subscribe to session events with reconnect/catch-up |
 
 #### Agents
@@ -516,6 +520,7 @@ AI responses support `cc_rich` code blocks:
 - agent execution lifecycle is written into the session event log
 - the frontend subscribes through `/api/ws/session-events`
 - the frontend refreshes authoritative display data from `/api/sessions/:id/timeline`
+- after reconnect, the client first tries incremental catch-up via `/api/sessions/:id/timeline?afterSeq=...`, then falls back to a full refresh when the tail is inconsistent
 - the call graph is derived from the same event stream via `/api/sessions/:id/call-graph`
 
 ### Session Mechanism

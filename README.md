@@ -48,7 +48,10 @@
   - `GET /api/sessions/:id/timeline`
   - `GET /api/sessions/:id/call-graph`
 - **WebSocket 展示出口**：`/api/ws/session-events`
-- **前端渲染原则**：页面只展示 projection，智能体输出统一先落到事件流，再由 WebSocket + timeline 刷新驱动界面
+- **前端渲染原则**：页面只展示 projection，智能体输出统一先落到事件流，再由 **WebSocket 作为“失效通知/缓冲通道”** + **HTTP timeline 权威刷新** 驱动界面；断线重连后优先使用 `timeline?afterSeq=` 做增量补偿，异常则回退全量刷新。
+- **文档**：
+  - 运行时事件模型与同步契约：`docs/architecture/event-log-chat-runtime.md`
+  - 长会话演进策略（分页/归档/API 边界）：`docs/architecture/event-log-long-session-strategy.md`
 
 ### 快速开始
 
@@ -278,6 +281,7 @@ redis-cli HSET agent-co:config chat_sessions_key agent-co:chat:sessions:v1
 | `/api/sessions/:id/events` | GET | 查询原始会话事件（支持 `afterSeq`） |
 | `/api/sessions/:id/timeline` | GET | 查询会话时间线投影 |
 | `/api/sessions/:id/call-graph` | GET | 查询会话调用图投影 |
+| `/api/sessions/:id/sync-status` | GET | 查询会话事件/时间线同步诊断（观测用途，不作为客户端权威真相） |
 | `/api/ws/session-events` | WS | 订阅会话事件推送与重连追赶 |
 
 #### 智能体
@@ -530,6 +534,7 @@ AI 回复支持 `cc_rich` 代码块：
 - 智能体执行生命周期统一写入会话事件流
 - 前端通过 `/api/ws/session-events` 订阅事件
 - 前端通过 `/api/sessions/:id/timeline` 刷新权威展示
+- 重连后优先通过 `/api/sessions/:id/timeline?afterSeq=...` 做增量追赶，不一致时回退全量刷新
 - 调用图通过 `/api/sessions/:id/call-graph` 从同一事件流派生
 
 ### 会话机制
