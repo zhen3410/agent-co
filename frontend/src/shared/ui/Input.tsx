@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, ReactNode } from 'react';
+import { useId, type InputHTMLAttributes, type ReactNode } from 'react';
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label: ReactNode;
@@ -7,7 +7,8 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 export function Input({ id, label, hint, error, style, ...props }: InputProps) {
-  const inputId = id ?? `input-${Math.random().toString(16).slice(2, 8)}`;
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
   const descriptionId = hint ? `${inputId}-hint` : undefined;
   const errorId = error ? `${inputId}-error` : undefined;
 

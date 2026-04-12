@@ -74,6 +74,24 @@ function render(Component, props) {
   return renderToStaticMarkup(React.createElement(Component, props));
 }
 
+function findTokenReferences(text) {
+  return new Set(Array.from(text.matchAll(/--[a-z0-9-]+/gi), (match) => match[0]));
+}
+
+function findClassNames(text) {
+  const result = new Set();
+  const regex = /className\s*=\s*(?:"([^"]+)"|'([^']+)')/g;
+  let match = regex.exec(text);
+  while (match) {
+    const raw = match[1] ?? match[2] ?? '';
+    for (const className of raw.split(/\s+/).filter(Boolean)) {
+      result.add(className);
+    }
+    match = regex.exec(text);
+  }
+  return result;
+}
+
 test('shared primitives render semantic HTML elements', () => {
   const { Button } = loadTsModule('frontend/src/shared/ui/Button.tsx');
   const { Input } = loadTsModule('frontend/src/shared/ui/Input.tsx');
@@ -103,12 +121,13 @@ test('shared primitives render semantic HTML elements', () => {
   assert.match(tableHtml, /<tbody\b/);
 });
 
-test('loading/error/empty primitives compose with shared actions', () => {
+test('loading/error/empty primitives compose with shared actions and spinner behavior', () => {
   const { Button } = loadTsModule('frontend/src/shared/ui/Button.tsx');
   const { EmptyState } = loadTsModule('frontend/src/shared/ui/EmptyState.tsx');
   const { ErrorState } = loadTsModule('frontend/src/shared/ui/ErrorState.tsx');
   const { Spinner } = loadTsModule('frontend/src/shared/ui/Spinner.tsx');
   const ui = loadTsModule('frontend/src/shared/ui/index.ts');
+  const baseCss = readFile('frontend/src/shared/styles/base.css');
 
   const action = React.createElement(Button, { children: 'Retry' });
 
@@ -130,6 +149,8 @@ test('loading/error/empty primitives compose with shared actions', () => {
   const spinnerHtml = render(Spinner, { label: 'Loading rows' });
   assert.match(spinnerHtml, /role="status"/);
   assert.match(spinnerHtml, /Loading rows/);
+  assert.match(spinnerHtml, /spin/);
+  assert.match(baseCss, /@keyframes\s+spin\s*\{/);
 
   assert.equal(typeof ui.Button, 'function');
   assert.equal(typeof ui.EmptyState, 'function');
@@ -137,41 +158,55 @@ test('loading/error/empty primitives compose with shared actions', () => {
   assert.equal(typeof ui.Spinner, 'function');
 });
 
-test('each shared primitive references declared design tokens consistently', () => {
+test('shared primitives use deterministic ids and keep foundation CSS scope', () => {
+  const inputSource = readFile('frontend/src/shared/ui/Input.tsx');
+  const baseCss = readFile('frontend/src/shared/styles/base.css');
+
+  assert.doesNotMatch(inputSource, /Math\.random\(/);
+  assert.match(inputSource, /\buseId\s*\(/);
+  assert.doesNotMatch(baseCss, /(^|\n)\s*main\s*\{/);
+});
+
+test('token usage stays consistent with design token definitions without coupling to inline styles', () => {
   const tokensCss = readFile('frontend/src/shared/styles/tokens.css');
-  const declaredTokens = new Set(Array.from(tokensCss.matchAll(/--[a-z0-9-]+/g), (match) => match[0]));
+  const baseCss = readFile('frontend/src/shared/styles/base.css');
+  const declaredTokens = findTokenReferences(tokensCss);
 
-  const { Button } = loadTsModule('frontend/src/shared/ui/Button.tsx');
-  const { Input } = loadTsModule('frontend/src/shared/ui/Input.tsx');
-  const { Card } = loadTsModule('frontend/src/shared/ui/Card.tsx');
-  const { Table } = loadTsModule('frontend/src/shared/ui/Table.tsx');
-  const { EmptyState } = loadTsModule('frontend/src/shared/ui/EmptyState.tsx');
-  const { ErrorState } = loadTsModule('frontend/src/shared/ui/ErrorState.tsx');
-  const { Spinner } = loadTsModule('frontend/src/shared/ui/Spinner.tsx');
-
-  const renderings = [
-    ['Button', render(Button, { children: 'Apply' })],
-    ['Input', render(Input, { id: 'email', label: 'Email' })],
-    ['Card', render(Card, { title: 'Card', children: 'Content' })],
-    [
-      'Table',
-      render(Table, {
-        columns: [{ key: 'value', header: 'Value', render: (row) => row.value }],
-        rows: [{ value: 'A' }],
-        getRowKey: (row) => row.value
-      })
-    ],
-    ['EmptyState', render(EmptyState, { title: 'Empty' })],
-    ['ErrorState', render(ErrorState, { message: 'Error' })],
-    ['Spinner', render(Spinner, {})]
+  const componentPaths = [
+    'frontend/src/shared/ui/Button.tsx',
+    'frontend/src/shared/ui/Input.tsx',
+    'frontend/src/shared/ui/Card.tsx',
+    'frontend/src/shared/ui/Table.tsx',
+    'frontend/src/shared/ui/EmptyState.tsx',
+    'frontend/src/shared/ui/ErrorState.tsx',
+    'frontend/src/shared/ui/Spinner.tsx'
   ];
 
-  for (const [name, html] of renderings) {
-    const usedTokens = Array.from(html.matchAll(/var\((--[a-z0-9-]+)\)/g), (match) => match[1]);
-    assert.ok(usedTokens.length > 0, `${name} should use design tokens in rendered styles`);
+  for (const componentPath of componentPaths) {
+    const source = readFile(componentPath);
+    const directTokenRefs = findTokenReferences(source);
+    const classNames = findClassNames(source);
 
-    for (const token of usedTokens) {
-      assert.ok(declaredTokens.has(token), `${name} references undefined token ${token}`);
+    let hasTokenBackedStyles = directTokenRefs.size > 0;
+
+    if (!hasTokenBackedStyles && classNames.size > 0) {
+      for (const className of classNames) {
+        const classRegex = new RegExp(`\\.${className}\\s*\\{[\\s\\S]*?\\}`, 'm');
+        const classBlock = baseCss.match(classRegex)?.[0] ?? '';
+        const cssTokens = findTokenReferences(classBlock);
+        if (cssTokens.size > 0) {
+          hasTokenBackedStyles = true;
+          for (const token of cssTokens) {
+            assert.ok(declaredTokens.has(token), `${componentPath} class ${className} uses undefined token ${token}`);
+          }
+        }
+      }
+    }
+
+    assert.ok(hasTokenBackedStyles, `${componentPath} should reference design tokens directly or via tokenized CSS classes`);
+
+    for (const token of directTokenRefs) {
+      assert.ok(declaredTokens.has(token), `${componentPath} references undefined token ${token}`);
     }
   }
 });

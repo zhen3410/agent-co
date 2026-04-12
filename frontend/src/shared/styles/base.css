@@ -33,6 +33,12 @@ select {
   outline-offset: 2px;
 }
 
-main {
-  padding: var(--space-4);
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
