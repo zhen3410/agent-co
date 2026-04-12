@@ -6,7 +6,10 @@ const { spawnSync } = require('node:child_process');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const frontendDistDir = path.join(repoRoot, 'dist', 'frontend');
+const manifestPath = path.join(frontendDistDir, '.vite', 'manifest.json');
 const protectedBackendFile = path.join(repoRoot, 'src', 'server.ts');
+
+const expectedPages = ['chat', 'admin', 'deps-monitor', 'verbose-logs'];
 
 function runFrontendBuild() {
   return spawnSync('npm', ['run', 'build:frontend'], {
@@ -40,7 +43,11 @@ function listRelativeFiles(dirPath) {
   return files.sort();
 }
 
-test('build:frontend 输出稳定的前端产物且不覆盖后端源码', () => {
+function readManifest() {
+  return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+}
+
+test('build:frontend 输出命名 MPA 页面并保持产物路径稳定且不覆盖后端源码', () => {
   fs.rmSync(frontendDistDir, { recursive: true, force: true });
   const backendBefore = fs.readFileSync(protectedBackendFile, 'utf8');
 
@@ -51,12 +58,23 @@ test('build:frontend 输出稳定的前端产物且不覆盖后端源码', () =>
     `npm run build:frontend should exit 0. stdout:\n${firstBuild.stdout || ''}\nstderr:\n${firstBuild.stderr || ''}`
   );
 
-  assert.equal(fs.existsSync(path.join(frontendDistDir, 'index.html')), true, 'should emit dist/frontend/index.html');
-  assert.equal(
-    fs.existsSync(path.join(frontendDistDir, '.vite', 'manifest.json')),
-    true,
-    'should emit dist/frontend/.vite/manifest.json'
-  );
+  assert.equal(fs.existsSync(manifestPath), true, 'should emit dist/frontend/.vite/manifest.json');
+
+  for (const page of expectedPages) {
+    const pageHtmlPath = path.join(frontendDistDir, `${page}.html`);
+    assert.equal(fs.existsSync(pageHtmlPath), true, `should emit dist/frontend/${page}.html`);
+
+    const html = fs.readFileSync(pageHtmlPath, 'utf8');
+    assert.ok(html.includes('<div id="app"></div>'), `${page}.html should contain #app mount point`);
+    assert.ok(html.includes('type="module"'), `${page}.html should load page entry module`);
+  }
+
+  const manifest = readManifest();
+  for (const page of expectedPages) {
+    const entry = Object.values(manifest).find(item => item && item.isEntry && item.name === page);
+    assert.ok(entry, `manifest should contain named entry for page: ${page}`);
+    assert.ok(typeof entry.file === 'string' && entry.file.startsWith('assets/'), `${page} manifest entry should point to bundled asset`);
+  }
 
   const firstOutputFiles = listRelativeFiles(frontendDistDir);
 
