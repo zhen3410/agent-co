@@ -724,6 +724,7 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
 
   async function executeLaneTurn(params: ExecuteAgentTurnParams): Promise<ExecuteAgentTurnResult> {
     const { userKey, session, initialTasks, stream, onThinking, onTextDelta, onMessage, shouldContinue, signal } = params;
+    const deferVisibleMessageWrites = !stream;
     const queue: PendingAgentDispatchTask[] = Array.isArray(params.pendingTasks)
       ? params.pendingTasks.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' }))
       : initialTasks.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' }));
@@ -967,20 +968,22 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         let reviewMessageEvent: { eventId: string; seq: number } | null = null;
 
         if (!shouldSuppressMessage) {
-          sessionService.appendMessage(session, message);
-          const appendedEvent = appendAgentMessageCreatedEvent({
-            sessionId: session.id,
-            message,
-            fallbackActorName: task.agentName,
-            causedByEventId: thinkingStartedEvent.eventId,
-            causedBySeq: thinkingStartedEvent.seq
-          });
-          messageCreatedEvent = {
-            eventId: appendedEvent.eventId,
-            seq: appendedEvent.seq
-          };
           aiMessages.push(message);
-          onMessage?.(message);
+          if (!deferVisibleMessageWrites) {
+            sessionService.appendMessage(session, message);
+            const appendedEvent = appendAgentMessageCreatedEvent({
+              sessionId: session.id,
+              message,
+              fallbackActorName: task.agentName,
+              causedByEventId: thinkingStartedEvent.eventId,
+              causedBySeq: thinkingStartedEvent.seq
+            });
+            messageCreatedEvent = {
+              eventId: appendedEvent.eventId,
+              seq: appendedEvent.seq
+            };
+            onMessage?.(message);
+          }
           if (stream) {
             await new Promise<void>(resolve => setImmediate(resolve));
             await new Promise<void>(resolve => setTimeout(resolve, 30));
@@ -988,20 +991,22 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         }
         if (invocationReviewResult?.visibleMessage) {
           const visibleReviewMessage = invocationReviewResult.visibleMessage;
-          sessionService.appendMessage(session, visibleReviewMessage);
-          const appendedEvent = appendAgentMessageCreatedEvent({
-            sessionId: session.id,
-            message: visibleReviewMessage,
-            fallbackActorName: task.agentName,
-            causedByEventId: thinkingStartedEvent.eventId,
-            causedBySeq: thinkingStartedEvent.seq
-          });
-          reviewMessageEvent = {
-            eventId: appendedEvent.eventId,
-            seq: appendedEvent.seq
-          };
           aiMessages.push(visibleReviewMessage);
-          onMessage?.(visibleReviewMessage);
+          if (!deferVisibleMessageWrites) {
+            sessionService.appendMessage(session, visibleReviewMessage);
+            const appendedEvent = appendAgentMessageCreatedEvent({
+              sessionId: session.id,
+              message: visibleReviewMessage,
+              fallbackActorName: task.agentName,
+              causedByEventId: thinkingStartedEvent.eventId,
+              causedBySeq: thinkingStartedEvent.seq
+            });
+            reviewMessageEvent = {
+              eventId: appendedEvent.eventId,
+              seq: appendedEvent.seq
+            };
+            onMessage?.(visibleReviewMessage);
+          }
           if (stream) {
             await new Promise<void>(resolve => setImmediate(resolve));
           }
@@ -1185,6 +1190,15 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       for (const laneResult of laneResults) {
         if (laneResult.aiMessages.length > 0) {
           sawVisibleMessage = true;
+          for (const message of laneResult.aiMessages) {
+            sessionService.appendMessage(session, message);
+            appendAgentMessageCreatedEvent({
+              sessionId: session.id,
+              message,
+              fallbackActorName: message.sender || 'system'
+            });
+            params.onMessage?.(message);
+          }
           aiMessages.push(...laneResult.aiMessages);
         }
         if (laneResult.pendingTasks.length > 0) {
