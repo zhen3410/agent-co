@@ -5,11 +5,16 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
-const frontendDistDir = path.join(repoRoot, 'dist', 'frontend');
+const distDir = path.join(repoRoot, 'dist');
+const frontendDistDir = path.join(distDir, 'frontend');
 const manifestPath = path.join(frontendDistDir, '.vite', 'manifest.json');
-const protectedBackendFile = path.join(repoRoot, 'src', 'server.ts');
 
-const expectedPages = ['chat', 'admin', 'deps-monitor', 'verbose-logs'];
+const expectedPages = [
+  { file: 'chat.html', identity: 'chat' },
+  { file: 'admin.html', identity: 'admin' },
+  { file: 'deps-monitor.html', identity: 'deps-monitor' },
+  { file: 'verbose-logs.html', identity: 'verbose-logs' }
+];
 
 function runFrontendBuild() {
   return spawnSync('npm', ['run', 'build:frontend'], {
@@ -47,9 +52,15 @@ function readManifest() {
   return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 }
 
-test('build:frontend 输出命名 MPA 页面并保持产物路径稳定且不覆盖后端源码', () => {
+test('build:frontend 产出真实 MPA 页面并保持 dist 安全边界', () => {
   fs.rmSync(frontendDistDir, { recursive: true, force: true });
-  const backendBefore = fs.readFileSync(protectedBackendFile, 'utf8');
+  fs.mkdirSync(frontendDistDir, { recursive: true });
+
+  const staleFrontendFile = path.join(frontendDistDir, 'stale.txt');
+  fs.writeFileSync(staleFrontendFile, 'stale');
+
+  const distSafetySentinel = path.join(distDir, 'frontend-build-safety-sentinel.txt');
+  fs.writeFileSync(distSafetySentinel, 'do-not-delete');
 
   const firstBuild = runFrontendBuild();
   assert.equal(
@@ -58,22 +69,25 @@ test('build:frontend 输出命名 MPA 页面并保持产物路径稳定且不覆
     `npm run build:frontend should exit 0. stdout:\n${firstBuild.stdout || ''}\nstderr:\n${firstBuild.stderr || ''}`
   );
 
+  assert.equal(fs.existsSync(staleFrontendFile), false, 'emptyOutDir should clear stale files inside dist/frontend');
+  assert.equal(fs.readFileSync(distSafetySentinel, 'utf8'), 'do-not-delete', 'build:frontend should not delete sibling dist files outside dist/frontend');
   assert.equal(fs.existsSync(manifestPath), true, 'should emit dist/frontend/.vite/manifest.json');
 
+  const manifest = readManifest();
+
   for (const page of expectedPages) {
-    const pageHtmlPath = path.join(frontendDistDir, `${page}.html`);
-    assert.equal(fs.existsSync(pageHtmlPath), true, `should emit dist/frontend/${page}.html`);
+    const pageHtmlPath = path.join(frontendDistDir, page.file);
+    assert.equal(fs.existsSync(pageHtmlPath), true, `should emit dist/frontend/${page.file}`);
 
     const html = fs.readFileSync(pageHtmlPath, 'utf8');
-    assert.ok(html.includes('<div id="app"></div>'), `${page}.html should contain #app mount point`);
-    assert.ok(html.includes('type="module"'), `${page}.html should load page entry module`);
-  }
+    assert.ok(html.includes(`<meta name="agent-co-page" content="${page.identity}"`), `${page.file} should keep page identity marker`);
 
-  const manifest = readManifest();
-  for (const page of expectedPages) {
-    const entry = Object.values(manifest).find(item => item && item.isEntry && item.name === page);
-    assert.ok(entry, `manifest should contain named entry for page: ${page}`);
-    assert.ok(typeof entry.file === 'string' && entry.file.startsWith('assets/'), `${page} manifest entry should point to bundled asset`);
+    const manifestEntry = manifest[page.file];
+    assert.ok(manifestEntry, `manifest should include html entry key: ${page.file}`);
+    assert.equal(manifestEntry.isEntry, true, `${page.file} manifest entry should be isEntry`);
+    assert.equal(manifestEntry.src, page.file, `${page.file} manifest entry src should match html file name`);
+    assert.ok(typeof manifestEntry.file === 'string' && manifestEntry.file.startsWith('assets/'), `${page.file} manifest entry should point to bundled asset`);
+    assert.ok(html.includes(manifestEntry.file), `${page.file} should reference its own manifest output asset`);
   }
 
   const firstOutputFiles = listRelativeFiles(frontendDistDir);
@@ -88,6 +102,5 @@ test('build:frontend 输出命名 MPA 页面并保持产物路径稳定且不覆
   const secondOutputFiles = listRelativeFiles(frontendDistDir);
   assert.deepEqual(secondOutputFiles, firstOutputFiles, 'frontend build output file set should be deterministic');
 
-  const backendAfter = fs.readFileSync(protectedBackendFile, 'utf8');
-  assert.equal(backendAfter, backendBefore, 'frontend build must not overwrite src/server.ts');
+  fs.rmSync(distSafetySentinel, { force: true });
 });
