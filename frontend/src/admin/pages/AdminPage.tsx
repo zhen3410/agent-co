@@ -89,6 +89,7 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
   const [authToken, setAuthToken] = useState(initialAuthToken);
   const [resources, setResources] = useState<AdminResources>(EMPTY_RESOURCES);
   const [loadState, setLoadState] = useState<LoadState>('idle');
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<AdminNotice | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -106,7 +107,8 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
   }, [api, authToken, runtimeConfig.apiBaseUrl]);
 
   const canLoad = Boolean(api) || authToken.trim().length > 0;
-  const hasLoadedData = loadState === 'ready'
+  const hasLoadedData = hasLoadedOnce
+    || loadState === 'ready'
     || resources.users.length > 0
     || resources.agents.length > 0
     || resources.groups.length > 0
@@ -137,6 +139,7 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
         groups: groupsResult.groups,
         connections: connectionsResult.connections
       });
+      setHasLoadedOnce(true);
       setLoadState('ready');
       setErrorMessage(null);
     } catch (error) {
