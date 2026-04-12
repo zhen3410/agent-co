@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
 function decodeMessageData(data) {
@@ -104,6 +107,118 @@ async function closeWebSocket(ws) {
   });
 }
 
+async function fetchTimeline(fixture, sessionId, options = {}) {
+  const query = Number.isInteger(options.afterSeq)
+    ? `?afterSeq=${options.afterSeq}`
+    : '';
+  const response = await fixture.request(`/api/sessions/${sessionId}/timeline${query}`);
+  assert.equal(response.status, 200, `timeline request should succeed for session ${sessionId}`);
+  const timeline = Array.isArray(response.body?.timeline) ? response.body.timeline : [];
+  return timeline;
+}
+
+function getFunctionBody(source, functionName) {
+  const signaturePattern = new RegExp(`(?:async\\s+)?function\\s+${functionName}\\s*\\(`);
+  const match = source.match(signaturePattern);
+  assert.ok(match, `should contain function: ${functionName}`);
+
+  const startIndex = match.index;
+  const openParenIndex = source.indexOf('(', startIndex);
+  assert.notEqual(openParenIndex, -1, `should contain function params: ${functionName}`);
+  let parenDepth = 0;
+  let closeParenIndex = -1;
+  for (let index = openParenIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '(') parenDepth += 1;
+    if (char === ')') {
+      parenDepth -= 1;
+      if (parenDepth === 0) {
+        closeParenIndex = index;
+        break;
+      }
+    }
+  }
+  assert.notEqual(closeParenIndex, -1, `should close function params: ${functionName}`);
+  const openBraceIndex = source.indexOf('{', closeParenIndex);
+  assert.notEqual(openBraceIndex, -1, `should contain function body: ${functionName}`);
+
+  let depth = 0;
+  for (let index = openBraceIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(startIndex, index + 1);
+      }
+    }
+  }
+
+  assert.fail(`unable to extract function body: ${functionName}`);
+}
+
+function createReconnectCompensationHarness(overrides = {}) {
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'index.html'), 'utf8');
+  const deriveTimelineTailSeqBody = getFunctionBody(html, 'deriveTimelineTailSeq');
+  const shouldFallbackBody = getFunctionBody(html, 'shouldFallbackToFullRefresh');
+  const runReconnectBody = getFunctionBody(html, 'runReconnectCompensation');
+
+  const fetchCalls = [];
+  const fullRefreshCalls = [];
+  const context = {
+    timelineRows: [{ seq: 1 }, { seq: 2 }, { seq: 3 }, { seq: 4 }, { seq: 5 }],
+    lastSeenEventSeq: 5,
+    activeSessionId: 'session-a',
+    activeSessionSyncNonce: 9,
+    timelineRefreshState: {
+      state: 'idle',
+      inFlight: false,
+      pending: false,
+      preferIncremental: true
+    },
+    TIMELINE_REFRESH_STATES: {
+      idle: 'idle',
+      full: 'full',
+      incremental: 'incremental'
+    },
+    refreshSyncStatus: () => {},
+    scheduleTimelineRefresh: () => {},
+    renderMessages: () => {},
+    deriveLastSeenEventSeq: (rows) => rows.reduce((maxSeq, row) => Math.max(maxSeq, Number(row?.seq) || 0), 0),
+    refreshActiveSessionTimeline: async (options = {}) => {
+      fullRefreshCalls.push(options);
+      return { fallback: true, options };
+    },
+    fetch: async (url) => {
+      fetchCalls.push(url);
+      return {
+        ok: true,
+        async json() {
+          return { timeline: [{ seq: 9 }] };
+        }
+      };
+    },
+    encodeURIComponent,
+    console
+  };
+
+  Object.assign(context, overrides);
+  vm.createContext(context);
+  vm.runInContext(`
+${deriveTimelineTailSeqBody}
+${shouldFallbackBody}
+${runReconnectBody}
+this.__runReconnectCompensation = runReconnectCompensation;
+`, context);
+
+  return {
+    runReconnectCompensation: context.__runReconnectCompensation.bind(context),
+    context,
+    fetchCalls,
+    fullRefreshCalls
+  };
+}
+
 test('websocket route 支持 session 订阅回放、实时事件推送、heartbeat/ping 与 unsubscribe 清理', async () => {
   const fixture = await createChatServerFixture({
     env: {
@@ -199,6 +314,115 @@ test('websocket route 支持 session 订阅回放、实时事件推送、heartbe
   } finally {
     if (ws) {
       await closeWebSocket(ws);
+    }
+    await fixture.cleanup();
+  }
+});
+
+test('websocket 重连后先尝试 afterSeq 增量补偿，并在增量序列跳跃时通过客户端路径回退全量时间线', async () => {
+  const fixture = await createChatServerFixture();
+  let ws = null;
+  let reconnectWs = null;
+
+  try {
+    const login = await fixture.login();
+    assert.equal(login.status, 200);
+
+    const firstChat = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: 'ws reconnect compensation first message' }
+    });
+    assert.equal(firstChat.status, 200);
+    const sessionId = firstChat.body?.session?.id;
+    assert.ok(sessionId, 'should create a first active session');
+
+    const baseTimeline = await fetchTimeline(fixture, sessionId);
+    let lastSeenEventSeq = Math.max(0, ...baseTimeline.map((row) => Number(row?.seq) || 0));
+
+    ws = await openWebSocket(`ws://127.0.0.1:${fixture.port}/api/ws/session-events`, {
+      headers: { Cookie: fixture.getCookieHeader() }
+    });
+    const firstMessages = createJsonMessageCollector(ws);
+    ws.send(JSON.stringify({ type: 'subscribe', sessionId, afterSeq: lastSeenEventSeq }));
+    await firstMessages.waitFor((message) => message.type === 'subscribed' && message.sessionId === sessionId, 3000);
+
+    await closeWebSocket(ws);
+    ws = null;
+
+    const secondChat = await fixture.request('/api/chat', {
+      method: 'POST',
+      body: { message: 'ws reconnect compensation second message' }
+    });
+    assert.equal(secondChat.status, 200);
+
+    reconnectWs = await openWebSocket(`ws://127.0.0.1:${fixture.port}/api/ws/session-events`, {
+      headers: { Cookie: fixture.getCookieHeader() }
+    });
+    const reconnectMessages = createJsonMessageCollector(reconnectWs);
+    reconnectWs.send(JSON.stringify({ type: 'subscribe', sessionId, afterSeq: lastSeenEventSeq }));
+
+    const reconnectSubscribed = await reconnectMessages.waitFor(
+      (message) => message.type === 'subscribed' && message.sessionId === sessionId,
+      3000
+    );
+    assert.ok(
+      Number(reconnectSubscribed.latestSeq) > lastSeenEventSeq,
+      'reconnect subscribe ack should advance latestSeq beyond previous afterSeq cursor'
+    );
+
+    const incrementalCompensation = await fetchTimeline(fixture, sessionId, { afterSeq: lastSeenEventSeq });
+    assert.ok(incrementalCompensation.length > 0, 'incremental compensation should return new rows');
+    assert.equal(
+      incrementalCompensation.every((row) => Number(row?.seq) > lastSeenEventSeq),
+      true,
+      'incremental compensation should only include rows after last seen seq'
+    );
+    assert.ok(
+      Number(incrementalCompensation[0]?.seq) <= (lastSeenEventSeq + 1),
+      'incremental compensation first seq should not jump above lastSeenEventSeq + 1'
+    );
+    lastSeenEventSeq = Math.max(lastSeenEventSeq, ...incrementalCompensation.map((row) => Number(row?.seq) || 0));
+
+    const harness = createReconnectCompensationHarness({
+      activeSessionId: sessionId,
+      lastSeenEventSeq,
+      timelineRows: await fetchTimeline(fixture, sessionId)
+    });
+    harness.context.fetch = async (url) => {
+      harness.fetchCalls.push(url);
+      return {
+        ok: true,
+        async json() {
+          return {
+            timeline: [{ seq: lastSeenEventSeq + 3, sessionId }]
+          };
+        }
+      };
+    };
+
+    await harness.runReconnectCompensation({
+      targetSessionId: sessionId,
+      activeSyncNonce: harness.context.activeSessionSyncNonce,
+      afterSeqCursor: lastSeenEventSeq
+    });
+
+    assert.equal(harness.fetchCalls.length, 1, 'client compensation path should attempt incremental fetch first');
+    assert.ok(
+      harness.fetchCalls[0].includes(`/api/sessions/${encodeURIComponent(sessionId)}/timeline?afterSeq=`),
+      'incremental compensation should use active session timeline endpoint with afterSeq cursor'
+    );
+    assert.equal(harness.fullRefreshCalls.length, 1, 'seq-gap inconsistency should trigger full refresh fallback in real client path');
+    assert.equal(
+      harness.fullRefreshCalls[0]?.mode,
+      harness.context.TIMELINE_REFRESH_STATES.full,
+      'fallback should request full timeline mode'
+    );
+  } finally {
+    if (ws) {
+      await closeWebSocket(ws);
+    }
+    if (reconnectWs) {
+      await closeWebSocket(reconnectWs);
     }
     await fixture.cleanup();
   }

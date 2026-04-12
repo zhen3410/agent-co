@@ -524,7 +524,30 @@
     let socketReconnectTimer = null;
     let socketReconnectAttempts = 0;
     let timelineRefreshTimer = null;
+    let reconnectCompensationTimer = null;
+    let statusNoticeClearTimer = null;
     let socketExplicitlyClosed = false;
+    const SOCKET_CONNECTION_STATES = Object.freeze({
+      idle: 'idle',
+      connecting: 'connecting',
+      connected: 'connected',
+      reconnecting: 'reconnecting',
+      error: 'error'
+    });
+    const TIMELINE_REFRESH_STATES = Object.freeze({
+      idle: 'idle',
+      full: 'full',
+      incremental: 'incremental'
+    });
+    let socketConnectionState = SOCKET_CONNECTION_STATES.idle;
+    let timelineRefreshState = {
+      state: TIMELINE_REFRESH_STATES.idle,
+      inFlight: false,
+      pending: false,
+      preferIncremental: false
+    };
+    let activeSessionSyncNonce = 0;
+    let statusNoticeText = '';
     let groups = [];
     let expandedGroups = new Set();
     let activeGroup = null;
@@ -715,7 +738,7 @@
         timelineRows = [];
         lastSeenEventSeq = 0;
         chatSessions = [];
-        activeSessionId = null;
+        beginActiveSessionSyncScope(null);
         activeSession = null;
         discussionMode = 'classic';
         discussionState = 'active';
@@ -878,7 +901,7 @@
       }
 
       chatSessions = data.chatSessions || chatSessions;
-      activeSessionId = data.activeSessionId || (data.session && data.session.id) || null;
+      beginActiveSessionSyncScope(data.activeSessionId || (data.session && data.session.id) || null);
       syncSessionSettingsState(data.session || null);
 
       renderSessionList();
@@ -1171,7 +1194,7 @@
       currentAgent = data.currentAgent || null;
       currentAgentWillExpire = false;
       enabledAgents = new Set(data.enabledAgents || []);
-      activeSessionId = data.activeSessionId || null;
+      beginActiveSessionSyncScope(data.activeSessionId || null);
       chatSessions = data.chatSessions || [];
       agentWorkdirs = (data.session && data.session.agentWorkdirs) || {};
       syncSessionSettingsState(data.session || null);
@@ -2186,6 +2209,17 @@
       }, 0);
     }
 
+    function deriveTimelineTailSeq(rows = timelineRows) {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return null;
+      }
+      const tailSeq = Number(rows[rows.length - 1] && rows[rows.length - 1].seq);
+      if (!Number.isSafeInteger(tailSeq) || tailSeq < 0) {
+        return null;
+      }
+      return tailSeq;
+    }
+
     function buildSessionEventsSocketUrl() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       return `${protocol}//${window.location.host}/api/ws/session-events`;
@@ -2207,13 +2241,134 @@
       timelineRefreshTimer = null;
     }
 
+    function clearReconnectCompensationTimer() {
+      if (!reconnectCompensationTimer) {
+        return;
+      }
+      clearTimeout(reconnectCompensationTimer);
+      reconnectCompensationTimer = null;
+    }
+
+    function resetTimelineRefreshState({ preservePreferIncremental = false } = {}) {
+      timelineRefreshState.state = TIMELINE_REFRESH_STATES.idle;
+      timelineRefreshState.inFlight = false;
+      timelineRefreshState.pending = false;
+      timelineRefreshState.preferIncremental = preservePreferIncremental
+        ? timelineRefreshState.preferIncremental
+        : false;
+    }
+
+    function beginActiveSessionSyncScope(nextSessionId) {
+      const normalizedSessionId = typeof nextSessionId === 'string' && nextSessionId
+        ? nextSessionId
+        : null;
+      const changed = normalizedSessionId !== activeSessionId;
+      activeSessionId = normalizedSessionId;
+
+      if (!changed) {
+        return false;
+      }
+
+      activeSessionSyncNonce += 1;
+      clearSocketReconnectTimer();
+      clearTimelineRefreshTimer();
+      clearReconnectCompensationTimer();
+      clearStatusNotice();
+      resetTimelineRefreshState();
+      socketSubscribedSessionId = null;
+      lastSeenEventSeq = 0;
+      return true;
+    }
+
+    function refreshSyncStatus() {
+      if (!statusEl) {
+        return;
+      }
+
+      if (statusNoticeText) {
+        statusEl.textContent = statusNoticeText;
+        return;
+      }
+
+      if (timelineRefreshState.inFlight || timelineRefreshState.pending) {
+        statusEl.textContent = '等待事件同步...';
+        return;
+      }
+
+      if (!activeSessionId) {
+        statusEl.textContent = '已连接';
+        return;
+      }
+
+      if (socketConnectionState === SOCKET_CONNECTION_STATES.reconnecting) {
+        statusEl.textContent = '事件连接断开，正在重试...';
+        return;
+      }
+
+      if (socketConnectionState === SOCKET_CONNECTION_STATES.error) {
+        statusEl.textContent = '事件连接异常，正在重试...';
+        return;
+      }
+
+      if (socketConnectionState === SOCKET_CONNECTION_STATES.connecting) {
+        statusEl.textContent = '事件连接中...';
+        return;
+      }
+
+      statusEl.textContent = '已连接';
+    }
+
+    function setStatusNotice(message = '') {
+      clearStatusNoticeTimer();
+      statusNoticeText = message || '';
+      if (statusNoticeText) {
+        statusNoticeClearTimer = setTimeout(() => {
+          statusNoticeClearTimer = null;
+          if (!statusNoticeText) {
+            return;
+          }
+          statusNoticeText = '';
+          refreshSyncStatus();
+        }, 3000);
+      }
+      refreshSyncStatus();
+    }
+
+    function clearStatusNotice() {
+      clearStatusNoticeTimer();
+      if (!statusNoticeText) {
+        return;
+      }
+      statusNoticeText = '';
+      refreshSyncStatus();
+    }
+
+    function clearStatusNoticeTimer() {
+      if (!statusNoticeClearTimer) {
+        return;
+      }
+      clearTimeout(statusNoticeClearTimer);
+      statusNoticeClearTimer = null;
+    }
+
+    function markRefreshPending() {
+      if (!timelineRefreshState.inFlight) {
+        return;
+      }
+      timelineRefreshState.pending = true;
+      refreshSyncStatus();
+    }
+
     function closeSessionEventSocket({ shouldReconnect = false } = {}) {
       clearSocketReconnectTimer();
+      clearReconnectCompensationTimer();
       if (!shouldReconnect) {
         socketExplicitlyClosed = true;
       }
       if (!chatSocket) {
         socketSubscribedSessionId = null;
+        socketConnectionState = SOCKET_CONNECTION_STATES.idle;
+        refreshSyncStatus();
         return;
       }
 
@@ -2229,6 +2384,10 @@
       } catch (error) {
         console.warn('关闭 session events socket 失败:', error);
       }
+      socketConnectionState = shouldReconnect
+        ? SOCKET_CONNECTION_STATES.reconnecting
+        : SOCKET_CONNECTION_STATES.idle;
+      refreshSyncStatus();
     }
 
     function scheduleSocketReconnect() {
@@ -2237,11 +2396,145 @@
       }
 
       clearSocketReconnectTimer();
+      socketConnectionState = SOCKET_CONNECTION_STATES.reconnecting;
+      refreshSyncStatus();
       const delay = Math.min(5000, 500 * Math.max(1, 2 ** socketReconnectAttempts));
       socketReconnectAttempts += 1;
       socketReconnectTimer = setTimeout(() => {
         void ensureSessionEventSocket();
       }, delay);
+    }
+
+    function shouldFallbackToFullRefresh({ targetSessionId, activeSyncNonce, afterSeqCursor, incrementalTimeline, renderedTailSeq }) {
+      if (targetSessionId !== activeSessionId || activeSyncNonce !== activeSessionSyncNonce) {
+        return true;
+      }
+
+      if (!Array.isArray(incrementalTimeline)) {
+        return true;
+      }
+
+      if (incrementalTimeline.length === 0) {
+        return false;
+      }
+
+      const firstSeq = Number(incrementalTimeline[0] && incrementalTimeline[0].seq);
+      if (!Number.isSafeInteger(firstSeq) || firstSeq < 0) {
+        return true;
+      }
+      if (Number.isSafeInteger(afterSeqCursor) && firstSeq > (afterSeqCursor + 1)) {
+        return true;
+      }
+
+      return incrementalTimeline.some((row) => {
+        const rowSeq = Number(row && row.seq);
+        if (!Number.isSafeInteger(rowSeq) || rowSeq < 0) {
+          return true;
+        }
+        if (Number.isSafeInteger(afterSeqCursor) && rowSeq <= afterSeqCursor) {
+          return true;
+        }
+        if (Number.isSafeInteger(renderedTailSeq) && rowSeq <= renderedTailSeq) {
+          return true;
+        }
+        return false;
+      });
+    }
+
+    function scheduleReconnectCompensation(payload) {
+      const { sessionId, lastAckedSeq, afterSeqCursor } = payload || {};
+      if (!sessionId || sessionId !== activeSessionId) {
+        return;
+      }
+
+      const compensationAfterSeq = Number.isSafeInteger(afterSeqCursor) && afterSeqCursor >= 0
+        ? afterSeqCursor
+        : 0;
+      const compensationNonce = activeSessionSyncNonce;
+      timelineRefreshState.preferIncremental = true;
+      clearReconnectCompensationTimer();
+      reconnectCompensationTimer = setTimeout(() => {
+        reconnectCompensationTimer = null;
+        void runReconnectCompensation({
+          targetSessionId: sessionId,
+          activeSyncNonce: compensationNonce,
+          afterSeqCursor: compensationAfterSeq,
+          lastAckedSeq
+        });
+      }, 0);
+    }
+
+    async function runReconnectCompensation({ targetSessionId, activeSyncNonce, afterSeqCursor }) {
+      if (!targetSessionId || targetSessionId !== activeSessionId || activeSyncNonce !== activeSessionSyncNonce) {
+        return false;
+      }
+      if (timelineRefreshState.inFlight) {
+        markRefreshPending();
+        return false;
+      }
+
+      timelineRefreshState.state = TIMELINE_REFRESH_STATES.incremental;
+      timelineRefreshState.inFlight = true;
+      timelineRefreshState.pending = false;
+      refreshSyncStatus();
+
+      try {
+        const incrementalResponse = await fetch(
+          `/api/sessions/${encodeURIComponent(targetSessionId)}/timeline?afterSeq=${encodeURIComponent(afterSeqCursor)}`,
+          {
+            credentials: 'include',
+            cache: 'no-store'
+          }
+        );
+        const data = await incrementalResponse.json().catch(() => ({}));
+        if (!incrementalResponse.ok) {
+          throw new Error(data.error || '加载时间线失败');
+        }
+
+        const incrementalTimeline = Array.isArray(data.timeline) ? data.timeline : [];
+        const renderedTailSeq = deriveTimelineTailSeq(timelineRows);
+        if (shouldFallbackToFullRefresh({
+          targetSessionId,
+          activeSyncNonce,
+          afterSeqCursor,
+          incrementalTimeline,
+          renderedTailSeq
+        })) {
+          timelineRefreshState.preferIncremental = false;
+          timelineRefreshState.inFlight = false;
+          timelineRefreshState.state = TIMELINE_REFRESH_STATES.idle;
+          return refreshActiveSessionTimeline({ ensureSocket: false, mode: TIMELINE_REFRESH_STATES.full });
+        }
+
+        if (targetSessionId !== activeSessionId || activeSyncNonce !== activeSessionSyncNonce) {
+          return false;
+        }
+
+        if (incrementalTimeline.length > 0) {
+          timelineRows = timelineRows.concat(incrementalTimeline);
+          lastSeenEventSeq = deriveLastSeenEventSeq(timelineRows);
+          renderMessages();
+        }
+        timelineRefreshState.preferIncremental = false;
+        clearStatusNotice();
+        return true;
+      } catch (error) {
+        console.error('增量补偿失败，回退全量时间线:', error);
+        timelineRefreshState.preferIncremental = false;
+        timelineRefreshState.inFlight = false;
+        timelineRefreshState.state = TIMELINE_REFRESH_STATES.idle;
+        return refreshActiveSessionTimeline({ ensureSocket: false, mode: TIMELINE_REFRESH_STATES.full });
+      } finally {
+        timelineRefreshState.inFlight = false;
+        if (timelineRefreshState.state === TIMELINE_REFRESH_STATES.incremental) {
+          timelineRefreshState.state = TIMELINE_REFRESH_STATES.idle;
+        }
+        if (timelineRefreshState.pending) {
+          timelineRefreshState.pending = false;
+          scheduleTimelineRefresh({ immediate: true });
+        }
+        refreshSyncStatus();
+      }
     }
 
     function handleSessionEventSocketMessage(event) {
@@ -2258,23 +2551,45 @@
       }
 
       if (message.type === 'session_event') {
+        const eventSessionId = typeof message.sessionId === 'string'
+          ? message.sessionId
+          : (message.event && typeof message.event.sessionId === 'string' ? message.event.sessionId : null);
+        if (!eventSessionId || eventSessionId !== activeSessionId) {
+          return;
+        }
+        if (socketSubscribedSessionId && eventSessionId !== socketSubscribedSessionId) {
+          return;
+        }
         const eventSeq = Number(message.event && message.event.seq);
         if (Number.isSafeInteger(eventSeq) && eventSeq >= 0) {
           lastSeenEventSeq = Math.max(lastSeenEventSeq, eventSeq);
         }
-        if (message.sessionId === activeSessionId) {
-          scheduleTimelineRefresh();
-        }
+        clearStatusNotice();
+        markRefreshPending();
+        scheduleTimelineRefresh();
         return;
       }
 
       if (message.type === 'subscribed') {
-        socketSubscribedSessionId = typeof message.sessionId === 'string' ? message.sessionId : socketSubscribedSessionId;
+        const subscribedSessionId = typeof message.sessionId === 'string' ? message.sessionId : socketSubscribedSessionId;
+        if (!subscribedSessionId || subscribedSessionId !== activeSessionId) {
+          return;
+        }
+        socketSubscribedSessionId = subscribedSessionId;
+        const compensationAfterSeq = lastSeenEventSeq;
         const latestSeq = Number(message.latestSeq);
         if (Number.isSafeInteger(latestSeq) && latestSeq >= 0) {
           lastSeenEventSeq = Math.max(lastSeenEventSeq, latestSeq);
         }
-        statusEl.textContent = isLoading ? '等待事件同步...' : '已连接';
+        socketConnectionState = SOCKET_CONNECTION_STATES.connected;
+        timelineRefreshState.preferIncremental = true;
+        scheduleReconnectCompensation({
+          sessionId: socketSubscribedSessionId,
+          lastAckedSeq: latestSeq,
+          afterSeqCursor: compensationAfterSeq
+        });
+        clearStatusNotice();
+        refreshSyncStatus();
         return;
       }
 
@@ -2283,7 +2598,8 @@
       }
 
       if (message.type === 'error') {
-        statusEl.textContent = '事件连接异常，正在重试...';
+        socketConnectionState = SOCKET_CONNECTION_STATES.error;
+        refreshSyncStatus();
       }
     }
 
@@ -2317,6 +2633,11 @@
         return;
       }
 
+      socketConnectionState = socketReconnectAttempts > 0
+        ? SOCKET_CONNECTION_STATES.reconnecting
+        : SOCKET_CONNECTION_STATES.connecting;
+      refreshSyncStatus();
+
       await new Promise((resolve, reject) => {
         const socket = new WebSocket(buildSessionEventsSocketUrl());
         let settled = false;
@@ -2336,14 +2657,17 @@
           clearSocketReconnectTimer();
           socketReconnectAttempts = 0;
           chatSocket = socket;
+          socketConnectionState = SOCKET_CONNECTION_STATES.connected;
           settleResolve();
           subscribeToSessionEvents();
+          refreshSyncStatus();
         };
         socket.onmessage = handleSessionEventSocketMessage;
         socket.onerror = () => {
           if (chatSocket === socket) {
             chatSocket = null;
           }
+          socketConnectionState = SOCKET_CONNECTION_STATES.error;
           settleReject(new Error('websocket open failed'));
         };
         socket.onclose = () => {
@@ -2352,36 +2676,71 @@
           }
           socketSubscribedSessionId = null;
           if (!socketExplicitlyClosed) {
-            statusEl.textContent = '事件连接断开，正在重试...';
+            socketConnectionState = SOCKET_CONNECTION_STATES.reconnecting;
+            refreshSyncStatus();
             scheduleSocketReconnect();
+          } else {
+            socketConnectionState = SOCKET_CONNECTION_STATES.idle;
+            refreshSyncStatus();
           }
         };
       }).catch((error) => {
         console.error('连接 session events websocket 失败:', error);
-        statusEl.textContent = '事件连接失败，正在重试...';
+        socketConnectionState = SOCKET_CONNECTION_STATES.error;
+        refreshSyncStatus();
         scheduleSocketReconnect();
       });
     }
 
-    function scheduleTimelineRefresh() {
-      clearTimelineRefreshTimer();
+    function scheduleTimelineRefresh(options = {}) {
+      const { immediate = false } = options;
+      if (timelineRefreshState.inFlight) {
+        timelineRefreshState.pending = true;
+        refreshSyncStatus();
+        return;
+      }
+      if (timelineRefreshTimer) {
+        return;
+      }
       timelineRefreshTimer = setTimeout(() => {
         timelineRefreshTimer = null;
-        void refreshActiveSessionTimeline({ ensureSocket: false });
-      }, 80);
+        const mode = timelineRefreshState.preferIncremental
+          ? TIMELINE_REFRESH_STATES.incremental
+          : TIMELINE_REFRESH_STATES.full;
+        void refreshActiveSessionTimeline({ ensureSocket: false, mode });
+      }, immediate ? 0 : 80);
     }
 
     async function refreshActiveSessionTimeline(options = {}) {
-      const { ensureSocket = true } = options;
+      const { ensureSocket = true, mode = TIMELINE_REFRESH_STATES.full } = options;
       if (!activeSessionId) {
         timelineRows = [];
         lastSeenEventSeq = 0;
+        resetTimelineRefreshState();
         renderMessages();
+        refreshSyncStatus();
         return false;
       }
 
+      if (timelineRefreshState.inFlight) {
+        markRefreshPending();
+        return false;
+      }
+
+      const requestSessionId = activeSessionId;
+      const requestSyncNonce = activeSessionSyncNonce;
+      const shouldUseIncremental = mode === TIMELINE_REFRESH_STATES.incremental && Number.isSafeInteger(lastSeenEventSeq) && lastSeenEventSeq >= 0;
+      const requestUrl = shouldUseIncremental
+        ? `/api/sessions/${encodeURIComponent(activeSessionId)}/timeline?afterSeq=${encodeURIComponent(lastSeenEventSeq)}`
+        : `/api/sessions/${encodeURIComponent(activeSessionId)}/timeline`;
+      const renderedTailSeq = deriveTimelineTailSeq(timelineRows);
+
+      timelineRefreshState.state = mode;
+      timelineRefreshState.inFlight = true;
+      refreshSyncStatus();
+
       try {
-        const response = await fetch(`/api/sessions/${encodeURIComponent(activeSessionId)}/timeline`, {
+        const response = await fetch(requestUrl, {
           credentials: 'include',
           cache: 'no-store'
         });
@@ -2390,18 +2749,51 @@
           throw new Error(data.error || '加载时间线失败');
         }
 
-        timelineRows = Array.isArray(data.timeline) ? data.timeline : [];
+        if (requestSessionId !== activeSessionId || requestSyncNonce !== activeSessionSyncNonce) {
+          return false;
+        }
+
+        const nextTimeline = Array.isArray(data.timeline) ? data.timeline : [];
+        if (shouldUseIncremental) {
+          const shouldFallback = shouldFallbackToFullRefresh({
+            targetSessionId: requestSessionId,
+            activeSyncNonce: requestSyncNonce,
+            afterSeqCursor: lastSeenEventSeq,
+            incrementalTimeline: nextTimeline,
+            renderedTailSeq
+          });
+          if (shouldFallback) {
+            timelineRefreshState.preferIncremental = false;
+            timelineRefreshState.inFlight = false;
+            timelineRefreshState.state = TIMELINE_REFRESH_STATES.idle;
+            return refreshActiveSessionTimeline({ ensureSocket, mode: TIMELINE_REFRESH_STATES.full });
+          }
+          timelineRows = timelineRows.concat(nextTimeline);
+        } else {
+          timelineRows = nextTimeline;
+        }
         lastSeenEventSeq = deriveLastSeenEventSeq(timelineRows);
         renderMessages();
 
         if (ensureSocket) {
           await ensureSessionEventSocket();
         }
+        timelineRefreshState.preferIncremental = false;
+        clearStatusNotice();
         return true;
       } catch (error) {
         console.error('加载时间线失败:', error);
-        statusEl.textContent = error.message || '加载时间线失败';
+        statusNoticeText = error.message || '加载时间线失败';
+        refreshSyncStatus();
         return false;
+      } finally {
+        timelineRefreshState.inFlight = false;
+        timelineRefreshState.state = TIMELINE_REFRESH_STATES.idle;
+        if (timelineRefreshState.pending) {
+          timelineRefreshState.pending = false;
+          scheduleTimelineRefresh({ immediate: true });
+        }
+        refreshSyncStatus();
       }
     }
 
@@ -2531,7 +2923,7 @@
 
       isStopRequestInFlight = true;
       syncStopActionButtons();
-      statusEl.textContent = scope === 'current' ? '正在停止当前智能体...' : '正在停止本次执行...';
+      setStatusNotice(scope === 'current' ? '正在停止当前智能体...' : '正在停止本次执行...');
 
       try {
         const response = await fetch('/api/chat-stop', {
@@ -2544,9 +2936,9 @@
         if (!response.ok) {
           throw new Error(data.error || `HTTP ${response.status}`);
         }
-        statusEl.textContent = '停止请求已发送...';
+        setStatusNotice('停止请求已发送...');
       } catch (error) {
-        statusEl.textContent = '停止失败';
+        setStatusNotice('停止失败');
         addMessage({
           role: 'assistant',
           sender: '系统',
@@ -2564,7 +2956,7 @@
 
     function showSystemNotice(notice) {
       if (!notice) return;
-      statusEl.textContent = notice;
+      setStatusNotice(notice);
     }
 
     function clearResumeChainNotice() {
@@ -2597,7 +2989,7 @@
       isLoading = true;
       sendBtnEl.disabled = true;
       sendBtnEl.textContent = '...';
-      statusEl.textContent = '继续执行剩余链路...';
+      setStatusNotice('继续执行剩余链路...');
       syncStopActionButtons();
 
       try {
@@ -2618,10 +3010,10 @@
         updateCurrentAgentUI();
         showSystemNotice(data.notice);
         await refreshActiveSessionTimeline();
-        statusEl.textContent = '已同步最新进展';
+        setStatusNotice('已同步最新进展');
       } catch (error) {
         console.error('继续剩余执行失败:', error);
-        statusEl.textContent = '连接失败';
+        setStatusNotice('连接失败');
         showResumeChainNotice();
         addMessage({
           role: 'assistant',
@@ -2677,7 +3069,7 @@
       isLoading = true;
       sendBtnEl.disabled = true;
       sendBtnEl.textContent = '...';
-      statusEl.textContent = '发送中...';
+      setStatusNotice('发送中...');
       syncStopActionButtons();
 
       try {
@@ -2694,14 +3086,14 @@
 
         const data = await response.json().catch(() => ({}));
         if (data.session && data.session.id) {
-          activeSessionId = data.session.id;
+          beginActiveSessionSyncScope(data.session.id);
           syncSessionSettingsState(data.session);
         }
         currentAgent = data.currentAgent || null;
         currentAgentWillExpire = false;
         updateCurrentAgentUI();
         showSystemNotice(data.notice);
-        statusEl.textContent = '命令已接受，等待事件同步...';
+        setStatusNotice('命令已接受，等待事件同步...');
         const historyLoaded = await loadHistory();
         if (!historyLoaded) {
           throw new Error('刷新会话状态失败');
@@ -2710,7 +3102,7 @@
         await ensureSessionEventSocket();
       } catch (error) {
         console.error('发送失败:', error);
-        statusEl.textContent = '发送失败';
+        setStatusNotice('发送失败');
         addMessage({
           role: 'assistant',
           sender: '系统',
@@ -2740,7 +3132,7 @@
           updateCurrentAgentUI();
           agentWorkdirs = data.agentWorkdirs || {};
           chatSessions = data.chatSessions || [];
-          activeSessionId = data.activeSessionId || null;
+          beginActiveSessionSyncScope(data.activeSessionId || null);
           syncSessionSettingsState(data.session || null);
           renderSessionList();
           renderMessages();
@@ -3004,6 +3396,7 @@
       bindDomEvents();
       resizeUserInput();
       syncStopActionButtons();
+      refreshSyncStatus();
       if (window.ChatComposer && typeof window.ChatComposer.initComposer === 'function') {
         window.ChatComposer.initComposer({
           input: userInputEl,

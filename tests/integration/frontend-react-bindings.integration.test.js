@@ -30,7 +30,23 @@ function getFunctionBody(source, functionName) {
   assert.ok(match, `should contain function: ${functionName}`);
 
   const startIndex = match.index;
-  const openBraceIndex = source.indexOf('{', startIndex);
+  const openParenIndex = source.indexOf('(', startIndex);
+  assert.notEqual(openParenIndex, -1, `should contain function params: ${functionName}`);
+  let parenDepth = 0;
+  let closeParenIndex = -1;
+  for (let index = openParenIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '(') parenDepth += 1;
+    if (char === ')') {
+      parenDepth -= 1;
+      if (parenDepth === 0) {
+        closeParenIndex = index;
+        break;
+      }
+    }
+  }
+  assert.notEqual(closeParenIndex, -1, `should close function params: ${functionName}`);
+  const openBraceIndex = source.indexOf('{', closeParenIndex);
   assert.notEqual(openBraceIndex, -1, `should contain function body: ${functionName}`);
 
   let depth = 0;
@@ -154,15 +170,153 @@ test('React 页面通过 WebSocket 订阅 session events，并通过 timeline �
 
   assertContainsAll(html, [
     "function refreshActiveSessionTimeline(",
-    "fetch(`/api/sessions/${encodeURIComponent(activeSessionId)}/timeline`",
+    'const requestUrl = shouldUseIncremental',
     "function ensureSessionEventSocket(",
     "function subscribeToSessionEvents(",
+    "function refreshSyncStatus()",
+    "function markRefreshPending()",
+    "function scheduleReconnectCompensation(",
     '/api/ws/session-events',
     "type: 'subscribe'",
     'afterSeq: lastSeenEventSeq',
     "message.type === 'session_event'",
-    'scheduleTimelineRefresh('
+    'scheduleTimelineRefresh(',
+    'socketConnectionState',
+    'timelineRefreshState',
+    'activeSessionSyncNonce'
   ], 'missing websocket/timeline binding');
+});
+
+test('React 页面使用显式同步状态机、会话防串护栏与增量补偿回退策略', () => {
+  const html = readPublicFile('public', 'index.html');
+  const socketMessageBody = getFunctionBody(html, 'handleSessionEventSocketMessage');
+  const compensationBody = getFunctionBody(html, 'scheduleReconnectCompensation');
+  const sessionEventBranchStart = socketMessageBody.indexOf("if (message.type === 'session_event') {");
+  const sessionEventBranch = socketMessageBody.slice(
+    sessionEventBranchStart,
+    socketMessageBody.indexOf("if (message.type === 'subscribed') {")
+  );
+
+  assertContainsAll(html, [
+    'const SOCKET_CONNECTION_STATES = Object.freeze(',
+    'const TIMELINE_REFRESH_STATES = Object.freeze(',
+    'let socketConnectionState = SOCKET_CONNECTION_STATES.idle;',
+    'let timelineRefreshState = {',
+    'inFlight: false,',
+    'pending: false,',
+    'preferIncremental: false',
+    'let activeSessionSyncNonce = 0;',
+    'function resetTimelineRefreshState(',
+    'function beginActiveSessionSyncScope(',
+    'clearSocketReconnectTimer();'
+  ], 'missing explicit sync state model');
+
+  assertContainsAll(html, [
+    'const requestSessionId = activeSessionId;',
+    'const requestSyncNonce = activeSessionSyncNonce;',
+    'if (requestSessionId !== activeSessionId || requestSyncNonce !== activeSessionSyncNonce) {',
+    'timelineRefreshState.inFlight = true;',
+    'timelineRefreshState.inFlight = false;',
+    'if (timelineRefreshState.pending) {'
+  ], 'missing stale-session guard/coalesced refresh contract');
+
+  assertContainsAll(html, [
+    'if (timelineRefreshState.inFlight) {',
+    'timelineRefreshState.pending = true;',
+    'return;',
+    'if (timelineRefreshTimer) {'
+  ], 'missing refresh coalescing schedule behavior');
+
+  assertContainsAll(socketMessageBody, [
+    "if (message.type === 'subscribed') {",
+    'scheduleReconnectCompensation({',
+    'lastAckedSeq: latestSeq',
+    "if (message.type === 'session_event') {",
+    'const eventSessionId = typeof message.sessionId === \'string\'',
+    'if (!eventSessionId || eventSessionId !== activeSessionId) {',
+    'if (socketSubscribedSessionId && eventSessionId !== socketSubscribedSessionId) {',
+    'clearStatusNotice();',
+    'markRefreshPending();'
+  ], 'missing websocket reconnect compensation wiring');
+  assert.ok(
+    sessionEventBranch.indexOf('if (!eventSessionId || eventSessionId !== activeSessionId) {')
+      < sessionEventBranch.indexOf('lastSeenEventSeq = Math.max(lastSeenEventSeq, eventSeq);'),
+    'session_event should verify active session before advancing lastSeenEventSeq'
+  );
+  assert.ok(
+    sessionEventBranch.indexOf('if (socketSubscribedSessionId && eventSessionId !== socketSubscribedSessionId) {')
+      < sessionEventBranch.indexOf('lastSeenEventSeq = Math.max(lastSeenEventSeq, eventSeq);'),
+    'session_event should verify subscribed session before advancing lastSeenEventSeq'
+  );
+
+  assertContainsAll(compensationBody, [
+    'timelineRefreshState.preferIncremental = true;',
+    'runReconnectCompensation('
+  ], 'missing reconnect compensation scheduler');
+
+  assertContainsAll(html, [
+    'const incrementalResponse = await fetch(',
+    '`/api/sessions/${encodeURIComponent(targetSessionId)}/timeline?afterSeq=${encodeURIComponent(afterSeqCursor)}`',
+    'shouldFallbackToFullRefresh(',
+    'timelineRefreshState.preferIncremental = false;',
+    'return refreshActiveSessionTimeline({ ensureSocket: false, mode: TIMELINE_REFRESH_STATES.full })'
+  ], 'missing incremental-then-fallback reconnect flow');
+});
+
+test('React 页面在发送/停止/恢复等动作路径通过显式 notice 状态刷新状态栏，而非直接写 statusEl', () => {
+  const html = readPublicFile('public', 'index.html');
+  const sendBody = getFunctionBody(html, 'sendMessage');
+  const stopBody = getFunctionBody(html, 'requestChatStop');
+  const resumeBody = getFunctionBody(html, 'resumePendingChain');
+  const systemNoticeBody = getFunctionBody(html, 'showSystemNotice');
+  const refreshTimelineBody = getFunctionBody(html, 'refreshActiveSessionTimeline');
+  const socketMessageBody = getFunctionBody(html, 'handleSessionEventSocketMessage');
+
+  assertContainsAll(html, [
+    'function setStatusNotice(message = \'\') {',
+    'clearStatusNoticeTimer();',
+    'statusNoticeClearTimer = setTimeout(() => {',
+    '}, 3000);',
+    'statusNoticeText = message || \'\';',
+    'refreshSyncStatus();',
+    'function clearStatusNotice() {',
+    'clearStatusNoticeTimer();',
+    'function clearStatusNoticeTimer() {',
+    'statusNoticeText = \'\';'
+  ], 'missing explicit notice setter contract');
+
+  assertContainsAll(sendBody, [
+    "setStatusNotice('发送中...');",
+    "setStatusNotice('命令已接受，等待事件同步...');",
+    "setStatusNotice('发送失败');"
+  ], 'missing send path notice-state contract');
+  assert.ok(!sendBody.includes('statusEl.textContent ='), 'send path should not directly mutate statusEl');
+
+  assertContainsAll(stopBody, [
+    'setStatusNotice(scope === \'current\' ? \'正在停止当前智能体...\' : \'正在停止本次执行...\');',
+    "setStatusNotice('停止请求已发送...');",
+    "setStatusNotice('停止失败');"
+  ], 'missing stop path notice-state contract');
+  assert.ok(!stopBody.includes('statusEl.textContent ='), 'stop path should not directly mutate statusEl');
+
+  assertContainsAll(resumeBody, [
+    "setStatusNotice('继续执行剩余链路...');",
+    "setStatusNotice('已同步最新进展');",
+    "setStatusNotice('连接失败');"
+  ], 'missing resume path notice-state contract');
+  assert.ok(!resumeBody.includes('statusEl.textContent ='), 'resume path should not directly mutate statusEl');
+
+  assertContainsAll(systemNoticeBody, [
+    'setStatusNotice(notice);'
+  ], 'missing system notice bridge contract');
+  assert.ok(!systemNoticeBody.includes('statusEl.textContent ='), 'system notice should not directly mutate statusEl');
+
+  assertContainsAll(refreshTimelineBody, [
+    'clearStatusNotice();'
+  ], 'missing notice clear after successful timeline reconciliation');
+  assertContainsAll(socketMessageBody, [
+    'clearStatusNotice();'
+  ], 'missing notice clear on websocket subscribed/event synchronization');
 });
 
 test('React 页面会从 timeline 渲染完整事件流，并保留继续剩余执行入口', () => {
@@ -813,7 +967,7 @@ test('React 页面会在当前会话设置中支持“不限制”语义并从�
   ], 'missing unlimited render-state behavior');
   assertContainsAll(loadHistoryBody, [
     'chatSessions = data.chatSessions || [];',
-    'activeSessionId = data.activeSessionId || null;',
+    'beginActiveSessionSyncScope(data.activeSessionId || null);',
     'syncSessionSettingsState(data.session || null);'
   ], 'missing history hydration for session settings');
 });
@@ -844,7 +998,7 @@ test('React 页面会在当前会话设置中暴露讨论模式控制，并从�
   ], 'missing discussion mode/state sync behavior');
   assertContainsAll(loadHistoryBody, [
     'chatSessions = data.chatSessions || [];',
-    'activeSessionId = data.activeSessionId || null;',
+    'beginActiveSessionSyncScope(data.activeSessionId || null);',
     'syncSessionSettingsState(data.session || null);'
   ], 'missing history hydration path for discussion state');
 });
