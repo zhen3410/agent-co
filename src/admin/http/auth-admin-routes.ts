@@ -3,9 +3,11 @@ import { parseBody } from '../../shared/http/body';
 import { AIAgentConfig } from '../../types';
 import { sendHttpError } from '../../shared/http/errors';
 import { sendJson } from '../../shared/http/json';
+import { serveStaticFile } from '../../shared/http/static-files';
 import { AgentAdminService, AgentAdminServiceError, parseApplyMode } from '../application/agent-admin-service';
 import { UserAdminService, UserAdminServiceError } from '../application/user-admin-service';
 import { requireAdmin } from './admin-auth';
+import { resolveFrontendAssetRequest } from '../../chat/http/chat-route-helpers';
 
 interface AgentPathMatch {
   name: string;
@@ -50,6 +52,26 @@ export async function handleAuthAdminRoutes(
 ): Promise<boolean> {
   const pathname = requestUrl.pathname;
   const method = req.method || 'GET';
+
+  if (method === 'GET') {
+    const frontendAsset = resolveFrontendAssetRequest(pathname, 'admin.html');
+    if (frontendAsset) {
+      if (frontendAsset.errorMessage) {
+        sendJson(res, 500, { error: frontendAsset.errorMessage });
+        return true;
+      }
+      serveStaticFile(res, {
+        rootDir: frontendAsset.rootDir,
+        filePath: frontendAsset.filePath,
+        contentType: frontendAsset.contentType,
+        disableHtmlCache: frontendAsset.disableHtmlCache,
+        onNotFound: response => sendJson(response, 500, {
+          error: `前端构建产物缺失: ${frontendAsset.filePath}。请先执行 npm run build 生成 dist/frontend。`
+        })
+      });
+      return true;
+    }
+  }
 
   if (method === 'POST' && pathname === '/api/auth/verify') {
     try {
