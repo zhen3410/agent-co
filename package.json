@@ -32,6 +32,7 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",
+    "react-test-renderer": "^18.3.1",
     "ts-node": "^10.9.0",
     "typescript": "^5.9.3"
   },

@@ -29,6 +29,7 @@ export interface ChatHistoryResponse {
   session: ChatSessionDetails | null;
   activeSessionId: string | null;
   chatSessions: ChatSessionSummary[];
+  latestEventSeq?: number;
   enabledAgents: string[];
   currentAgent: string | null;
   agentWorkdirs: Record<string, string>;

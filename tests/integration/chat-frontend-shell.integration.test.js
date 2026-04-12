@@ -5,7 +5,9 @@ const path = require('node:path');
 const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
+const TestRenderer = require('react-test-renderer');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
+const { act } = TestRenderer;
 
 const rootDir = path.resolve(__dirname, '../..');
 const moduleCache = new Map();
@@ -382,4 +384,187 @@ test('ChatPage 与 realtime 适配器组合后，新增消息会出现在渲染�
   }));
 
   assert.match(html, /realtime 补充消息/);
+});
+
+test('ChatPage realtime 生命周期稳定并推进 afterSeq 游标', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+  const { appendIncomingChatRealtimeData } = loadTsModule('frontend/src/chat/services/chat-realtime.ts');
+
+  const originalWindow = global.window;
+  global.window = {
+    location: {
+      protocol: 'http:',
+      host: '127.0.0.1:3000'
+    }
+  };
+
+  const realtimeOptionsList = [];
+  const connectionState = { connectCalls: 0, disconnectCalls: 0 };
+  const api = {
+    async loadHistory() {
+      return createSampleHistoryState();
+    },
+    async sendMessage() {
+      return { accepted: true };
+    }
+  };
+
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(ChatPage, {
+        initialState: {
+          ...createSampleHistoryState(),
+          latestEventSeq: 0
+        },
+        api,
+        createRealtimeConnection: (options) => {
+          realtimeOptionsList.push(options);
+          return {
+            connect() {
+              connectionState.connectCalls += 1;
+            },
+            disconnect() {
+              connectionState.disconnectCalls += 1;
+            }
+          };
+        }
+      }));
+    });
+
+    assert.equal(realtimeOptionsList.length, 1, 'should create one realtime connection for active session');
+    assert.equal(connectionState.connectCalls, 1);
+
+    const realtimeOptions = realtimeOptionsList[0];
+    assert.equal(realtimeOptions.getAfterSeq(), 0);
+
+    await act(async () => {
+      realtimeOptions.onEnvelope({
+        type: 'subscribed',
+        sessionId: 'session-1',
+        latestSeq: 8
+      });
+    });
+    assert.equal(realtimeOptions.getAfterSeq(), 8);
+
+    const nextMessages = appendIncomingChatRealtimeData(createSampleHistoryState().messages, {
+      type: 'session_event',
+      sessionId: 'session-1',
+      event: {
+        seq: 9,
+        eventId: 'event-9',
+        eventType: 'agent_message_created',
+        payload: {
+          message: {
+            id: 'assistant-9',
+            role: 'assistant',
+            sender: 'Alice',
+            text: 'realtime 生命周期消息',
+            timestamp: 9
+          }
+        }
+      }
+    });
+
+    await act(async () => {
+      realtimeOptions.onEnvelope({
+        type: 'session_event',
+        sessionId: 'session-1',
+        event: {
+          seq: 9,
+          eventId: 'event-9',
+          eventType: 'agent_message_created'
+        }
+      });
+      realtimeOptions.onMessage(nextMessages);
+    });
+
+    assert.equal(realtimeOptions.getAfterSeq(), 9);
+    assert.equal(realtimeOptionsList.length, 1, 'message updates should not recreate realtime connection');
+    assert.match(JSON.stringify(renderer.toJSON()), /realtime 生命周期消息/);
+  } finally {
+    await act(async () => {
+      renderer?.unmount();
+    });
+    assert.equal(connectionState.disconnectCalls, 1);
+    global.window = originalWindow;
+  }
+});
+
+test('ChatPage 在存在 initialState 时仍可通过刷新动作重新拉取 history', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+  const { HttpClientError } = loadTsModule('frontend/src/shared/lib/http/http-client.ts');
+
+  const originalWindow = global.window;
+  global.window = {
+    location: {
+      protocol: 'http:',
+      host: '127.0.0.1:3000'
+    }
+  };
+
+  const refreshedState = {
+    ...createSampleHistoryState(),
+    messages: [
+      ...createSampleHistoryState().messages,
+      {
+        id: 'assistant-refresh-1',
+        role: 'assistant',
+        sender: 'Alice',
+        text: '刷新后的会话内容',
+        timestamp: 10
+      }
+    ]
+  };
+
+  let loadHistoryCalls = 0;
+  const api = {
+    async loadHistory() {
+      loadHistoryCalls += 1;
+      return refreshedState;
+    },
+    async sendMessage() {
+      throw new HttpClientError({
+        message: 'should not send in refresh test',
+        status: 500,
+        statusText: 'Internal Server Error',
+        body: null,
+        url: '/api/chat',
+        method: 'POST'
+      });
+    }
+  };
+
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(ChatPage, {
+        initialState: createSampleHistoryState(),
+        api,
+        createRealtimeConnection: () => ({
+          connect() {},
+          disconnect() {}
+        })
+      }));
+    });
+
+    assert.equal(loadHistoryCalls, 0, 'initial render should use bootstrap state');
+    assert.doesNotMatch(JSON.stringify(renderer.toJSON()), /刷新后的会话内容/);
+
+    const refreshButton = renderer.root.find((node) => {
+      return node.type === 'button' && Array.isArray(node.children) && node.children.includes('刷新');
+    });
+
+    await act(async () => {
+      refreshButton.props.onClick();
+    });
+
+    assert.equal(loadHistoryCalls, 1, 'refresh click should trigger history reload even with initialState');
+    assert.match(JSON.stringify(renderer.toJSON()), /刷新后的会话内容/);
+  } finally {
+    await act(async () => {
+      renderer?.unmount();
+    });
+    global.window = originalWindow;
+  }
 });

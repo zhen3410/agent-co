@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '../../shared/layouts/AppShell';
 import { Button } from '../../shared/ui';
 import { getMergedRuntimeConfig } from '../../shared/config/runtime-config';
@@ -6,12 +6,19 @@ import { ChatComposer } from '../features/composer/ChatComposer';
 import { ChatMessageList } from '../features/message-list/ChatMessageList';
 import { SessionSidebar } from '../features/session-sidebar/SessionSidebar';
 import { createChatApi, type ChatApi } from '../services/chat-api';
-import { appendIncomingChatRealtimeData, createChatRealtimeConnection } from '../services/chat-realtime';
+import {
+  appendIncomingChatRealtimeData,
+  createChatRealtimeConnection,
+  extractRealtimeSequence,
+  type ChatRealtimeConnection,
+  type ChatRealtimeOptions
+} from '../services/chat-realtime';
 import type { ChatHistoryResponse, ChatMessage } from '../types';
 
 export interface ChatPageProps {
   initialState?: ChatHistoryResponse;
   api?: ChatApi;
+  createRealtimeConnection?: (options: ChatRealtimeOptions) => ChatRealtimeConnection;
 }
 
 type LoadState = 'loading' | 'ready' | 'error';
@@ -54,6 +61,9 @@ function normalizeHistoryState(state: ChatHistoryResponse): ChatHistoryResponse 
     session: state.session ?? null,
     activeSessionId: state.activeSessionId ?? state.session?.id ?? null,
     chatSessions: Array.isArray(state.chatSessions) ? state.chatSessions : [],
+    latestEventSeq: typeof state.latestEventSeq === 'number' && Number.isFinite(state.latestEventSeq)
+      ? state.latestEventSeq
+      : undefined,
     enabledAgents: Array.isArray(state.enabledAgents) ? state.enabledAgents : [],
     currentAgent: state.currentAgent ?? null,
     agentWorkdirs: state.agentWorkdirs ?? {},
@@ -61,7 +71,7 @@ function normalizeHistoryState(state: ChatHistoryResponse): ChatHistoryResponse 
   };
 }
 
-export function ChatPage({ initialState, api }: ChatPageProps) {
+export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPageProps) {
   const runtimeConfig = getMergedRuntimeConfig();
   const chatApi = useMemo(() => {
     if (api) {
@@ -71,16 +81,41 @@ export function ChatPage({ initialState, api }: ChatPageProps) {
     const baseUrl = typeof runtimeConfig.apiBaseUrl === 'string' ? runtimeConfig.apiBaseUrl : undefined;
     return createChatApi({ baseUrl });
   }, [api, runtimeConfig.apiBaseUrl]);
+  const realtimeConnectionFactory = useMemo(() => {
+    return createRealtimeConnection ?? createChatRealtimeConnection;
+  }, [createRealtimeConnection]);
 
   const [historyState, setHistoryState] = useState<ChatHistoryResponse | null>(initialState ? normalizeHistoryState(initialState) : null);
   const [loadState, setLoadState] = useState<LoadState>(initialState ? 'ready' : 'loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const messagesRef = useRef<ChatMessage[]>(historyState?.messages ?? []);
+  const realtimeSeqRef = useRef<number>(typeof initialState?.latestEventSeq === 'number' ? initialState.latestEventSeq : 0);
+  const realtimeSessionIdRef = useRef<string | null>(historyState?.activeSessionId ?? null);
+
+  const applyHistoryState = useCallback((nextState: ChatHistoryResponse) => {
+    const normalized = normalizeHistoryState(nextState);
+    const nextSessionId = normalized.activeSessionId ?? null;
+    const nextLatestSeq = typeof normalized.latestEventSeq === 'number' ? normalized.latestEventSeq : null;
+
+    if (realtimeSessionIdRef.current !== nextSessionId) {
+      realtimeSessionIdRef.current = nextSessionId;
+      realtimeSeqRef.current = nextLatestSeq ?? 0;
+    } else if (nextLatestSeq !== null && nextLatestSeq > realtimeSeqRef.current) {
+      realtimeSeqRef.current = nextLatestSeq;
+    }
+
+    messagesRef.current = normalized.messages;
+    setHistoryState(normalized);
+    setLoadState('ready');
+    setErrorMessage(null);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
-    if (initialState) {
+    if (initialState && reloadNonce === 0) {
+      applyHistoryState(initialState);
       return undefined;
     }
 
@@ -92,8 +127,7 @@ export function ChatPage({ initialState, api }: ChatPageProps) {
         if (cancelled) {
           return;
         }
-        setHistoryState(normalizeHistoryState(response));
-        setLoadState('ready');
+        applyHistoryState(response);
       })
       .catch((error) => {
         if (cancelled) {
@@ -106,18 +140,28 @@ export function ChatPage({ initialState, api }: ChatPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [chatApi, initialState, reloadNonce]);
+  }, [applyHistoryState, chatApi, initialState, reloadNonce]);
 
   useEffect(() => {
-    if (!historyState?.activeSessionId || typeof window === 'undefined') {
+    const activeSessionId = historyState?.activeSessionId;
+    if (!activeSessionId || typeof window === 'undefined') {
       return undefined;
     }
 
-    const connection = createChatRealtimeConnection({
-      sessionId: historyState.activeSessionId,
+    realtimeSessionIdRef.current = activeSessionId;
+    const connection = realtimeConnectionFactory({
+      sessionId: activeSessionId,
       url: resolveRealtimeUrl(),
-      getMessages: () => historyState.messages,
+      getAfterSeq: () => realtimeSeqRef.current,
+      getMessages: () => messagesRef.current,
+      onEnvelope: (payload) => {
+        const sequence = extractRealtimeSequence(payload, activeSessionId);
+        if (sequence !== null && sequence > realtimeSeqRef.current) {
+          realtimeSeqRef.current = sequence;
+        }
+      },
       onMessage: (nextMessages) => {
+        messagesRef.current = nextMessages;
         setHistoryState((current) => {
           if (!current) {
             return current;
@@ -134,7 +178,7 @@ export function ChatPage({ initialState, api }: ChatPageProps) {
     return () => {
       connection.disconnect();
     };
-  }, [historyState?.activeSessionId, historyState?.messages]);
+  }, [historyState?.activeSessionId, realtimeConnectionFactory]);
 
   const handleSubmit = async (message: string): Promise<void> => {
     const optimistic = createOptimisticUserMessage(message);
@@ -142,18 +186,21 @@ export function ChatPage({ initialState, api }: ChatPageProps) {
       if (!current) {
         return current;
       }
-      return {
+      const nextState = {
         ...current,
         messages: [...current.messages, optimistic]
       };
+      messagesRef.current = nextState.messages;
+      return nextState;
     });
 
     try {
-      await chatApi.sendMessage({ message });
+      const sendResult = await chatApi.sendMessage({ message });
+      if (typeof sendResult.latestEventSeq === 'number' && sendResult.latestEventSeq > realtimeSeqRef.current) {
+        realtimeSeqRef.current = sendResult.latestEventSeq;
+      }
       const nextHistory = await chatApi.loadHistory();
-      setHistoryState(normalizeHistoryState(nextHistory));
-      setLoadState('ready');
-      setErrorMessage(null);
+      applyHistoryState(nextHistory);
     } catch (error) {
       const nextError = error instanceof Error ? error.message : '发送失败';
       setErrorMessage(nextError);
@@ -161,18 +208,20 @@ export function ChatPage({ initialState, api }: ChatPageProps) {
         if (!current) {
           return current;
         }
+        const nextMessages = appendIncomingChatRealtimeData(current.messages, {
+          type: 'message',
+          message: {
+            id: `system-${Date.now()}`,
+            role: 'system',
+            sender: '系统',
+            text: `❌ ${nextError}`,
+            timestamp: Date.now()
+          }
+        });
+        messagesRef.current = nextMessages;
         return {
           ...current,
-          messages: appendIncomingChatRealtimeData(current.messages, {
-            type: 'message',
-            message: {
-              id: `system-${Date.now()}`,
-              role: 'system',
-              sender: '系统',
-              text: `❌ ${nextError}`,
-              timestamp: Date.now()
-            }
-          })
+          messages: nextMessages
         };
       });
       throw error;

@@ -5,6 +5,8 @@ export interface ChatRealtimeOptions {
   sessionId: string;
   url: string;
   afterSeq?: number;
+  getAfterSeq?: () => number;
+  onEnvelope?: (payload: ChatRealtimeEnvelope) => void;
   onMessage: (nextMessages: ChatMessage[]) => void;
   getMessages: () => ChatMessage[];
   webSocketFactory?: (url: string) => {
@@ -77,6 +79,34 @@ function extractIncomingMessage(payload: ChatRealtimeEnvelope, sessionId?: strin
   return null;
 }
 
+export function extractRealtimeSequence(payload: ChatRealtimeEnvelope, sessionId?: string): number | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  if (payload.type === 'subscribed') {
+    if (sessionId && typeof payload.sessionId === 'string' && payload.sessionId !== sessionId) {
+      return null;
+    }
+
+    return typeof payload.latestSeq === 'number' && Number.isFinite(payload.latestSeq)
+      ? payload.latestSeq
+      : null;
+  }
+
+  if (payload.type === 'session_event') {
+    if (sessionId && typeof payload.sessionId === 'string' && payload.sessionId !== sessionId) {
+      return null;
+    }
+
+    const event = isRecord(payload.event) ? payload.event : null;
+    const seq = event?.seq;
+    return typeof seq === 'number' && Number.isFinite(seq) ? seq : null;
+  }
+
+  return null;
+}
+
 export function appendIncomingChatRealtimeData(
   messages: ChatMessage[],
   payload: ChatRealtimeEnvelope,
@@ -97,6 +127,17 @@ export function appendIncomingChatRealtimeData(
 export function createChatRealtimeConnection(options: ChatRealtimeOptions): ChatRealtimeConnection {
   let client: RealtimeClient | null = null;
 
+  const resolveAfterSeq = (): number => {
+    if (typeof options.getAfterSeq === 'function') {
+      const fromGetter = options.getAfterSeq();
+      if (typeof fromGetter === 'number' && Number.isFinite(fromGetter)) {
+        return fromGetter;
+      }
+    }
+
+    return options.afterSeq ?? 0;
+  };
+
   return {
     connect(): void {
       if (client) {
@@ -110,11 +151,13 @@ export function createChatRealtimeConnection(options: ChatRealtimeOptions): Chat
           client?.send({
             type: 'subscribe',
             sessionId: options.sessionId,
-            afterSeq: options.afterSeq ?? 0
+            afterSeq: resolveAfterSeq()
           });
         },
         onMessage: (payload) => {
-          const nextMessages = appendIncomingChatRealtimeData(options.getMessages(), payload as ChatRealtimeEnvelope, options.sessionId);
+          const envelope = payload as ChatRealtimeEnvelope;
+          options.onEnvelope?.(envelope);
+          const nextMessages = appendIncomingChatRealtimeData(options.getMessages(), envelope, options.sessionId);
           if (nextMessages !== options.getMessages()) {
             options.onMessage(nextMessages);
           }
