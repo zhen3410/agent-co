@@ -26,6 +26,7 @@ import { createChatRuntimeDependencies } from './chat-runtime-dependencies';
 import { createChatRuntimeStores } from './chat-runtime-stores';
 import { createSessionEventService } from '../application/session-event-service';
 import { createChatActiveExecutionState } from './chat-active-execution-state';
+import { createChatInvocationLaneState } from './chat-invocation-lane-state';
 
 export type { UserChatSession, PendingAgentDispatchTask } from '../infrastructure/chat-session-repository';
 export type { DependencyStatusItem, DependencyStatusLogEntry } from '../infrastructure/dependency-log-store';
@@ -95,6 +96,7 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
   const activeExecutionState = createChatActiveExecutionState({
     log: (message: string) => dependencyLogStore.appendOperationalLog('info', 'chat-exec', message)
   });
+  const invocationLaneState = createChatInvocationLaneState();
 
   function addCallbackMessage(sessionId: string, agentName: string, content: string, invokeAgents?: string[]) {
     const msg: Message = {
@@ -175,6 +177,12 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     return sessionEventService.buildSessionSyncStatus(sessionId, normalizedDiscussionState);
   }
 
+  function appendAgentEvent(sessionId: string, draft: Parameters<typeof sessionEventService.appendAgentEvent>[1]) {
+    const event = sessionEventService.appendAgentEvent(sessionId, draft);
+    invocationLaneState.applyEvent(event);
+    return event;
+  }
+
   return {
     hydrate: persistence.hydrate,
     shutdown: persistence.shutdown,
@@ -222,9 +230,12 @@ export function createChatRuntime(config: ChatRuntimeConfig): ChatRuntime {
     clearActiveExecution,
     appendCommandEvent: sessionEventService.appendCommandEvent,
     appendUserEvent: sessionEventService.appendUserEvent,
-    appendAgentEvent: sessionEventService.appendAgentEvent,
+    appendAgentEvent,
     appendSystemEvent: sessionEventService.appendSystemEvent,
     listSessionEvents: sessionEventService.listSessionEvents,
+    getInvocationLane: invocationLaneState.getLaneBySessionAgent,
+    getInvocationLaneTask: invocationLaneState.getTask,
+    listInvocationLanes: invocationLaneState.listLanes,
     buildSessionTimeline: sessionEventService.buildSessionTimeline,
     buildSessionSyncStatus,
     buildSessionCallGraph: sessionEventService.buildSessionCallGraph,

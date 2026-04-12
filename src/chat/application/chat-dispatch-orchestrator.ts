@@ -3,6 +3,7 @@ import { AgentManager } from '../../agent-manager';
 import { SessionService } from './session-service';
 import { ChatRuntime, UserChatSession } from '../runtime/chat-runtime';
 import { generateId } from '../runtime/chat-runtime-types';
+import { buildInvocationLaneKey } from '../domain/invocation-lane';
 import {
   AgentDispatchTask,
   ChatDispatchOrchestrator,
@@ -159,6 +160,96 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         causedBySeq: params.causedBySeq
       });
     }
+  }
+
+  function resolveQueueTaskId(task: PendingAgentDispatchTask | AgentDispatchTask): string {
+    const trackedTask = task as PendingAgentDispatchTask & { __queueTaskId?: string };
+    if (trackedTask.__queueTaskId) {
+      return trackedTask.__queueTaskId;
+    }
+    trackedTask.__queueTaskId = task.taskId || generateId();
+    return trackedTask.__queueTaskId;
+  }
+
+  function appendInvocationQueuedEvent(sessionId: string, task: PendingAgentDispatchTask): void {
+    const queueTaskId = resolveQueueTaskId(task);
+    if (runtime.getInvocationLaneTask(queueTaskId)) {
+      return;
+    }
+    const lane = runtime.getInvocationLane(sessionId, task.agentName);
+    const aheadCount = (lane?.queuedTaskIds.length || 0) + (lane?.runningTaskId ? 1 : 0);
+    runtime.appendAgentEvent(sessionId, {
+      eventType: 'agent_invocation_enqueued',
+      actorName: task.callerAgentName || task.agentName,
+      actorId: task.callerAgentName || task.agentName,
+      payload: {
+        queueTaskId,
+        laneKey: buildInvocationLaneKey(sessionId, task.agentName),
+        agentName: task.agentName,
+        taskId: task.taskId,
+        dispatchKind: task.dispatchKind,
+        callerAgentName: task.callerAgentName,
+        calleeAgentName: task.calleeAgentName,
+        aheadCount
+      }
+    });
+  }
+
+  function appendInvocationStartedEvent(sessionId: string, task: PendingAgentDispatchTask, executionId?: string): void {
+    const queueTaskId = resolveQueueTaskId(task);
+    const laneTask = runtime.getInvocationLaneTask(queueTaskId);
+    runtime.appendAgentEvent(sessionId, {
+      eventType: 'agent_invocation_started',
+      actorName: task.agentName,
+      actorId: task.agentName,
+      payload: {
+        queueTaskId,
+        laneKey: buildInvocationLaneKey(sessionId, task.agentName),
+        agentName: task.agentName,
+        taskId: task.taskId,
+        dispatchKind: task.dispatchKind,
+        executionId,
+        waitedMs: laneTask ? Math.max(0, Date.now() - laneTask.queuedAt) : 0
+      }
+    });
+  }
+
+  function appendInvocationSettledEvent(
+    sessionId: string,
+    task: PendingAgentDispatchTask,
+    outcome: 'completed' | 'failed' | 'cancelled',
+    error?: string
+  ): void {
+    runtime.appendAgentEvent(sessionId, {
+      eventType: outcome === 'completed'
+        ? 'agent_invocation_completed'
+        : outcome === 'failed'
+          ? 'agent_invocation_failed'
+          : 'agent_invocation_cancelled',
+      actorName: task.agentName,
+      actorId: task.agentName,
+      payload: {
+        queueTaskId: resolveQueueTaskId(task),
+        laneKey: buildInvocationLaneKey(sessionId, task.agentName),
+        agentName: task.agentName,
+        taskId: task.taskId,
+        dispatchKind: task.dispatchKind,
+        error
+      }
+    });
+  }
+
+  function groupTasksByAgent(tasks: PendingAgentDispatchTask[]): PendingAgentDispatchTask[][] {
+    const grouped = new Map<string, PendingAgentDispatchTask[]>();
+    const orderedAgents: string[] = [];
+    for (const task of tasks) {
+      if (!grouped.has(task.agentName)) {
+        grouped.set(task.agentName, []);
+        orderedAgents.push(task.agentName);
+      }
+      grouped.get(task.agentName)!.push(task);
+    }
+    return orderedAgents.map(agentName => grouped.get(agentName)!);
   }
 
   function collectEligibleMentions(message: string, session: UserChatSession): MentionCollectionResult {
@@ -631,18 +722,22 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
     return null;
   }
 
-  async function executeAgentTurn(params: ExecuteAgentTurnParams): Promise<ExecuteAgentTurnResult> {
+  async function executeLaneTurn(params: ExecuteAgentTurnParams): Promise<ExecuteAgentTurnResult> {
     const { userKey, session, initialTasks, stream, onThinking, onTextDelta, onMessage, shouldContinue, signal } = params;
     const queue: PendingAgentDispatchTask[] = Array.isArray(params.pendingTasks)
       ? params.pendingTasks.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' }))
       : initialTasks.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' }));
     const aiMessages: Message[] = [];
+    const crossLanePendingTasks: PendingAgentDispatchTask[] = [];
     const callCounts = new Map<string, number>();
     const { agentChainMaxHops, agentChainMaxCallsPerAgent, discussionMode } = runtime.buildSessionResponse(session);
     let chainedCalls = 0;
     let streamStopped = false;
-    let sawVisibleMessage = false;
     let stopped: ExecuteAgentTurnResult['stopped'];
+
+    for (const queuedTask of queue) {
+      appendInvocationQueuedEvent(session.id, queuedTask);
+    }
 
     const canContinue = () => shouldContinue ? shouldContinue() : true;
     const resolveExecutionId = (): string | null => {
@@ -671,25 +766,13 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       return {
         scope,
         currentAgent,
-        resumeAvailable: scope === 'current_agent' && queue.length > 0
+        resumeAvailable: scope === 'current_agent' && (queue.length > 0 || crossLanePendingTasks.length > 0)
       };
     };
 
     while (true) {
       if (queue.length === 0) {
-        if (streamStopped) {
-          break;
-        }
-
-        const overdueReviewTasks = buildOverdueInvocationReviewTasks({
-          userKey,
-          session,
-          now: Date.now()
-        });
-        if (overdueReviewTasks.length === 0) {
-          break;
-        }
-        queue.push(...overdueReviewTasks);
+        break;
       }
 
       if (!canContinue()) {
@@ -740,6 +823,7 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       if (executionId) {
         runtime.updateActiveExecutionAgent(userKey, session.id, executionId, task.agentName);
       }
+      appendInvocationStartedEvent(session.id, task, executionId || undefined);
       const taskLifecycleId = task.taskId || generateId();
       const taskStartEvent = appendDispatchTaskCreatedEvent({
         sessionId: session.id,
@@ -785,6 +869,7 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
 
       const stopMode = consumeExplicitStopMode();
       if (stopMode === 'current_agent' || stopMode === 'session') {
+        appendInvocationSettledEvent(session.id, task, 'cancelled');
         if (stopMode === 'session') {
           queue.length = 0;
         }
@@ -795,6 +880,7 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       }
 
       if (signal?.aborted && visibleMessages.length === 0) {
+        appendInvocationSettledEvent(session.id, task, 'cancelled');
         appendThinkingEvent({
           sessionId: session.id,
           taskId: taskLifecycleId,
@@ -809,6 +895,8 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${task.agentName} stage=stream_stop_during_task reason=client_disconnect`);
         break;
       }
+
+      appendInvocationSettledEvent(session.id, task, 'completed');
 
       for (const rawMessage of visibleMessages) {
         const { mentions: referenceMentions } = collectEligibleMentions(rawMessage.text || '', session);
@@ -879,7 +967,6 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         let reviewMessageEvent: { eventId: string; seq: number } | null = null;
 
         if (!shouldSuppressMessage) {
-          sawVisibleMessage = true;
           sessionService.appendMessage(session, message);
           const appendedEvent = appendAgentMessageCreatedEvent({
             sessionId: session.id,
@@ -901,7 +988,6 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         }
         if (invocationReviewResult?.visibleMessage) {
           const visibleReviewMessage = invocationReviewResult.visibleMessage;
-          sawVisibleMessage = true;
           sessionService.appendMessage(session, visibleReviewMessage);
           const appendedEvent = appendAgentMessageCreatedEvent({
             sessionId: session.id,
@@ -1008,14 +1094,21 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
             tasks: pendingMentionsToQueue,
             defaultActorName: message.sender || task.agentName,
             parentTaskId: task.taskId,
-            causedByEventId: dispatchCauseEvent?.eventId,
-            causedBySeq: dispatchCauseEvent?.seq
-          });
-          streamStopped = true;
-          queue.unshift(...pendingMentionsToQueue);
-          runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${task.agentName} stage=stream_stop_after_message reason=client_disconnect`);
-          break;
+          causedByEventId: dispatchCauseEvent?.eventId,
+          causedBySeq: dispatchCauseEvent?.seq
+        });
+        streamStopped = true;
+        for (const pendingTask of pendingMentionsToQueue.reverse()) {
+          appendInvocationQueuedEvent(session.id, pendingTask);
+          if (pendingTask.agentName === task.agentName) {
+            queue.unshift(pendingTask);
+          } else {
+            crossLanePendingTasks.unshift(pendingTask);
+          }
         }
+        runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${task.agentName} stage=stream_stop_after_message reason=client_disconnect`);
+        break;
+      }
 
         const dispatchCauseEvent = reviewMessageEvent || messageCreatedEvent;
         appendDispatchRequestedEvents({
@@ -1026,7 +1119,14 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           causedByEventId: dispatchCauseEvent?.eventId,
           causedBySeq: dispatchCauseEvent?.seq
         });
-        queue.push(...pendingMentionsToQueue);
+        for (const pendingTask of pendingMentionsToQueue) {
+          appendInvocationQueuedEvent(session.id, pendingTask);
+          if (pendingTask.agentName === task.agentName) {
+            queue.push(pendingTask);
+          } else {
+            crossLanePendingTasks.push(pendingTask);
+          }
+        }
 
         if (streamStopped) {
           break;
@@ -1038,11 +1138,74 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       }
     }
 
-    if (!streamStopped && discussionMode === 'peer' && sawVisibleMessage) {
+    const result: ExecuteAgentTurnResult = {
+      aiMessages,
+      pendingTasks: (streamStopped ? [...queue, ...crossLanePendingTasks] : crossLanePendingTasks)
+        .map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' }))
+    };
+    if (stopped) {
+      result.stopped = stopped;
+    }
+    return result;
+  }
+
+  async function executeAgentTurn(params: ExecuteAgentTurnParams): Promise<ExecuteAgentTurnResult> {
+    const { userKey, session } = params;
+    const aiMessages: Message[] = [];
+    const normalizedPendingTasks: PendingAgentDispatchTask[] = Array.isArray(params.pendingTasks)
+      ? params.pendingTasks.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' }))
+      : params.initialTasks.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' }));
+    let pendingTasks = normalizedPendingTasks;
+    let stopped: ExecuteAgentTurnResult['stopped'];
+    let sawVisibleMessage = false;
+
+    while (true) {
+      if (pendingTasks.length === 0) {
+        const overdueReviewTasks = buildOverdueInvocationReviewTasks({
+          userKey,
+          session,
+          now: Date.now()
+        });
+        if (overdueReviewTasks.length === 0) {
+          break;
+        }
+        pendingTasks = overdueReviewTasks.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' }));
+      }
+
+      const laneTaskGroups = params.executionId
+        ? [pendingTasks]
+        : groupTasksByAgent(pendingTasks);
+      pendingTasks = [];
+      const laneResults = await Promise.all(laneTaskGroups.map(tasks => executeLaneTurn({
+        ...params,
+        initialTasks: [],
+        pendingTasks: tasks
+      })));
+
+      for (const laneResult of laneResults) {
+        if (laneResult.aiMessages.length > 0) {
+          sawVisibleMessage = true;
+          aiMessages.push(...laneResult.aiMessages);
+        }
+        if (laneResult.pendingTasks.length > 0) {
+          pendingTasks.push(...laneResult.pendingTasks);
+        }
+        if (!stopped && laneResult.stopped) {
+          stopped = laneResult.stopped;
+        }
+      }
+
+      if (stopped) {
+        break;
+      }
+    }
+
+    const { discussionMode } = runtime.buildSessionResponse(session);
+    if (!stopped && discussionMode === 'peer' && sawVisibleMessage) {
       const nextDiscussionState = resolvePeerDiscussionStateAfterTurn({
         discussionMode,
         sawVisibleMessage,
-        hasPendingExplicitContinuation: queue.some(task => task.dispatchKind === 'explicit_chained')
+        hasPendingExplicitContinuation: pendingTasks.some(task => task.dispatchKind === 'explicit_chained')
       });
       if (nextDiscussionState === 'active') {
         sessionService.setDiscussionState(session, nextDiscussionState);
@@ -1052,14 +1215,11 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       }
     }
 
-    const result: ExecuteAgentTurnResult = {
+    return {
       aiMessages,
-      pendingTasks: streamStopped ? queue.map(task => ({ ...task, dispatchKind: runtime.normalizeDispatchKind(task.dispatchKind) || 'initial' })) : []
+      pendingTasks,
+      ...(stopped ? { stopped } : {})
     };
-    if (stopped) {
-      result.stopped = stopped;
-    }
-    return result;
   }
 
   return {
