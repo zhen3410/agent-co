@@ -1,7 +1,6 @@
 import * as http from 'http';
 import { applyAdminCorsHeaders } from '../../shared/http/cors';
 import { sendJson } from '../../shared/http/json';
-import { serveStaticFile } from '../../shared/http/static-files';
 import { AgentAdminService } from '../application/agent-admin-service';
 import { GroupAdminService } from '../application/group-admin-service';
 import { ModelConnectionAdminService } from '../application/model-connection-admin-service';
@@ -31,16 +30,6 @@ export function createAuthAdminServer(deps: CreateAuthAdminServerDependencies): 
     if (method === 'OPTIONS') {
       res.writeHead(200);
       res.end();
-      return;
-    }
-
-    if (method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
-      serveStaticFile(res, {
-        rootDir: deps.runtime.publicDir,
-        filePath: 'admin.html',
-        contentType: 'text/html; charset=utf-8',
-        onNotFound: response => sendJson(response, 404, { error: 'Not Found' })
-      });
       return;
     }
 
