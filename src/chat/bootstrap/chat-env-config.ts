@@ -9,6 +9,7 @@ export interface CreateChatEnvConfigOptions {
 
 export interface ChatEnvConfig {
   port: number;
+  host: string;
   defaultUserName: string;
   auth: {
     enabled: boolean;
@@ -64,6 +65,7 @@ export function createChatEnvConfig(options: CreateChatEnvConfigOptions): ChatEn
 
   return {
     port: Number(env.PORT || 3002),
+    host: env.HOST || '127.0.0.1',
     defaultUserName: '用户',
     auth: {
       enabled: env.AGENT_CO_AUTH_ENABLED !== 'false',
@@ -82,7 +84,7 @@ export function createChatEnvConfig(options: CreateChatEnvConfigOptions): ChatEn
       publicDir: path.join(serverDirname, '..', 'public')
     },
     redis: {
-      url: 'redis://127.0.0.1:6379',
+      url: env.REDIS_URL || 'redis://127.0.0.1:6379',
       configKey: 'agent-co:config',
       defaultChatSessionsKey,
       persistDebounceMs: 500,

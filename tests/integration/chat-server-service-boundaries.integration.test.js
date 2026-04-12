@@ -286,24 +286,16 @@ test('显式停止结果会携带 stopped 元数据', () => {
   assert.equal(stoppedTypeAlias.type.getText(), 'ChatExecutionStoppedMetadata', 'StoppedExecutionMetadata 应复用共享 ChatExecutionStoppedMetadata');
 });
 
-test('stream/SSE 返回契约暴露 stopped 元数据', () => {
+test('ChatService 契约已移除 legacy stream/SSE 接口', () => {
   const filePath = path.join(applicationDir, 'chat-service-types.ts');
   const chatServiceInterface = getInterfaceNode(filePath, 'ChatService');
   assert.ok(chatServiceInterface, 'chat-service-types.ts 应定义 ChatService interface');
 
   const streamMethod = getMethodSignature(chatServiceInterface, 'streamMessage');
-  assert.ok(streamMethod, 'ChatService 应定义 streamMessage');
-  assert.ok(streamMethod.type && ts.isTypeReferenceNode(streamMethod.type), 'streamMessage 应返回 Promise 类型');
-  assert.equal(streamMethod.type.typeName.getText(), 'Promise', 'streamMessage 返回值应为 Promise');
-  assert.ok(streamMethod.type.typeArguments?.[0] && ts.isTypeReferenceNode(streamMethod.type.typeArguments[0]), 'streamMessage Promise 泛型参数应复用命名结果类型');
-  assert.equal(streamMethod.type.typeArguments[0].typeName.getText(), 'StreamMessageResult', 'streamMessage 返回值应使用 StreamMessageResult');
+  assert.equal(streamMethod, null, 'ChatService 不应再暴露 streamMessage');
 
   const streamResultInterface = getInterfaceNode(filePath, 'StreamMessageResult');
-  assert.ok(streamResultInterface, 'chat-service-types.ts 应定义 StreamMessageResult interface');
-  const stoppedMember = streamResultInterface.members.find(member => ts.isPropertySignature(member) && member.name.getText() === 'stopped');
-  assert.ok(stoppedMember, 'StreamMessageResult 应包含 stopped 字段');
-  assert.equal(stoppedMember.questionToken !== undefined, true, 'StreamMessageResult.stopped 应为可选');
-  assert.equal(stoppedMember.type.getText(), 'StoppedExecutionMetadata', 'StreamMessageResult.stopped 应使用 StoppedExecutionMetadata');
+  assert.equal(streamResultInterface, null, 'chat-service-types.ts 不应保留 StreamMessageResult');
 });
 
 test('stopExecution 请求契约禁止 none（运行时校验在后续任务实现）', () => {

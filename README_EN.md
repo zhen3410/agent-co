@@ -39,6 +39,20 @@ This repository ships two HTTP services:
 The chat service serves the main UI from `public/index.html`.
 The auth/admin service serves the admin page from `public-auth/admin.html`.
 
+#### Chat read/write architecture
+
+- **HTTP command ingress**: `POST /api/chat`, `POST /api/chat-resume`, `POST /api/chat-summary`
+- **Append-only event log**: session events are the single source of truth
+- **Projection queries**:
+  - `GET /api/sessions/:id/events`
+  - `GET /api/sessions/:id/timeline`
+  - `GET /api/sessions/:id/call-graph`
+- **WebSocket display egress**: `/api/ws/session-events`
+- **Frontend rendering rule**: the UI renders projections only; agent output first lands in canonical session events, then **WebSocket acts as an invalidation/buffer channel** and the **HTTP timeline refresh remains authoritative**. After reconnect, the browser prefers `timeline?afterSeq=` incremental catch-up and falls back to a full refresh when the incremental tail looks inconsistent.
+- **Docs**:
+  - Runtime event model & sync contract: `docs/architecture/event-log-chat-runtime.md`
+  - Long-session strategy (paging/archival/API boundaries): `docs/architecture/event-log-long-session-strategy.md`
+
 ### Quick Start
 
 #### 1. Install dependencies
@@ -115,6 +129,22 @@ npm run test:unit       # Run unit tests
 npm run test:fast       # Fast run (unit + key integration)
 npm run deploy:one-click  # One-click deploy (Redis + systemd)
 ```
+
+### Docker Compose
+
+The project includes a single-image, multi-container Docker Compose setup:
+
+```bash
+docker compose up --build
+```
+
+After startup:
+
+- Chat service: `http://localhost:3002`
+- Auth/admin service: `http://localhost:3003`
+- Redis: `localhost:6379`
+
+Compose reuses the same app image for both `chat` and `auth`, and runs Redis as a separate container. Inside the Compose network, chat reaches auth via `AUTH_ADMIN_BASE_URL=http://auth:3003` and Redis via `REDIS_URL=redis://redis:6379`.
 
 ### Project Structure
 
@@ -218,12 +248,21 @@ redis-cli HSET agent-co:config chat_sessions_key agent-co:chat:sessions:v1
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/chat` | POST | Send message (sync response) |
-| `/api/chat-stream` | POST | Send message (SSE streaming response) |
+| `/api/chat` | POST | Send chat command (accepted response, async execution) |
 | `/api/chat-resume` | POST | Resume interrupted pending chain tasks |
 | `/api/chat-summary` | POST | Manual peer discussion summary (peer mode only) |
 | `/api/history` | GET | Get chat history and session info |
 | `/api/clear` | POST | Clear chat history |
+
+#### Events & Projections
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/sessions/:id/events` | GET | List raw session events (supports `afterSeq`) |
+| `/api/sessions/:id/timeline` | GET | Get the session timeline projection |
+| `/api/sessions/:id/call-graph` | GET | Get the session call-graph projection |
+| `/api/sessions/:id/sync-status` | GET | Read lightweight session event/timeline sync diagnostics (observability only, not client truth) |
+| `/api/ws/session-events` | WS | Subscribe to session events with reconnect/catch-up |
 
 #### Agents
 
@@ -408,7 +447,7 @@ API connections are stored in `data/api-connections.json`, supporting any OpenAI
 
 Agents can be configured to run via:
 
-1. **CLI mode** — Invokes Claude CLI or Codex CLI as subprocess with streaming support
+1. **CLI mode** — Invokes Claude CLI or Codex CLI as subprocess
 2. **API mode** — Calls OpenAI-compatible API endpoints with configurable model parameters
 
 #### Agent Chaining
@@ -475,19 +514,14 @@ AI responses support `cc_rich` code blocks:
 - **Route B**: Extract `cc_rich` blocks from AI response text
 - Blocks from both routes are merged (deduplicated by id)
 
-### Streaming Response (SSE)
+### Realtime update model
 
-`/api/chat-stream` supports Server-Sent Events:
-
-| Event | Data |
-|-------|------|
-| `user_message` | User message object |
-| `agent_thinking` | `{ agent: string }` |
-| `agent_delta` | `{ agent: string, delta: string }` |
-| `agent_message` | AI message object |
-| `notice` | `{ notice: string }` |
-| `done` | `{ currentAgent: string \| null }` |
-| `error` | `{ error: string }` |
+- `POST /api/chat` only writes the command and returns an accepted response
+- agent execution lifecycle is written into the session event log
+- the frontend subscribes through `/api/ws/session-events`
+- the frontend refreshes authoritative display data from `/api/sessions/:id/timeline`
+- after reconnect, the client first tries incremental catch-up via `/api/sessions/:id/timeline?afterSeq=...`, then falls back to a full refresh when the tail is inconsistent
+- the call graph is derived from the same event stream via `/api/sessions/:id/call-graph`
 
 ### Session Mechanism
 

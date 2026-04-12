@@ -36,6 +36,131 @@ export interface ChatDispatchOrchestratorDependencies {
 export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDependencies): ChatDispatchOrchestrator {
   const { runtime, sessionService, agentManager, runAgentTask } = deps;
 
+  function appendDispatchTaskCreatedEvent(params: {
+    sessionId: string;
+    taskId: string;
+    dispatchKind: PendingAgentDispatchTask['dispatchKind'];
+    actorName: string;
+    callerAgentName?: string;
+    calleeAgentName?: string;
+    parentTaskId?: string;
+    reason?: string;
+    causedByEventId?: string;
+    causedBySeq?: number;
+  }) {
+    return runtime.appendAgentEvent(params.sessionId, {
+      eventType: 'dispatch_task_created',
+      actorName: params.actorName,
+      actorId: params.actorName,
+      payload: {
+        taskId: params.taskId,
+        dispatchKind: params.dispatchKind,
+        callerAgentName: params.callerAgentName,
+        calleeAgentName: params.calleeAgentName,
+        parentTaskId: params.parentTaskId,
+        reason: params.reason
+      },
+      correlationId: params.causedByEventId,
+      causationId: params.causedByEventId,
+      causedByEventId: params.causedByEventId,
+      causedBySeq: params.causedBySeq
+    });
+  }
+
+  function appendDispatchTaskCompletedEvent(params: {
+    sessionId: string;
+    taskId: string;
+    actorName: string;
+    callerAgentName?: string;
+    calleeAgentName?: string;
+    outcome: 'completed' | 'failed';
+    reason?: string;
+  }) {
+    return runtime.appendAgentEvent(params.sessionId, {
+      eventType: 'dispatch_task_completed',
+      actorName: params.actorName,
+      actorId: params.actorName,
+      payload: {
+        taskId: params.taskId,
+        callerAgentName: params.callerAgentName,
+        calleeAgentName: params.calleeAgentName,
+        outcome: params.outcome,
+        reason: params.reason
+      }
+    });
+  }
+
+  function appendThinkingEvent(params: {
+    sessionId: string;
+    taskId: string;
+    agentName: string;
+    dispatchKind: PendingAgentDispatchTask['dispatchKind'];
+    status: 'message_thinking_started' | 'message_thinking_finished' | 'message_thinking_cancelled';
+    causedByEventId?: string;
+    causedBySeq?: number;
+  }) {
+    return runtime.appendAgentEvent(params.sessionId, {
+      eventType: params.status,
+      actorName: params.agentName,
+      actorId: params.agentName,
+      payload: {
+        taskId: params.taskId,
+        dispatchKind: params.dispatchKind,
+        agentName: params.agentName
+      },
+      correlationId: params.causedByEventId,
+      causationId: params.causedByEventId,
+      causedByEventId: params.causedByEventId,
+      causedBySeq: params.causedBySeq
+    });
+  }
+
+  function appendAgentMessageCreatedEvent(params: {
+    sessionId: string;
+    message: Message;
+    fallbackActorName: string;
+    causedByEventId?: string;
+    causedBySeq?: number;
+  }) {
+    const actorName = params.message.sender || params.fallbackActorName;
+    return runtime.appendAgentEvent(params.sessionId, {
+      eventType: 'agent_message_created',
+      actorName,
+      actorId: actorName,
+      payload: {
+        message: params.message
+      },
+      correlationId: params.causedByEventId,
+      causationId: params.causedByEventId,
+      causedByEventId: params.causedByEventId,
+      causedBySeq: params.causedBySeq
+    });
+  }
+
+  function appendDispatchRequestedEvents(params: {
+    sessionId: string;
+    tasks: PendingAgentDispatchTask[];
+    defaultActorName: string;
+    parentTaskId?: string;
+    causedByEventId?: string;
+    causedBySeq?: number;
+  }): void {
+    for (const pendingTask of params.tasks) {
+      appendDispatchTaskCreatedEvent({
+        sessionId: params.sessionId,
+        taskId: pendingTask.taskId || generateId(),
+        dispatchKind: pendingTask.dispatchKind,
+        actorName: pendingTask.callerAgentName || params.defaultActorName,
+        callerAgentName: pendingTask.callerAgentName || params.defaultActorName,
+        calleeAgentName: pendingTask.calleeAgentName || pendingTask.agentName,
+        parentTaskId: params.parentTaskId,
+        reason: 'dispatch_requested',
+        causedByEventId: params.causedByEventId,
+        causedBySeq: params.causedBySeq
+      });
+    }
+  }
+
   function collectEligibleMentions(message: string, session: UserChatSession): MentionCollectionResult {
     const allMentions = agentManager.extractMentions(message);
     const enabledSet = new Set(sessionService.getEnabledAgents(session));
@@ -293,11 +418,32 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       const review = parseInvocationReviewResult(message.text || '');
       if (!review) {
         runtime.markInvocationTaskFailed(userKey, session.id, invocationTask.id, 'invalid_review_result');
+        appendDispatchTaskCompletedEvent({
+          sessionId: session.id,
+          taskId: invocationTask.id,
+          actorName: invocationTask.callerAgentName,
+          callerAgentName: invocationTask.callerAgentName,
+          calleeAgentName: invocationTask.calleeAgentName,
+          outcome: 'failed',
+          reason: 'invalid_review_result'
+        });
         return {
           suppressMessage: true,
           pendingTasks: []
         };
       }
+      runtime.appendAgentEvent(session.id, {
+        eventType: 'agent_review_submitted',
+        actorName: invocationTask.callerAgentName,
+        actorId: invocationTask.callerAgentName,
+        payload: {
+          taskId: invocationTask.id,
+          reviewAction: review.action,
+          reviewRawText: message.text || '',
+          callerAgentName: invocationTask.callerAgentName,
+          calleeAgentName: invocationTask.calleeAgentName
+        }
+      });
       const visibleReviewMessage = buildInvocationReviewVisibleMessage({
         invocationTaskId: invocationTask.id,
         callerAgentName: invocationTask.callerAgentName,
@@ -313,6 +459,14 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           reviewAction: 'accept',
           completedAt: Date.now()
         });
+        appendDispatchTaskCompletedEvent({
+          sessionId: session.id,
+          taskId: invocationTask.id,
+          actorName: invocationTask.callerAgentName,
+          callerAgentName: invocationTask.callerAgentName,
+          calleeAgentName: invocationTask.calleeAgentName,
+          outcome: 'completed'
+        });
         return {
           suppressMessage: true,
           pendingTasks: [],
@@ -326,6 +480,15 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         maxRetries: INVOCATION_TASK_MAX_RETRIES
       })) {
         runtime.markInvocationTaskFailed(userKey, session.id, invocationTask.id, 'retry_limit_exceeded');
+        appendDispatchTaskCompletedEvent({
+          sessionId: session.id,
+          taskId: invocationTask.id,
+          actorName: invocationTask.callerAgentName,
+          callerAgentName: invocationTask.callerAgentName,
+          calleeAgentName: invocationTask.calleeAgentName,
+          outcome: 'failed',
+          reason: 'retry_limit_exceeded'
+        });
         return {
           suppressMessage: true,
           pendingTasks: [],
@@ -344,6 +507,15 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         maxFollowUps: INVOCATION_TASK_MAX_FOLLOW_UPS
       })) {
         runtime.markInvocationTaskFailed(userKey, session.id, invocationTask.id, 'follow_up_limit_exceeded');
+        appendDispatchTaskCompletedEvent({
+          sessionId: session.id,
+          taskId: invocationTask.id,
+          actorName: invocationTask.callerAgentName,
+          callerAgentName: invocationTask.callerAgentName,
+          calleeAgentName: invocationTask.calleeAgentName,
+          outcome: 'failed',
+          reason: 'follow_up_limit_exceeded'
+        });
         return {
           suppressMessage: true,
           pendingTasks: [],
@@ -428,6 +600,18 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         lastReplyMessageId: message.id,
         reviewVersion: nextReviewVersion
       };
+      runtime.appendAgentEvent(session.id, {
+        eventType: 'agent_review_requested',
+        actorName: reviewTask.callerAgentName,
+        actorId: reviewTask.callerAgentName,
+        payload: {
+          taskId: reviewTask.id,
+          callerAgentName: reviewTask.callerAgentName,
+          calleeAgentName: reviewTask.calleeAgentName,
+          reviewMode: 'caller_review',
+          reviewVersion: reviewTask.reviewVersion
+        }
+      });
       return {
         suppressMessage: false,
         pendingTasks: [
@@ -556,6 +740,26 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       if (executionId) {
         runtime.updateActiveExecutionAgent(userKey, session.id, executionId, task.agentName);
       }
+      const taskLifecycleId = task.taskId || generateId();
+      const taskStartEvent = appendDispatchTaskCreatedEvent({
+        sessionId: session.id,
+        taskId: taskLifecycleId,
+        dispatchKind: task.dispatchKind,
+        actorName: task.agentName,
+        callerAgentName: task.callerAgentName || task.agentName,
+        calleeAgentName: task.calleeAgentName || task.agentName,
+        parentTaskId: task.taskId,
+        reason: 'task_start'
+      });
+      const thinkingStartedEvent = appendThinkingEvent({
+        sessionId: session.id,
+        taskId: taskLifecycleId,
+        agentName: task.agentName,
+        dispatchKind: task.dispatchKind,
+        status: 'message_thinking_started',
+        causedByEventId: taskStartEvent.eventId,
+        causedBySeq: taskStartEvent.seq
+      });
       onThinking?.(task.agentName);
 
       const visibleMessages = await runAgentTask({
@@ -568,6 +772,15 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         onTextDelta: onTextDelta
           ? (delta) => onTextDelta(task.agentName, delta)
           : undefined
+      });
+      appendThinkingEvent({
+        sessionId: session.id,
+        taskId: taskLifecycleId,
+        agentName: task.agentName,
+        dispatchKind: task.dispatchKind,
+        status: 'message_thinking_finished',
+        causedByEventId: thinkingStartedEvent.eventId,
+        causedBySeq: thinkingStartedEvent.seq
       });
 
       const stopMode = consumeExplicitStopMode();
@@ -582,6 +795,15 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
       }
 
       if (signal?.aborted && visibleMessages.length === 0) {
+        appendThinkingEvent({
+          sessionId: session.id,
+          taskId: taskLifecycleId,
+          agentName: task.agentName,
+          dispatchKind: task.dispatchKind,
+          status: 'message_thinking_cancelled',
+          causedByEventId: thinkingStartedEvent.eventId,
+          causedBySeq: thinkingStartedEvent.seq
+        });
         queue.unshift(task);
         streamStopped = true;
         runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${task.agentName} stage=stream_stop_during_task reason=client_disconnect`);
@@ -653,10 +875,23 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           message
         });
         const shouldSuppressMessage = invocationReviewResult?.suppressMessage === true;
+        let messageCreatedEvent: { eventId: string; seq: number } | null = null;
+        let reviewMessageEvent: { eventId: string; seq: number } | null = null;
 
         if (!shouldSuppressMessage) {
           sawVisibleMessage = true;
           sessionService.appendMessage(session, message);
+          const appendedEvent = appendAgentMessageCreatedEvent({
+            sessionId: session.id,
+            message,
+            fallbackActorName: task.agentName,
+            causedByEventId: thinkingStartedEvent.eventId,
+            causedBySeq: thinkingStartedEvent.seq
+          });
+          messageCreatedEvent = {
+            eventId: appendedEvent.eventId,
+            seq: appendedEvent.seq
+          };
           aiMessages.push(message);
           onMessage?.(message);
           if (stream) {
@@ -668,6 +903,17 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
           const visibleReviewMessage = invocationReviewResult.visibleMessage;
           sawVisibleMessage = true;
           sessionService.appendMessage(session, visibleReviewMessage);
+          const appendedEvent = appendAgentMessageCreatedEvent({
+            sessionId: session.id,
+            message: visibleReviewMessage,
+            fallbackActorName: task.agentName,
+            causedByEventId: thinkingStartedEvent.eventId,
+            causedBySeq: thinkingStartedEvent.seq
+          });
+          reviewMessageEvent = {
+            eventId: appendedEvent.eventId,
+            seq: appendedEvent.seq
+          };
           aiMessages.push(visibleReviewMessage);
           onMessage?.(visibleReviewMessage);
           if (stream) {
@@ -756,12 +1002,30 @@ export function createChatDispatchOrchestrator(deps: ChatDispatchOrchestratorDep
         }
 
         if (!canContinue()) {
+          const dispatchCauseEvent = reviewMessageEvent || messageCreatedEvent;
+          appendDispatchRequestedEvents({
+            sessionId: session.id,
+            tasks: pendingMentionsToQueue,
+            defaultActorName: message.sender || task.agentName,
+            parentTaskId: task.taskId,
+            causedByEventId: dispatchCauseEvent?.eventId,
+            causedBySeq: dispatchCauseEvent?.seq
+          });
           streamStopped = true;
           queue.unshift(...pendingMentionsToQueue);
           runtime.appendOperationalLog('info', 'chat-exec', `session=${session.id} execution=${executionId || 'unknown'} agent=${task.agentName} stage=stream_stop_after_message reason=client_disconnect`);
           break;
         }
 
+        const dispatchCauseEvent = reviewMessageEvent || messageCreatedEvent;
+        appendDispatchRequestedEvents({
+          sessionId: session.id,
+          tasks: pendingMentionsToQueue,
+          defaultActorName: message.sender || task.agentName,
+          parentTaskId: task.taskId,
+          causedByEventId: dispatchCauseEvent?.eventId,
+          causedBySeq: dispatchCauseEvent?.seq
+        });
         queue.push(...pendingMentionsToQueue);
 
         if (streamStopped) {

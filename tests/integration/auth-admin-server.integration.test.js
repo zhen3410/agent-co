@@ -1320,6 +1320,7 @@ test('auth admin runtime 会在 token 规范化后对空白值回退默认 token
 
   const runtimeFromWhitespace = createAuthAdminRuntime({
     port: 3003,
+    host: '127.0.0.1',
     adminToken: '   ',
     dataFile: '/tmp/users.json',
     defaultPassword: 'Admin1234!@#',
@@ -1331,6 +1332,7 @@ test('auth admin runtime 会在 token 规范化后对空白值回退默认 token
 
   const runtimeFromQuotedEmpty = createAuthAdminRuntime({
     port: 3003,
+    host: '127.0.0.1',
     adminToken: ' "" ',
     dataFile: '/tmp/users.json',
     defaultPassword: 'Admin1234!@#',
@@ -1339,6 +1341,23 @@ test('auth admin runtime 会在 token 规范化后对空白值回退默认 token
     publicDir: '/tmp/public-auth'
   });
   assert.equal(runtimeFromQuotedEmpty.adminToken, 'change-me-in-production');
+});
+
+test('auth admin runtime 会保留 AUTH_ADMIN_HOST 配置', () => {
+  const { createAuthAdminRuntime } = require('../../dist/admin/runtime/auth-admin-runtime.js');
+
+  const runtime = createAuthAdminRuntime({
+    port: 3003,
+    host: '0.0.0.0',
+    adminToken: 'plain-admin-token-123',
+    dataFile: '/tmp/users.json',
+    defaultPassword: 'Admin1234!@#',
+    agentDataFile: '/tmp/agents.json',
+    nodeEnv: 'test',
+    publicDir: '/tmp/public-auth'
+  });
+
+  assert.equal(runtime.host, '0.0.0.0');
 });
 
 

@@ -13,11 +13,10 @@ import type {
   ActiveExecutionRegistration,
   ChatService,
   ChatServiceDependencies,
-  StopExecutionRequest,
-  StreamMessageCallbacks
+  StopExecutionRequest
 } from './chat-service-types';
 
-export type { ChatService, ChatServiceDependencies, StreamMessageCallbacks } from './chat-service-types';
+export type { ChatService, ChatServiceDependencies } from './chat-service-types';
 
 export class ChatServiceError extends AppError {
   constructor(message: string, code: AppErrorCode, statusCode?: number) {
@@ -36,15 +35,6 @@ function createChatServiceError(message: string, error: Pick<AppErrorOptions, 'c
 
 function buildSendContext(runtime: ChatRuntime, userKey: string, sessionId: string): string {
   return `${userKey}::${sessionId}`;
-}
-
-function mapMessagesFromHistory(history: Message[], messages: Message[]): Message[] {
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return [];
-  }
-
-  const enrichedById = new Map(enrichMessagesWithCallGraphs(history).map(message => [message.id, message]));
-  return messages.map(message => enrichedById.get(message.id) || message);
 }
 
 function registerChatExecution(runtime: ChatRuntime, userKey: string, sessionId: string): ActiveExecutionRegistration {
@@ -145,18 +135,52 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
     };
 
     sessionService.appendMessage(session, userMessage);
+    const commandEvent = runtime.appendCommandEvent(session.id, {
+      eventType: 'message_thinking_started',
+      actorName: 'chat-service',
+      actorId: userKey,
+      payload: {
+        command: 'chat.send',
+        message: {
+          id: userMessage.id,
+          sender,
+          text: message
+        },
+        mentions,
+        agentsToRespond
+      }
+    });
+    const userEvent = runtime.appendUserEvent(session.id, {
+      eventType: 'user_message_created',
+      actorId: userKey,
+      actorName: sender,
+      payload: {
+        message: userMessage
+      },
+      correlationId: commandEvent.eventId,
+      causationId: commandEvent.eventId,
+      causedByEventId: commandEvent.eventId,
+      causedBySeq: commandEvent.seq
+    });
+
+    const acceptedResponse = {
+      success: true as const,
+      accepted: true as const,
+      session: runtime.buildSessionResponse(session),
+      currentAgent: sessionService.getCurrentAgent(userKey, session.id),
+      latestEventSeq: userEvent.seq,
+      commandEventSeq: commandEvent.seq,
+      userEventSeq: userEvent.seq
+    };
 
     if (agentsToRespond.length === 0) {
       return {
-        success: true as const,
-        userMessage,
-        aiMessages: [],
-        currentAgent: sessionService.getCurrentAgent(userKey, session.id),
+        ...acceptedResponse,
         notice: sessionService.buildNoEnabledAgentsNotice(session, ignoredMentions)
       };
     }
 
-    const { aiMessages } = await dispatchOrchestrator.executeAgentTurn({
+    void dispatchOrchestrator.executeAgentTurn({
       userKey,
       session,
       initialTasks: agentsToRespond.map(agentName => ({
@@ -165,123 +189,15 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
         includeHistory: mentions.length === 0
       })),
       stream: false
+    }).catch((error) => {
+      console.error('[Chat] 异步命令执行失败:', error);
     });
-    const emptyVisibleNotice = aiMessages.length === 0
-      ? `${agentsToRespond.join('、')} 未返回可见消息，请稍后重试或查看日志。`
-      : undefined;
-    const enrichedAiMessages = mapMessagesFromHistory(session.history, aiMessages);
 
     return {
-      success: true as const,
-      userMessage,
-      aiMessages: enrichedAiMessages,
-      currentAgent: sessionService.getCurrentAgent(userKey, session.id),
-      notice: emptyVisibleNotice || (ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined)
+      ...acceptedResponse,
+      notice: ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined
     };
   }
-
-  async function streamMessage(context: { userKey: string }, body: { message: string; sender?: string }, callbacks: StreamMessageCallbacks) {
-    deps.syncAgentsFromStore();
-    const { message, sender: bodySender } = body;
-    const sender = bodySender || deps.defaultUserName;
-    if (!message) {
-      throw new ChatServiceError('缺少 message 字段', APP_ERROR_CODES.VALIDATION_FAILED);
-    }
-
-    const { userKey, session } = sessionService.resolveChatSession(context);
-    if (sessionService.isSessionSummaryInProgress(userKey, session)) {
-      throw new ChatServiceError('当前会话正在生成总结，暂时不能发送新消息，请稍后再试。', APP_ERROR_CODES.CONFLICT);
-    }
-    const sessionId = buildSendContext(runtime, userKey, session.id);
-    const currentAgent = sessionService.expireInvalidCurrentAgent(userKey, session);
-    sessionService.prepareForIncomingMessage(session);
-
-    console.log(`\n[ChatStream] 会话 ${sessionId.substring(0, 12)}... 用户 ${sender}: ${message}`);
-    const { mentions, ignoredMentions } = dispatchOrchestrator.collectEligibleMentions(message, session);
-    console.log(`[ChatStream] @ 提及: ${mentions.join(', ') || '无'}`);
-
-    const agentsToRespond: string[] = [];
-    if (mentions.length > 0) {
-      agentsToRespond.push(...mentions);
-      sessionService.selectCurrentAgent(userKey, session.id, mentions[0]);
-      console.log(`[ChatStream] 设置当前对话智能体: ${mentions[0]}`);
-    } else if (currentAgent) {
-      agentsToRespond.push(currentAgent);
-      console.log(`[ChatStream] 继续与 ${currentAgent} 对话`);
-    }
-
-    const userMessage: Message = {
-      id: buildMessageId(),
-      role: 'user',
-      sender,
-      text: message,
-      timestamp: Date.now(),
-      mentions: mentions.length > 0 ? mentions : undefined
-    };
-    sessionService.appendMessage(session, userMessage);
-    callbacks.onUserMessage(userMessage);
-
-    if (agentsToRespond.length === 0) {
-      return {
-        currentAgent: sessionService.getCurrentAgent(userKey, session.id),
-        notice: sessionService.buildNoEnabledAgentsNotice(session, ignoredMentions),
-        hadVisibleMessages: false
-      };
-    }
-
-    const execution = registerChatExecution(runtime, userKey, session.id);
-    const { executionId, abortController: executionController } = execution;
-    const forwardAbort = () => executionController.abort();
-    if (callbacks.signal) {
-      if (callbacks.signal.aborted) {
-        executionController.abort();
-      } else {
-        callbacks.signal.addEventListener('abort', forwardAbort, { once: true });
-      }
-    }
-
-    const undeliveredMessages: Message[] = [];
-    try {
-      const executionResult = await dispatchOrchestrator.executeAgentTurn({
-        userKey,
-        session,
-        executionId,
-        initialTasks: agentsToRespond.map(agentName => ({
-          agentName,
-          prompt: message,
-          includeHistory: mentions.length === 0
-        })),
-        stream: true,
-        shouldContinue: callbacks.shouldContinue,
-        signal: executionController.signal,
-        onThinking: callbacks.onThinking,
-        onTextDelta: callbacks.onTextDelta,
-        onMessage: (visibleMessage) => {
-          const [enrichedVisibleMessage] = mapMessagesFromHistory(session.history, [visibleMessage]);
-          const delivered = callbacks.onMessage(enrichedVisibleMessage);
-          if (!delivered) {
-            undeliveredMessages.push(enrichedVisibleMessage);
-          }
-        }
-      });
-      sessionService.updatePendingExecution(session, executionResult.pendingTasks, undeliveredMessages);
-
-      return {
-        currentAgent: sessionService.getCurrentAgent(userKey, session.id),
-        notice: ignoredMentions.length > 0 ? `${ignoredMentions.join('、')} 已停用，未参与本次对话。` : undefined,
-        hadVisibleMessages: executionResult.aiMessages.length > 0,
-        emptyVisibleMessage: executionResult.aiMessages.length === 0
-          ? `${agentsToRespond.join('、')} 未返回可见消息，请稍后重试或查看日志。`
-          : undefined
-      };
-    } finally {
-      if (callbacks.signal) {
-        callbacks.signal.removeEventListener('abort', forwardAbort);
-      }
-      execution.clear();
-    }
-  }
-
   function createBlock(payload: { sessionId?: string; block: RichBlock }) {
     const { sessionId = 'default', block } = payload;
     if (!block) {
@@ -345,7 +261,6 @@ export function createChatService(deps: ChatServiceDependencies): ChatService {
   return {
     listAgents,
     sendMessage,
-    streamMessage,
     resumePendingChat: resumeService.resumePendingChat,
     summarizeChat: summaryService.summarizeChat,
     createBlock,

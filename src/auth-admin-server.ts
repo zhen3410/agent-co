@@ -15,6 +15,7 @@ import { createUserStore } from './admin/infrastructure/user-store';
 import { createAuthAdminRuntime, startAuthAdminServer } from './admin/runtime/auth-admin-runtime';
 
 const PORT = Number(process.env.AUTH_ADMIN_PORT || 3003);
+const HOST = process.env.AUTH_ADMIN_HOST || '127.0.0.1';
 const DATA_FILE = process.env.AUTH_DATA_FILE || path.join(process.cwd(), 'data', 'users.json');
 const DEFAULT_USER = process.env.AGENT_CO_DEFAULT_USER || 'admin';
 const DEFAULT_PASSWORD = process.env.AGENT_CO_DEFAULT_PASSWORD || 'admin123!';
@@ -27,6 +28,7 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public-auth');
 
 const runtime = createAuthAdminRuntime({
   port: PORT,
+  host: HOST,
   adminToken: process.env.AUTH_ADMIN_TOKEN || 'change-me-in-production',
   dataFile: DATA_FILE,
   defaultPassword: DEFAULT_PASSWORD,
