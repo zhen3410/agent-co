@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
 const { createChatServerFixture } = require('./helpers/chat-server-fixture');
 
 function decodeMessageData(data) {
@@ -114,6 +117,108 @@ async function fetchTimeline(fixture, sessionId, options = {}) {
   return timeline;
 }
 
+function getFunctionBody(source, functionName) {
+  const signaturePattern = new RegExp(`(?:async\\s+)?function\\s+${functionName}\\s*\\(`);
+  const match = source.match(signaturePattern);
+  assert.ok(match, `should contain function: ${functionName}`);
+
+  const startIndex = match.index;
+  const openParenIndex = source.indexOf('(', startIndex);
+  assert.notEqual(openParenIndex, -1, `should contain function params: ${functionName}`);
+  let parenDepth = 0;
+  let closeParenIndex = -1;
+  for (let index = openParenIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '(') parenDepth += 1;
+    if (char === ')') {
+      parenDepth -= 1;
+      if (parenDepth === 0) {
+        closeParenIndex = index;
+        break;
+      }
+    }
+  }
+  assert.notEqual(closeParenIndex, -1, `should close function params: ${functionName}`);
+  const openBraceIndex = source.indexOf('{', closeParenIndex);
+  assert.notEqual(openBraceIndex, -1, `should contain function body: ${functionName}`);
+
+  let depth = 0;
+  for (let index = openBraceIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(startIndex, index + 1);
+      }
+    }
+  }
+
+  assert.fail(`unable to extract function body: ${functionName}`);
+}
+
+function createReconnectCompensationHarness(overrides = {}) {
+  const fixtureSource = fs.readFileSync(path.join(__dirname, 'fixtures', 'chat-reconnect-compensation.fixture.js'), 'utf8');
+  const deriveTimelineTailSeqBody = getFunctionBody(fixtureSource, 'deriveTimelineTailSeq');
+  const shouldFallbackBody = getFunctionBody(fixtureSource, 'shouldFallbackToFullRefresh');
+  const runReconnectBody = getFunctionBody(fixtureSource, 'runReconnectCompensation');
+
+  const fetchCalls = [];
+  const fullRefreshCalls = [];
+  const context = {
+    timelineRows: [{ seq: 1 }, { seq: 2 }, { seq: 3 }, { seq: 4 }, { seq: 5 }],
+    lastSeenEventSeq: 5,
+    activeSessionId: 'session-a',
+    activeSessionSyncNonce: 9,
+    timelineRefreshState: {
+      state: 'idle',
+      inFlight: false,
+      pending: false,
+      preferIncremental: true
+    },
+    TIMELINE_REFRESH_STATES: {
+      idle: 'idle',
+      full: 'full',
+      incremental: 'incremental'
+    },
+    refreshSyncStatus: () => {},
+    scheduleTimelineRefresh: () => {},
+    renderMessages: () => {},
+    deriveLastSeenEventSeq: (rows) => rows.reduce((maxSeq, row) => Math.max(maxSeq, Number(row?.seq) || 0), 0),
+    refreshActiveSessionTimeline: async (options = {}) => {
+      fullRefreshCalls.push(options);
+      return { fallback: true, options };
+    },
+    fetch: async (url) => {
+      fetchCalls.push(url);
+      return {
+        ok: true,
+        async json() {
+          return { timeline: [{ seq: 9 }] };
+        }
+      };
+    },
+    encodeURIComponent,
+    console
+  };
+
+  Object.assign(context, overrides);
+  vm.createContext(context);
+  vm.runInContext(`
+${deriveTimelineTailSeqBody}
+${shouldFallbackBody}
+${runReconnectBody}
+this.__runReconnectCompensation = runReconnectCompensation;
+`, context);
+
+  return {
+    runReconnectCompensation: context.__runReconnectCompensation.bind(context),
+    context,
+    fetchCalls,
+    fullRefreshCalls
+  };
+}
+
 test('websocket route 支持 session 订阅回放、实时事件推送、heartbeat/ping 与 unsubscribe 清理', async () => {
   const fixture = await createChatServerFixture({
     env: {
@@ -214,7 +319,7 @@ test('websocket route 支持 session 订阅回放、实时事件推送、heartbe
   }
 });
 
-test('websocket 重连后可通过 afterSeq 获得增量补偿，并返回推进后的 latestSeq', async () => {
+test('websocket 重连后先尝试 afterSeq 增量补偿，并在增量序列跳跃时通过客户端路径回退全量时间线', async () => {
   const fixture = await createChatServerFixture();
   let ws = null;
   let reconnectWs = null;
@@ -277,7 +382,41 @@ test('websocket 重连后可通过 afterSeq 获得增量补偿，并返回推进
       'incremental compensation first seq should not jump above lastSeenEventSeq + 1'
     );
     lastSeenEventSeq = Math.max(lastSeenEventSeq, ...incrementalCompensation.map((row) => Number(row?.seq) || 0));
-    assert.ok(lastSeenEventSeq >= Number(reconnectSubscribed.latestSeq), 'incremental compensation should catch the client up to the latest acknowledged seq');
+
+    const harness = createReconnectCompensationHarness({
+      activeSessionId: sessionId,
+      lastSeenEventSeq,
+      timelineRows: await fetchTimeline(fixture, sessionId)
+    });
+    harness.context.fetch = async (url) => {
+      harness.fetchCalls.push(url);
+      return {
+        ok: true,
+        async json() {
+          return {
+            timeline: [{ seq: lastSeenEventSeq + 3, sessionId }]
+          };
+        }
+      };
+    };
+
+    await harness.runReconnectCompensation({
+      targetSessionId: sessionId,
+      activeSyncNonce: harness.context.activeSessionSyncNonce,
+      afterSeqCursor: lastSeenEventSeq
+    });
+
+    assert.equal(harness.fetchCalls.length, 1, 'client compensation path should attempt incremental fetch first');
+    assert.ok(
+      harness.fetchCalls[0].includes(`/api/sessions/${encodeURIComponent(sessionId)}/timeline?afterSeq=`),
+      'incremental compensation should use active session timeline endpoint with afterSeq cursor'
+    );
+    assert.equal(harness.fullRefreshCalls.length, 1, 'seq-gap inconsistency should trigger full refresh fallback in real client path');
+    assert.equal(
+      harness.fullRefreshCalls[0]?.mode,
+      harness.context.TIMELINE_REFRESH_STATES.full,
+      'fallback should request full timeline mode'
+    );
   } finally {
     if (ws) {
       await closeWebSocket(ws);
