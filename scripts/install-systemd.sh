@@ -30,6 +30,22 @@ if [[ ! -f "$UNIT_SRC" ]]; then
   exit 1
 fi
 
+require_built_artifact() {
+  local artifact_path="$1"
+  if [[ ! -f "$artifact_path" ]]; then
+    echo "缺少构建产物：$artifact_path"
+    echo "请先在仓库根目录执行 npm install && npm run build，再安装或重启 systemd 服务。"
+    exit 1
+  fi
+}
+
+require_built_artifact "$APP_DIR/dist/server.js"
+require_built_artifact "$APP_DIR/dist/auth-admin-server.js"
+require_built_artifact "$APP_DIR/dist/frontend/chat.html"
+require_built_artifact "$APP_DIR/dist/frontend/admin.html"
+require_built_artifact "$APP_DIR/dist/frontend/deps-monitor.html"
+require_built_artifact "$APP_DIR/dist/frontend/verbose-logs.html"
+
 escape_for_sed() {
   printf '%s' "$1" | sed -e 's/[\\&]/\\\\&/g' -e 's|/|\\/|g'
 }

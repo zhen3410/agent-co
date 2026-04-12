@@ -81,6 +81,19 @@ set +a
 npm run build
 ```
 
+> `npm run build` compiles the backend first and then builds the React + Vite multi-page frontend. The chat, admin, and ops page shells are emitted to `dist/frontend/`.
+
+#### 3.1 Frontend local development loop
+
+```bash
+npm run dev:frontend
+```
+
+- `npm run dev:frontend` starts the Vite dev server for isolated React page work.
+- The Node chat/admin services always serve built files from `dist/frontend/` in both local and production workflows.
+- After changing anything under `frontend/`, rerun `npm run build` before reloading `/`, `/admin.html`, `/deps-monitor.html`, or `/verbose-logs.html`.
+- If the frontend build artifacts are missing, the services return `500` responses that mention the missing build output. During rollback, restore the matching `dist/frontend` artifacts together with the backend release, or rerun `npm run build` after switching back.
+
 #### 4. Start the chat service
 
 ```bash
@@ -120,10 +133,11 @@ Default dev credentials:
 
 ```bash
 npm run init            # Initialize local directories
-npm run build           # Compile TypeScript
-npm run dev             # Run in development mode
+npm run build           # Build backend first, then emit dist/frontend MPA assets
+npm run dev             # Run the chat service in development mode (serves dist/frontend)
 npm run start:chat      # Run compiled chat service
 npm run start:auth      # Run compiled auth/admin service
+npm run dev:frontend    # Start the React/Vite frontend dev server
 npm test                # Run integration tests
 npm run test:unit       # Run unit tests
 npm run test:fast       # Fast run (unit + key integration)

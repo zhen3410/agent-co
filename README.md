@@ -81,6 +81,19 @@ set +a
 npm run build
 ```
 
+> `npm run build` 会先编译后端 TypeScript，再构建 React + Vite 多页面前端；聊天页、管理页与运维页静态壳都会输出到 `dist/frontend/`。
+
+#### 3.1 前端本地开发循环
+
+```bash
+npm run dev:frontend
+```
+
+- `npm run dev:frontend` 会启动 Vite，用于独立调试 React 多页面前端。
+- Node 聊天/管理服务在本地与生产环境中都只读取 `dist/frontend/` 下的静态壳。
+- 只要修改了 `frontend/`，就需要重新执行 `npm run build`，然后再刷新 `/`、`/admin.html`、`/deps-monitor.html` 或 `/verbose-logs.html`。
+- 如果 `dist/frontend` 缺失，服务会返回 `500`，错误信息包含“前端构建产物缺失”。回滚时必须一并恢复匹配版本的 `dist/frontend`，或在切回旧代码后重新执行 `npm run build`。
+
 ### 4. Start services / 启动服务
 
 **Production** — use systemd (recommended):
@@ -140,10 +153,11 @@ npm run start:auth   # 编译后的鉴权管理服务
 
 ```bash
 npm run init            # 初始化本地目录
-npm run build           # 编译 TypeScript
-npm run dev             # 开发模式运行
+npm run build           # 先编译后端，再生成 dist/frontend 多页面前端产物
+npm run dev             # 开发模式运行聊天服务（读取 dist/frontend）
 npm run start:chat      # 运行编译后的聊天服务
 npm run start:auth      # 运行编译后的鉴权管理服务
+npm run dev:frontend    # 启动 React/Vite 本地前端开发服务器
 npm test                # 运行集成测试
 npm run test:unit       # 运行单元测试
 npm run test:fast       # 快速测试（单元 + 关键集成）
