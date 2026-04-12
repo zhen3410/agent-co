@@ -1,7 +1,15 @@
-import { createElement } from 'react';
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ChatPage } from '../chat/pages/ChatPage';
+import '../shared/styles/tokens.css';
+import '../shared/styles/base.css';
 
 const mountNode = document.getElementById('app');
+
 if (mountNode) {
-  createRoot(mountNode).render(createElement('main', { 'data-page': 'chat' }, 'chat page shell'));
+  createRoot(mountNode).render(
+    <StrictMode>
+      <ChatPage />
+    </StrictMode>
+  );
 }
