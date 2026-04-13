@@ -4,11 +4,10 @@ import { Button } from '../../../shared/ui';
 export interface AdminTokenGateProps {
   onSubmit: (token: string) => void;
   busy?: boolean;
-  initialValue?: string;
 }
 
-export function AdminTokenGate({ onSubmit, busy = false, initialValue = '' }: AdminTokenGateProps) {
-  const [token, setToken] = useState(initialValue);
+export function AdminTokenGate({ onSubmit, busy = false }: AdminTokenGateProps) {
+  const [token, setToken] = useState('');
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
