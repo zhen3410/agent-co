@@ -479,6 +479,19 @@ test('admin URL resolver prefers explicit runtime config and otherwise falls bac
   assert.equal(
     resolveAdminPageUrl({
       location: {
+        href: 'http://myhost:3002/chat.html',
+        origin: 'http://myhost:3002',
+        protocol: 'http:',
+        hostname: 'myhost',
+        port: '3002'
+      }
+    }),
+    'http://myhost:3003/admin.html'
+  );
+
+  assert.equal(
+    resolveAdminPageUrl({
+      location: {
         href: 'https://chat.example.com:8443/chat.html',
         origin: 'https://chat.example.com:8443',
         protocol: 'https:',

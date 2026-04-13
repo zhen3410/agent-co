@@ -51,19 +51,12 @@ function normalizeLocalOrigin(location?: LocationLike | null): string {
   return `${protocol}//${hostname}${port}`;
 }
 
-function isLocalHostname(hostname: string | undefined): boolean {
-  return hostname === 'localhost'
-    || hostname === '127.0.0.1'
-    || hostname === '::1'
-    || hostname === '[::1]';
-}
-
 function shouldUseDefaultAuthAdminPort(location?: LocationLike | null): boolean {
   if (!location) {
     return false;
   }
 
-  return isLocalHostname(location.hostname) && location.port === DEFAULT_CHAT_PORT;
+  return location.port === DEFAULT_CHAT_PORT;
 }
 
 function appendAdminPagePath(pathname: string, adminPagePath: string): string {
