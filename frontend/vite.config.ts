@@ -13,6 +13,7 @@ export default defineConfig({
     manifest: true,
     rollupOptions: {
       input: {
+        home: path.resolve(rootDir, 'index.html'),
         chat: path.resolve(rootDir, 'chat.html'),
         admin: path.resolve(rootDir, 'admin.html'),
         'deps-monitor': path.resolve(rootDir, 'deps-monitor.html'),

@@ -10,6 +10,7 @@ const frontendDistDir = path.join(distDir, 'frontend');
 const manifestPath = path.join(frontendDistDir, '.vite', 'manifest.json');
 
 const expectedPages = [
+  { file: 'index.html', identity: 'home' },
   { file: 'chat.html', identity: 'chat' },
   { file: 'admin.html', identity: 'admin' },
   { file: 'deps-monitor.html', identity: 'deps-monitor' },

@@ -178,7 +178,7 @@ function createSampleCallGraphProjection() {
   };
 }
 
-test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /assets 静态资源', async () => {
+test('chat 服务在主入口 URL 返回首页 shell，并可访问 /chat.html 与 /assets 静态资源', async () => {
   const fixture = await createChatServerFixture();
 
   try {
@@ -187,7 +187,14 @@ test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /asset
 
     assert.equal(homeResponse.status, 200);
     assert.match(homeResponse.headers.get('content-type') || '', /text\/html/i);
-    assert.match(homeHtml, /<meta name="agent-co-page" content="chat"\s*\/>/);
+    assert.match(homeHtml, /<meta name="agent-co-page" content="home"\s*\/>/);
+
+    const chatResponse = await fetch(`http://127.0.0.1:${fixture.port}/chat.html`);
+    const chatHtml = await chatResponse.text();
+
+    assert.equal(chatResponse.status, 200);
+    assert.match(chatResponse.headers.get('content-type') || '', /text\/html/i);
+    assert.match(chatHtml, /<meta name="agent-co-page" content="chat"\s*\/>/);
 
     const assetPath = extractFirstJsAssetPath(homeHtml);
     const assetResponse = await fetch(`http://127.0.0.1:${fixture.port}${assetPath}`);
@@ -202,6 +209,19 @@ test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /asset
   } finally {
     await fixture.cleanup();
   }
+});
+
+test('HomePage 渲染首页入口结构与主行动按钮', () => {
+  const { HomePage } = loadTsModule('frontend/src/home/pages/HomePage.tsx');
+
+  const html = renderToStaticMarkup(React.createElement(HomePage));
+
+  assert.match(html, /data-home-page="shell"/);
+  assert.match(html, /data-home-hero="intro"/);
+  assert.match(html, /data-home-cta="primary"/);
+  assert.match(html, /data-home-workflow="preview"/);
+  assert.match(html, /开发者/);
+  assert.match(html, /小团队/);
 });
 
 test('ChatPage 渲染聊天页壳、会话侧边栏、消息列表与输入区', () => {

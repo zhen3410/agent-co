@@ -12,7 +12,7 @@ import { AgentManager } from '../../agent-manager';
 import { RichBlock } from '../../types';
 import { ChatRuntime } from '../runtime/chat-runtime';
 import { serveStaticFile } from '../../shared/http/static-files';
-import { resolveFrontendAssetRequest } from '../../shared/http/frontend-asset-resolver';
+import { resolveFrontendAssetRequest, FrontendAssetResolution } from '../../shared/http/frontend-asset-resolver';
 import {
   buildChatRateLimitBody,
   normalizeBodyText,
@@ -50,6 +50,32 @@ function sendRateLimitError(res: http.ServerResponse, resetAt: number): void {
   sendJson(res, 429, buildChatRateLimitBody(resetAt));
 }
 
+function serveFrontendAssetResolution(
+  res: http.ServerResponse,
+  resolution: FrontendAssetResolution
+): void {
+  if (resolution.kind === 'missing-required') {
+    sendJson(res, 500, { error: resolution.errorMessage });
+    return;
+  }
+
+  if (resolution.kind === 'missing-asset') {
+    sendJson(res, 404, { error: 'Not Found' });
+    return;
+  }
+
+  const frontendAsset = resolution.asset;
+  serveStaticFile(res, {
+    rootDir: frontendAsset.rootDir,
+    filePath: frontendAsset.filePath,
+    contentType: frontendAsset.contentType,
+    disableHtmlCache: frontendAsset.disableHtmlCache,
+    onNotFound: response => sendJson(response, frontendAsset.required ? 500 : 404, frontendAsset.required
+      ? { error: `前端构建产物缺失: ${frontendAsset.filePath}。请先执行 npm run build 生成 dist/frontend。` }
+      : { error: 'Not Found' })
+  });
+}
+
 export async function handleChatRoutes(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -59,27 +85,19 @@ export async function handleChatRoutes(
   const method = req.method || 'GET';
 
   if (method === 'GET') {
-    const frontendResolution = resolveFrontendAssetRequest(requestUrl.pathname, 'chat.html');
-    if (frontendResolution) {
-      if (frontendResolution.kind === 'missing-required') {
-        sendJson(res, 500, { error: frontendResolution.errorMessage });
-        return true;
-      }
-      if (frontendResolution.kind === 'missing-asset') {
-        sendJson(res, 404, { error: 'Not Found' });
-        return true;
-      }
+    const homeResolution = resolveFrontendAssetRequest(requestUrl.pathname, 'index.html', {
+      entryPaths: ['/', '/index.html']
+    });
+    if (homeResolution) {
+      serveFrontendAssetResolution(res, homeResolution);
+      return true;
+    }
 
-      const frontendAsset = frontendResolution.asset;
-      serveStaticFile(res, {
-        rootDir: frontendAsset.rootDir,
-        filePath: frontendAsset.filePath,
-        contentType: frontendAsset.contentType,
-        disableHtmlCache: frontendAsset.disableHtmlCache,
-        onNotFound: response => sendJson(response, frontendAsset.required ? 500 : 404, frontendAsset.required
-          ? { error: `前端构建产物缺失: ${frontendAsset.filePath}。请先执行 npm run build 生成 dist/frontend。` }
-          : { error: 'Not Found' })
-      });
+    const chatResolution = resolveFrontendAssetRequest(requestUrl.pathname, 'chat.html', {
+      entryPaths: ['/chat.html']
+    });
+    if (chatResolution) {
+      serveFrontendAssetResolution(res, chatResolution);
       return true;
     }
   }

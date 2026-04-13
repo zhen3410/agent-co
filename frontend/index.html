@@ -3,17 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>agent-co frontend pages</title>
+    <meta name="agent-co-page" content="home" />
+    <title>agent-co</title>
   </head>
   <body>
-    <main>
-      <h1>agent-co frontend workspace</h1>
-      <ul>
-        <li><a href="/chat.html">chat</a></li>
-        <li><a href="/admin.html">admin</a></li>
-        <li><a href="/deps-monitor.html">deps-monitor</a></li>
-        <li><a href="/verbose-logs.html">verbose-logs</a></li>
-      </ul>
-    </main>
+    <div id="app"></div>
+    <script type="module" src="/src/entries/home-main.tsx"></script>
   </body>
 </html>
