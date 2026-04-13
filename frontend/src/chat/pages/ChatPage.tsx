@@ -72,6 +72,7 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [panelRefreshSignal, setPanelRefreshSignal] = useState(0);
+  const [isSessionDrawerOpen, setIsSessionDrawerOpen] = useState(false);
   const messagesRef = useRef<ChatMessage[]>(historyState?.messages ?? []);
   const realtimeSeqRef = useRef<number>(typeof initialState?.latestEventSeq === 'number' ? initialState.latestEventSeq : 0);
   const realtimeSessionIdRef = useRef<string | null>(historyState?.activeSessionId ?? null);
@@ -242,58 +243,165 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
     agentWorkdirs: {},
     agents: []
   };
+  const sessionTitle = safeState.session?.name || '当前会话';
+  const messageCountLabel = safeState.messages.length > 0 ? `${safeState.messages.length} 条消息` : '等待第一条消息';
 
   return (
     <AppShell
       title="agent-co chat"
-      subtitle={safeState.session?.name || '当前会话'}
+      subtitle={sessionTitle}
       actions={
-        <Button variant="secondary" onClick={() => setReloadNonce((value) => value + 1)}>
-          刷新
-        </Button>
+        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+          <Button
+            variant="secondary"
+            aria-controls="chat-session-drawer"
+            aria-expanded={isSessionDrawerOpen}
+            onClick={() => setIsSessionDrawerOpen((current) => !current)}
+          >
+            会话
+          </Button>
+          <Button variant="secondary" onClick={() => setReloadNonce((value) => value + 1)}>
+            刷新
+          </Button>
+        </div>
       }
     >
       <section
         data-chat-page="shell"
+        data-chat-layout="conversation-first"
         style={{
           display: 'grid',
           gap: 'var(--space-4)',
-          gridTemplateColumns: 'minmax(16rem, 20rem) minmax(0, 1fr) minmax(18rem, 24rem)'
+          position: 'relative'
         }}
       >
-        <SessionSidebar
-          sessions={safeState.chatSessions}
-          activeSessionId={safeState.activeSessionId}
-          currentAgent={safeState.currentAgent}
-          enabledAgents={safeState.enabledAgents}
-        />
-
-        <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
-          <ChatMessageList
-            messages={safeState.messages}
-            isLoading={loadState === 'loading'}
-            errorMessage={loadState === 'error' ? errorMessage : null}
-          />
-          <ChatComposer
-            disabled={loadState !== 'ready'}
-            onSubmit={handleSubmit}
-          />
-        </div>
-
-        <aside style={{ display: 'grid', gap: 'var(--space-4)' }}>
-          <RuntimeStatusBadge
-            sessionId={safeState.activeSessionId}
-            refreshSignal={panelRefreshSignal}
-          />
-          <TimelinePanel
-            sessionId={safeState.activeSessionId}
-            refreshSignal={panelRefreshSignal}
-          />
-          <CallGraphPanel
-            sessionId={safeState.activeSessionId}
-            refreshSignal={panelRefreshSignal}
-          />
+        <aside
+          id="chat-session-drawer"
+          data-chat-mobile-drawer="sessions"
+          aria-hidden={!isSessionDrawerOpen}
+          style={{
+            background: 'rgba(15, 23, 42, 0.12)',
+            inset: 0,
+            opacity: isSessionDrawerOpen ? 1 : 0,
+            pointerEvents: isSessionDrawerOpen ? 'auto' : 'none',
+            position: 'fixed',
+            transition: 'opacity 160ms ease',
+            zIndex: 30
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--color-surface, #ffffff)',
+              boxShadow: '0 24px 64px rgba(15, 23, 42, 0.18)',
+              height: '100%',
+              maxWidth: '22rem',
+              overflowY: 'auto',
+              padding: 'var(--space-4)',
+              transform: isSessionDrawerOpen ? 'translateX(0)' : 'translateX(-100%)',
+              transition: 'transform 180ms ease'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-3)' }}>
+              <Button variant="secondary" onClick={() => setIsSessionDrawerOpen(false)}>
+                关闭
+              </Button>
+            </div>
+            <SessionSidebar
+              sessions={safeState.chatSessions}
+              activeSessionId={safeState.activeSessionId}
+              currentAgent={safeState.currentAgent}
+              enabledAgents={safeState.enabledAgents}
+            />
+          </div>
         </aside>
+
+        <section
+          style={{
+            alignItems: 'start',
+            display: 'grid',
+            gap: 'var(--space-4)',
+            gridTemplateColumns: 'minmax(14rem, 18rem) minmax(0, 1fr) minmax(16rem, 20rem)'
+          }}
+        >
+          <aside data-chat-region="session-rail" style={{ display: 'grid', gap: 'var(--space-4)' }}>
+            <SessionSidebar
+              sessions={safeState.chatSessions}
+              activeSessionId={safeState.activeSessionId}
+              currentAgent={safeState.currentAgent}
+              enabledAgents={safeState.enabledAgents}
+            />
+          </aside>
+
+          <main
+            data-chat-region="conversation-stage"
+            style={{
+              display: 'grid',
+              gap: 'var(--space-4)',
+              minWidth: 0
+            }}
+          >
+            <section
+              aria-label="当前会话概览"
+              style={{
+                background: 'rgba(248, 250, 252, 0.76)',
+                border: '1px solid rgba(148, 163, 184, 0.16)',
+                borderRadius: 'calc(var(--radius-lg) + 4px)',
+                display: 'grid',
+                gap: 'var(--space-2)',
+                padding: 'var(--space-4)'
+              }}
+            >
+              <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', justifyContent: 'space-between' }}>
+                <strong style={{ color: 'var(--color-text)', fontSize: 'var(--font-size-lg)' }}>{sessionTitle}</strong>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>{messageCountLabel}</span>
+              </div>
+              <p style={{ color: 'var(--color-text-muted)', margin: 0 }}>
+                主舞台聚焦消息流与输入区；运行状态与执行细节保留在右侧次级面板。
+              </p>
+            </section>
+
+            <ChatMessageList
+              messages={safeState.messages}
+              isLoading={loadState === 'loading'}
+              errorMessage={loadState === 'error' ? errorMessage : null}
+            />
+
+            <section
+              data-chat-region="composer-dock"
+              style={{
+                bottom: 0,
+                position: 'sticky',
+                zIndex: 5
+              }}
+            >
+              <ChatComposer
+                disabled={loadState !== 'ready'}
+                onSubmit={handleSubmit}
+              />
+            </section>
+          </main>
+
+          <aside
+            data-chat-region="secondary-panels"
+            style={{
+              display: 'grid',
+              gap: 'var(--space-4)'
+            }}
+          >
+            <RuntimeStatusBadge
+              sessionId={safeState.activeSessionId}
+              refreshSignal={panelRefreshSignal}
+            />
+            <TimelinePanel
+              sessionId={safeState.activeSessionId}
+              refreshSignal={panelRefreshSignal}
+            />
+            <CallGraphPanel
+              sessionId={safeState.activeSessionId}
+              refreshSignal={panelRefreshSignal}
+            />
+          </aside>
+        </section>
       </section>
     </AppShell>
   );

@@ -232,6 +232,10 @@ test('ChatPage 渲染聊天页壳、会话侧边栏、消息列表与输入区',
   }));
 
   assert.match(html, /data-chat-page="shell"/);
+  assert.match(html, /data-chat-layout="conversation-first"/);
+  assert.match(html, /data-chat-region="conversation-stage"/);
+  assert.match(html, /data-chat-region="composer-dock"/);
+  assert.match(html, /data-chat-mobile-drawer="sessions"/);
   assert.match(html, /data-chat-sidebar="sessions"/);
   assert.match(html, /data-chat-message-list="messages"/);
   assert.match(html, /data-chat-composer="composer"/);

@@ -1,4 +1,4 @@
-import { Card, EmptyState, ErrorState, Spinner } from '../../../shared/ui';
+import { EmptyState, ErrorState, Spinner } from '../../../shared/ui';
 import type { ChatMessage } from '../../types';
 import { renderMarkdownHtml } from '../../services/chat-markdown';
 
@@ -31,39 +31,83 @@ function resolveRoleLabel(role: ChatMessage['role']): string {
 
 export function ChatMessageList({ messages, isLoading = false, errorMessage = null }: ChatMessageListProps) {
   if (errorMessage) {
-    return <ErrorState title="消息加载失败" message={errorMessage} />;
+    return (
+      <section
+        data-chat-message-list="messages"
+        aria-label="消息列表"
+        style={{
+          border: '1px solid rgba(148, 163, 184, 0.2)',
+          borderRadius: 'calc(var(--radius-lg) + 6px)',
+          padding: 'var(--space-4)'
+        }}
+      >
+        <ErrorState title="消息加载失败" message={errorMessage} />
+      </section>
+    );
   }
 
   if (isLoading) {
     return (
-      <Card title="消息">
+      <section
+        data-chat-message-list="messages"
+        aria-label="消息列表"
+        style={{
+          border: '1px solid rgba(148, 163, 184, 0.2)',
+          borderRadius: 'calc(var(--radius-lg) + 6px)',
+          padding: 'var(--space-4)'
+        }}
+      >
         <Spinner label="正在加载消息…" />
-      </Card>
+      </section>
     );
   }
 
   if (messages.length === 0) {
     return (
-      <EmptyState
-        title="暂无消息"
-        description="发送第一条消息后，这里会显示用户与智能体的对话内容。"
-      />
+      <section
+        data-chat-message-list="messages"
+        aria-label="消息列表"
+        style={{
+          border: '1px solid rgba(148, 163, 184, 0.2)',
+          borderRadius: 'calc(var(--radius-lg) + 6px)',
+          padding: 'var(--space-4)'
+        }}
+      >
+        <EmptyState
+          title="暂无消息"
+          description="发送第一条消息后，这里会显示用户与智能体的对话内容。"
+        />
+      </section>
     );
   }
 
   return (
-    <section data-chat-message-list="messages" style={{ display: 'grid', gap: 'var(--space-3)' }}>
+    <section
+      data-chat-message-list="messages"
+      aria-label="消息列表"
+      style={{
+        background: 'rgba(255, 255, 255, 0.82)',
+        border: '1px solid rgba(148, 163, 184, 0.18)',
+        borderRadius: 'calc(var(--radius-lg) + 8px)',
+        display: 'grid',
+        gap: 'var(--space-2)',
+        padding: 'var(--space-2) var(--space-4)'
+      }}
+    >
       {messages.map((message) => {
         const isUser = message.role === 'user';
         const isSystem = message.role === 'system';
         return (
           <article
             key={message.id}
+            aria-label={`${message.sender} 的消息`}
             style={{
-              background: isUser ? 'rgba(37, 99, 235, 0.08)' : 'var(--color-surface)',
-              border: `1px solid ${isSystem ? 'var(--status-warning)' : 'var(--color-border)'}`,
-              borderRadius: 'var(--radius-lg)',
-              padding: 'var(--space-4)'
+              background: isUser ? 'rgba(37, 99, 235, 0.05)' : 'transparent',
+              border: 'none',
+              borderBottom: '1px solid rgba(148, 163, 184, 0.18)',
+              borderLeft: isSystem ? '2px solid var(--status-warning)' : isUser ? '2px solid rgba(37, 99, 235, 0.32)' : '2px solid transparent',
+              borderRadius: 'var(--radius-md)',
+              padding: 'var(--space-4) var(--space-3)'
             }}
           >
             <header
@@ -80,7 +124,11 @@ export function ChatMessageList({ messages, isLoading = false, errorMessage = nu
               <span>{resolveRoleLabel(message.role)} · {formatTimestamp(message.timestamp)}</span>
             </header>
             <div
-              style={{ color: 'var(--color-text)' }}
+              style={{
+                color: 'var(--color-text)',
+                lineHeight: 1.7,
+                maxWidth: '72ch'
+              }}
               dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(message.text) }}
             />
           </article>

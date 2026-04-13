@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { createHttpClient } from '../../../shared/lib/http/http-client';
-import { Card, EmptyState, ErrorState, Spinner } from '../../../shared/ui';
+import { EmptyState, ErrorState, Spinner } from '../../../shared/ui';
 import { getMergedRuntimeConfig } from '../../../shared/config/runtime-config';
 import { useSessionPanelResource } from '../shared/useSessionPanelResource';
 
@@ -90,7 +90,24 @@ export function RuntimeStatusBadge({ sessionId = null, refreshSignal = 0, fetch 
   });
 
   return (
-    <Card title="运行状态">
+    <section
+      aria-label="运行状态"
+      style={{
+        background: 'rgba(248, 250, 252, 0.8)',
+        border: '1px solid rgba(148, 163, 184, 0.16)',
+        borderRadius: 'calc(var(--radius-lg) + 2px)',
+        display: 'grid',
+        gap: 'var(--space-3)',
+        padding: 'var(--space-4)'
+      }}
+    >
+      <header style={{ display: 'grid', gap: 'var(--space-1)' }}>
+        <strong style={{ color: 'var(--color-text)' }}>运行状态</strong>
+        <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
+          当前会话的同步与讨论状态。
+        </span>
+      </header>
+
       <section data-chat-runtime-status="badge" style={{ display: 'grid', gap: 'var(--space-3)' }}>
         {!sessionId ? (
           <EmptyState
@@ -113,24 +130,24 @@ export function RuntimeStatusBadge({ sessionId = null, refreshSignal = 0, fetch 
         {sessionId && runtimeStatus.loadState === 'ready' && runtimeStatus.data ? (
           <dl style={{ display: 'grid', gap: 'var(--space-2)', margin: 0 }}>
             <div>
-              <dt style={{ color: 'var(--color-text-muted)' }}>最新事件序号</dt>
-              <dd style={{ margin: 0 }}>{runtimeStatus.data.latestEventSeq}</dd>
+              <dt style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>最新事件序号</dt>
+              <dd style={{ margin: 'var(--space-1) 0 0' }}>{runtimeStatus.data.latestEventSeq}</dd>
             </div>
             <div>
-              <dt style={{ color: 'var(--color-text-muted)' }}>最新时间线序号</dt>
-              <dd style={{ margin: 0 }}>{runtimeStatus.data.latestTimelineSeq ?? '未生成'}</dd>
+              <dt style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>最新时间线序号</dt>
+              <dd style={{ margin: 'var(--space-1) 0 0' }}>{runtimeStatus.data.latestTimelineSeq ?? '未生成'}</dd>
             </div>
             <div>
-              <dt style={{ color: 'var(--color-text-muted)' }}>时间线条目数</dt>
-              <dd style={{ margin: 0 }}>{runtimeStatus.data.timelineRowCount}</dd>
+              <dt style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>时间线条目数</dt>
+              <dd style={{ margin: 'var(--space-1) 0 0' }}>{runtimeStatus.data.timelineRowCount}</dd>
             </div>
             <div>
-              <dt style={{ color: 'var(--color-text-muted)' }}>讨论状态</dt>
-              <dd style={{ margin: 0 }}>{toDiscussionStateLabel(runtimeStatus.data.discussionState)}</dd>
+              <dt style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>讨论状态</dt>
+              <dd style={{ margin: 'var(--space-1) 0 0' }}>{toDiscussionStateLabel(runtimeStatus.data.discussionState)}</dd>
             </div>
           </dl>
         ) : null}
       </section>
-    </Card>
+    </section>
   );
 }
