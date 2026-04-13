@@ -89,6 +89,21 @@ function findClassNames(text) {
     }
     match = regex.exec(text);
   }
+  const expressionRegex = /className\s*=\s*\{([^}]+)\}/g;
+  let expressionMatch = expressionRegex.exec(text);
+  while (expressionMatch) {
+    const expression = expressionMatch[1];
+    const literalRegex = /['"`]([^'"`]+)['"`]/g;
+    let literalMatch = literalRegex.exec(expression);
+    while (literalMatch) {
+      const raw = literalMatch[1] ?? '';
+      for (const className of raw.split(/\s+/).filter(Boolean)) {
+        result.add(className);
+      }
+      literalMatch = literalRegex.exec(expression);
+    }
+    expressionMatch = expressionRegex.exec(text);
+  }
   return result;
 }
 
@@ -188,6 +203,33 @@ test('shared layouts keep stable data attributes for composition', () => {
   assert.match(toolPageHtml, /data-layout="tool-page"/);
   assert.match(toolPageHtml, /data-layout="tool-page-sidebar"/);
   assert.match(toolPageHtml, /data-layout="tool-page-content"/);
+});
+
+test('button and surface preserve foundation hooks while merging class names', () => {
+  const { Button } = loadTsModule('frontend/src/shared/ui/Button.tsx');
+  const { Surface } = loadTsModule('frontend/src/shared/ui/Surface.tsx');
+
+  const buttonHtml = render(Button, {
+    children: 'Click',
+    className: 'custom-button',
+    variant: 'secondary',
+    'data-ui': 'override',
+    'data-variant': 'override'
+  });
+  assert.match(buttonHtml, /data-ui="button"/);
+  assert.match(buttonHtml, /data-variant="secondary"/);
+  assert.match(buttonHtml, /class="[^"]*ui-button[^"]*custom-button[^"]*"/);
+
+  const surfaceHtml = render(Surface, {
+    children: 'Panel',
+    className: 'custom-surface',
+    tone: 'muted',
+    'data-ui': 'override',
+    'data-tone': 'override'
+  });
+  assert.match(surfaceHtml, /data-ui="surface"/);
+  assert.match(surfaceHtml, /data-tone="muted"/);
+  assert.match(surfaceHtml, /class="[^"]*ui-surface[^"]*custom-surface[^"]*"/);
 });
 
 test('shared primitives use deterministic ids and keep foundation CSS scope', () => {
