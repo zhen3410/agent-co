@@ -4963,69 +4963,33 @@ test('非 test 环境启动时会忽略 Redis 中残留的测试 chat_sessions_k
   })]);
   redisCli(['HSET', 'agent-co:config', 'chat_sessions_key', testRedisKey]);
 
-  const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-prod-ignore-test-key-'));
-  const agentDataFile = join(tempDir, 'agents.json');
-  const authFixture = await createAuthAdminFixture();
-  const port = getRandomPort();
-  const child = spawn('node', ['dist/server.js'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      NODE_ENV: 'production',
-      PORT: String(port),
-      AGENT_CO_AUTH_ENABLED: 'true',
-      AGENT_CO_REDIS_REQUIRED: 'false',
-      AGENT_CO_DISABLE_REDIS: 'false',
-      AGENT_DATA_FILE: agentDataFile,
-      AUTH_ADMIN_TOKEN: 'integration-test-admin-token-1234567890',
-      AUTH_ADMIN_BASE_URL: `http://127.0.0.1:${authFixture.port}`,
-      AGENT_CO_CLI_TIMEOUT_MS: '15000',
-      AGENT_CO_CLI_HEARTBEAT_TIMEOUT_MS: '5000',
-      AGENT_CO_CLI_KILL_GRACE_MS: '200'
-    },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-
-  let stderr = '';
-  child.stderr.on('data', chunk => {
-    stderr += chunk.toString();
-  });
+  let fixture = null;
 
   try {
-    await waitForChatServer(port);
-
-    const loginResponse = await fetch(`http://127.0.0.1:${port}/api/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ username: 'admin', password: 'Admin1234!@#' })
-    });
-    const loginText = await loginResponse.text();
-    assert.equal(loginResponse.status, 200, loginText);
-
-    const cookies = parseSetCookie(loginResponse.headers.get('set-cookie')).join('; ');
-    const historyResponse = await fetch(`http://127.0.0.1:${port}/api/history`, {
-      headers: {
-        Cookie: cookies
+    fixture = await createChatServerFixture({
+      nodeEnv: 'production',
+      startupTimeoutMs: 20000,
+      env: {
+        AGENT_CO_REDIS_REQUIRED: 'false',
+        AGENT_CO_DISABLE_REDIS: 'false'
       }
     });
-    const historyText = await historyResponse.text();
-    assert.equal(historyResponse.status, 200, historyText);
-    const historyBody = JSON.parse(historyText);
+
+    const loginResponse = await fixture.login();
+    assert.equal(loginResponse.status, 200, loginResponse.text);
+
+    const historyResponse = await fixture.request('/api/history');
+    assert.equal(historyResponse.status, 200, historyResponse.text);
+    const historyBody = historyResponse.body;
 
     assert.equal(historyBody.session.name, '正式恢复会话');
     assert.equal(historyBody.messages.length, 1);
     assert.ok(historyBody.chatSessions.some(item => item.name === '正式恢复会话'));
     assert.ok(!historyBody.chatSessions.some(item => item.name === '测试污染会话'));
   } finally {
-    if (!child.killed) {
-      child.kill('SIGTERM');
-      await new Promise(resolve => setTimeout(resolve, 150));
-      if (!child.killed) child.kill('SIGKILL');
+    if (fixture) {
+      await fixture.cleanup();
     }
-    await authFixture.cleanup();
-    rmSync(tempDir, { recursive: true, force: true });
     redisCli(['DEL', testRedisKey]);
     if (previousConfiguredKey) {
       redisCli(['HSET', 'agent-co:config', 'chat_sessions_key', previousConfiguredKey]);
