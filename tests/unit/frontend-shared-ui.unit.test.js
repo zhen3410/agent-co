@@ -219,6 +219,8 @@ test('theme foundation exposes the motion and dual-theme hooks the rest of the a
   assert.match(tokensCss, /--color-surface-elevated:/);
   assert.match(tokensCss, /--color-text-primary:/);
   assert.match(tokensCss, /--motion-fast:/);
+  assert.match(tokensCss, /:root\[data-theme='dark'\]\s*\{[\s\S]*--color-bg-canvas:[\s\S]*--color-text-primary:/);
+  assert.match(baseCss, /:focus-visible\s*\{[\s\S]*outline:\s*var\(--focus-ring\);[\s\S]*outline-offset:\s*var\(--focus-offset\);/);
   assert.match(baseCss, /prefers-reduced-motion/);
   assert.match(baseCss, /\[data-theme='dark'\]/);
 });
