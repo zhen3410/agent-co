@@ -29,7 +29,8 @@ body {
 a {
   color: var(--color-primary);
   font-weight: var(--font-weight-medium);
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-skip-ink: auto;
 }
 
 a:hover,
