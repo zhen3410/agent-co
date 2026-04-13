@@ -55,12 +55,16 @@ export function ModelConnectionManagementPanel({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const trimmedApiKey = formState.apiKey.trim();
     const draft: AdminModelConnectionDraft = {
       name: formState.name.trim(),
       baseURL: formState.baseURL.trim(),
-      apiKey: formState.apiKey.trim(),
       enabled: formState.enabled
     };
+
+    if (!editingId || trimmedApiKey.length > 0) {
+      draft.apiKey = trimmedApiKey;
+    }
 
     setBusyAction(editingId ? 'update' : 'create');
     try {
@@ -120,6 +124,9 @@ export function ModelConnectionManagementPanel({
               type="password"
               value={formState.apiKey}
               onChange={handleChange}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
               placeholder={editingId ? '留空以保留现有密钥' : 'sk-...'}
               style={fieldStyle}
             />

@@ -4,10 +4,11 @@ import { Button } from '../../../shared/ui';
 export interface AdminTokenGateProps {
   onSubmit: (token: string) => void;
   busy?: boolean;
+  initialValue?: string;
 }
 
-export function AdminTokenGate({ onSubmit, busy = false }: AdminTokenGateProps) {
-  const [token, setToken] = useState('');
+export function AdminTokenGate({ onSubmit, busy = false, initialValue = '' }: AdminTokenGateProps) {
+  const [token, setToken] = useState(initialValue);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -40,9 +41,13 @@ export function AdminTokenGate({ onSubmit, busy = false }: AdminTokenGateProps) 
             id="admin-token"
             name="admin-token"
             type="password"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             value={token}
             onChange={(event) => setToken(event.target.value)}
-            placeholder="integration-test-admin-token-1234567890"
+            placeholder="x-admin-token-••••••"
             style={fieldStyle}
           />
         </label>

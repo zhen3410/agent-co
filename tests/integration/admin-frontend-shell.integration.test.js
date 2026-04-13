@@ -586,6 +586,288 @@ test('编辑保存失败时保留当前草稿与编辑态，避免静默清空�
   assert.match(collectText(renderer.toJSON()), /取消编辑/);
 });
 
+test('编辑模型连接时留空 API Key 会保留现有密钥，而不是发送空字符串', async () => {
+  let receivedDraft = null;
+  const api = {
+    async listUsers() {
+      return { users: [{ username: 'admin', createdAt: 1, updatedAt: 2 }] };
+    },
+    async createUser() {
+      throw new Error('not used');
+    },
+    async updateUserPassword() {
+      throw new Error('not used');
+    },
+    async deleteUser() {
+      throw new Error('not used');
+    },
+    async listAgents() {
+      return {
+        agents: [],
+        pendingAgents: null,
+        pendingReason: null,
+        pendingUpdatedAt: null
+      };
+    },
+    async createAgent() {
+      throw new Error('not used');
+    },
+    async updateAgent() {
+      throw new Error('not used');
+    },
+    async deleteAgent() {
+      throw new Error('not used');
+    },
+    async applyPendingAgents() {
+      throw new Error('not used');
+    },
+    async listGroups() {
+      return { groups: [], updatedAt: 1 };
+    },
+    async createGroup() {
+      throw new Error('not used');
+    },
+    async updateGroup() {
+      throw new Error('not used');
+    },
+    async deleteGroup() {
+      throw new Error('not used');
+    },
+    async listModelConnections() {
+      return {
+        connections: [{
+          id: 'conn-1',
+          name: 'Primary',
+          baseURL: 'https://models.example.com/v1',
+          apiKeyMasked: 'sk-***',
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 2
+        }]
+      };
+    },
+    async createModelConnection() {
+      throw new Error('not used');
+    },
+    async updateModelConnection(id, draft) {
+      receivedDraft = draft;
+      return {
+        success: true,
+        connection: {
+          id,
+          name: draft.name,
+          baseURL: draft.baseURL,
+          apiKeyMasked: 'sk-***',
+          enabled: draft.enabled,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      };
+    },
+    async deleteModelConnection() {
+      throw new Error('not used');
+    },
+    async testModelConnection() {
+      throw new Error('not used');
+    }
+  };
+
+  const renderer = await renderAdminPage({ api, initialAuthToken: 'token-123' });
+
+  await act(async () => {
+    findByAction(renderer, 'edit-model-connection:conn-1').props.onClick();
+    await flushEffects();
+  });
+  await changeField(renderer, 'connection-baseURL', 'https://updated.example.com/v1');
+  await submitForm(renderer, 'model-connection-editor');
+
+  assert.equal(receivedDraft.baseURL, 'https://updated.example.com/v1');
+  assert.equal('apiKey' in receivedDraft, false);
+});
+
+test('编辑 API 智能体时会保留未暴露在表单中的温度与 token 上限配置', async () => {
+  let receivedAgent = null;
+  const api = {
+    async listUsers() {
+      return { users: [{ username: 'admin', createdAt: 1, updatedAt: 2 }] };
+    },
+    async createUser() {
+      throw new Error('not used');
+    },
+    async updateUserPassword() {
+      throw new Error('not used');
+    },
+    async deleteUser() {
+      throw new Error('not used');
+    },
+    async listAgents() {
+      return {
+        agents: [{
+          name: 'planner',
+          avatar: '🧭',
+          personality: '计划',
+          color: '#111827',
+          systemPrompt: 'plan',
+          executionMode: 'api',
+          apiConnectionId: 'conn-1',
+          apiModel: 'gpt-test',
+          apiTemperature: 0.35,
+          apiMaxTokens: 4096
+        }],
+        pendingAgents: null,
+        pendingReason: null,
+        pendingUpdatedAt: null
+      };
+    },
+    async createAgent() {
+      throw new Error('not used');
+    },
+    async updateAgent(name, input) {
+      receivedAgent = input.agent;
+      return {
+        success: true,
+        applyMode: 'immediate',
+        agent: input.agent
+      };
+    },
+    async deleteAgent() {
+      throw new Error('not used');
+    },
+    async applyPendingAgents() {
+      throw new Error('not used');
+    },
+    async listGroups() {
+      return { groups: [], updatedAt: 1 };
+    },
+    async createGroup() {
+      throw new Error('not used');
+    },
+    async updateGroup() {
+      throw new Error('not used');
+    },
+    async deleteGroup() {
+      throw new Error('not used');
+    },
+    async listModelConnections() {
+      return {
+        connections: [{
+          id: 'conn-1',
+          name: 'Primary',
+          baseURL: 'https://models.example.com/v1',
+          apiKeyMasked: 'sk-***',
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 2
+        }]
+      };
+    },
+    async createModelConnection() {
+      throw new Error('not used');
+    },
+    async updateModelConnection() {
+      throw new Error('not used');
+    },
+    async deleteModelConnection() {
+      throw new Error('not used');
+    },
+    async testModelConnection() {
+      throw new Error('not used');
+    }
+  };
+
+  const renderer = await renderAdminPage({ api, initialAuthToken: 'token-123' });
+  const agentPanel = renderer.root.findByProps({ 'data-admin-panel': 'agents' });
+
+  await act(async () => {
+    agentPanel.findAll((node) => node.type === 'button' && collectText(node.children).includes('编辑'))[0].props.onClick();
+    await flushEffects();
+  });
+  await changeField(renderer, 'agent-personality', '更新后的计划');
+  await submitForm(renderer, 'agent-editor');
+
+  assert.equal(receivedAgent.personality, '更新后的计划');
+  assert.equal(receivedAgent.apiTemperature, 0.35);
+  assert.equal(receivedAgent.apiMaxTokens, 4096);
+});
+
+test('管理员 Token 失效后可在当前页切换 Token 并重新加载，同时 token 输入禁用自动填充', async () => {
+  const originalFetch = global.fetch;
+
+  function jsonResponse(status, payload, statusText = 'OK') {
+    return new Response(JSON.stringify(payload), {
+      status,
+      statusText,
+      headers: { 'content-type': 'application/json' }
+    });
+  }
+
+  global.fetch = async (url, init = {}) => {
+    const headers = headersToObject(init.headers);
+    const token = headers['x-admin-token'];
+    const pathname = new URL(String(url), 'http://127.0.0.1').pathname;
+
+    if (token === 'bad-token') {
+      return jsonResponse(401, { error: { message: '管理员 Token 已失效' } }, 'Unauthorized');
+    }
+
+    switch (pathname) {
+      case '/api/users':
+        return jsonResponse(200, { users: [{ username: 'admin', createdAt: 1, updatedAt: 2 }] });
+      case '/api/agents':
+        return jsonResponse(200, {
+          agents: [{
+            name: 'planner',
+            avatar: '🧭',
+            personality: '计划',
+            color: '#111827',
+            systemPrompt: 'plan',
+            executionMode: 'cli',
+            cliName: 'codex'
+          }],
+          pendingAgents: null,
+          pendingReason: null,
+          pendingUpdatedAt: null
+        });
+      case '/api/groups':
+        return jsonResponse(200, { groups: [], updatedAt: 1 });
+      case '/api/model-connections':
+        return jsonResponse(200, { connections: [] });
+      default:
+        throw new Error(`unexpected path: ${pathname}`);
+    }
+  };
+
+  try {
+    const renderer = await renderAdminPage({ initialAuthToken: 'bad-token' });
+
+    let text = collectText(renderer.toJSON());
+    assert.match(text, /管理员 Token 已失效/);
+    assert.match(text, /更换 Token/);
+
+    await act(async () => {
+      renderer.root.findAll((node) => node.type === 'button' && collectText(node.children).includes('更换 Token'))[0].props.onClick();
+      await flushEffects();
+    });
+
+    const tokenField = findByName(renderer, 'admin-token');
+    assert.equal(tokenField.props.autoComplete, 'off');
+    assert.equal(tokenField.props.spellCheck, false);
+    assert.match(String(tokenField.props.placeholder || ''), /x-admin-token/i);
+
+    await changeField(renderer, 'admin-token', 'good-token');
+    await act(async () => {
+      renderer.root.findAllByType('form')[0].props.onSubmit({ preventDefault() {} });
+      await flushEffects();
+    });
+
+    text = collectText(renderer.toJSON());
+    assert.match(text, /planner/);
+    assert.doesNotMatch(text, /管理员 Token 已失效/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('已加载旧数据后刷新失败仍会显式暴露错误，同时保留旧列表内容', async () => {
   let loadUsersCalls = 0;
   const api = {

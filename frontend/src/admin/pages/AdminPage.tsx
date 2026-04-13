@@ -87,6 +87,7 @@ function validateGroupMembers(group: AdminGroup, agents: AdminAgent[]): AdminGro
 export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
   const runtimeConfig = getMergedRuntimeConfig();
   const [authToken, setAuthToken] = useState(initialAuthToken);
+  const [isTokenEditorVisible, setIsTokenEditorVisible] = useState(false);
   const [resources, setResources] = useState<AdminResources>(EMPTY_RESOURCES);
   const [loadState, setLoadState] = useState<LoadState>('idle');
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
@@ -158,6 +159,20 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
 
   function showError(error: unknown, fallback: string) {
     setNotice({ tone: 'error', message: toErrorMessage(error, fallback) });
+  }
+
+  function openTokenEditor() {
+    setIsTokenEditorVisible(true);
+    setNotice(null);
+    setErrorMessage(null);
+  }
+
+  function handleAuthTokenSubmit(token: string) {
+    setIsTokenEditorVisible(false);
+    setNotice(null);
+    setErrorMessage(null);
+    setAuthToken(token);
+    setReloadNonce((value) => value + 1);
   }
 
   async function runMutation<T>(action: () => Promise<T>, fallbackMessage: string): Promise<T> {
@@ -385,6 +400,7 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
   const activeNotice = loadState === 'error' && errorMessage
     ? { tone: 'error' as const, message: errorMessage }
     : notice;
+  const showTokenGate = !api && (!canLoad || isTokenEditorVisible);
 
   const statusLabel = !canLoad
     ? '等待认证'
@@ -410,8 +426,13 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
 
   let panelContent = null;
 
-  if (!canLoad) {
-    panelContent = <AdminTokenGate onSubmit={setAuthToken} busy={loadState === 'loading'} />;
+  if (showTokenGate) {
+    panelContent = (
+      <AdminTokenGate
+        onSubmit={handleAuthTokenSubmit}
+        busy={loadState === 'loading'}
+      />
+    );
   } else if (loadState === 'loading' && !hasLoadedData) {
     panelContent = <Spinner label="正在加载管理工作台…" />;
   } else if (loadState === 'error' && !hasLoadedData) {
@@ -419,7 +440,16 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
       <ErrorState
         title="管理资源加载失败"
         message={errorMessage || '请检查管理员 Token 或服务状态。'}
-        action={<Button onClick={() => setReloadNonce((value) => value + 1)}>重试</Button>}
+        action={(
+          <div style={errorActionsStyle}>
+            <Button onClick={() => setReloadNonce((value) => value + 1)}>重试</Button>
+            {!api ? (
+              <Button variant="secondary" onClick={openTokenEditor}>
+                更换 Token
+              </Button>
+            ) : null}
+          </div>
+        )}
       />
     );
   } else {
@@ -511,7 +541,14 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
               <p style={resourceTitleStyle}>资源区段</p>
               <p style={resourceLeadStyle}>表单、列表与反馈都保持轻量编排，减少传统后台面板的沉重感。</p>
             </div>
-            <div style={resourceHintStyle}>按资源分区浏览 · 直接在当前控制台完成编辑</div>
+            <div style={resourceHeaderActionsStyle}>
+              <div style={resourceHintStyle}>按资源分区浏览 · 直接在当前控制台完成编辑</div>
+              {!api && canLoad && !showTokenGate ? (
+                <Button variant="secondary" onClick={openTokenEditor}>
+                  更换 Token
+                </Button>
+              ) : null}
+            </div>
           </div>
 
           <AdminFeatureNotice notice={activeNotice}>
@@ -659,6 +696,14 @@ const resourceHeaderStyle = {
   paddingBottom: 'var(--space-3)'
 } as const;
 
+const resourceHeaderActionsStyle = {
+  alignItems: 'center',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-3)',
+  justifyContent: 'flex-end'
+} as const;
+
 const resourceTitleStyle = {
   color: 'var(--color-text)',
   fontWeight: 'var(--font-weight-semibold)',
@@ -679,4 +724,10 @@ const resourceHintStyle = {
 const panelStackStyle = {
   display: 'grid',
   gap: 'var(--space-4)'
+} as const;
+
+const errorActionsStyle = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)'
 } as const;

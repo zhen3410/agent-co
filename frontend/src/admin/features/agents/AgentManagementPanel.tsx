@@ -65,6 +65,7 @@ export function AgentManagementPanel({
   onApplyPending
 }: AgentManagementPanelProps) {
   const [editingName, setEditingName] = useState<string | null>(null);
+  const [editingAgentSnapshot, setEditingAgentSnapshot] = useState<AdminAgent | null>(null);
   const [formState, setFormState] = useState<AgentFormState>(EMPTY_FORM);
 
   function handleChange(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
@@ -88,7 +89,9 @@ export function AgentManagementPanel({
       executionMode: formState.executionMode,
       cliName: formState.executionMode === 'cli' ? formState.cliName : undefined,
       apiConnectionId: formState.executionMode === 'api' ? formState.apiConnectionId || undefined : undefined,
-      apiModel: formState.executionMode === 'api' ? formState.apiModel || undefined : undefined
+      apiModel: formState.executionMode === 'api' ? formState.apiModel || undefined : undefined,
+      apiTemperature: formState.executionMode === 'api' ? editingAgentSnapshot?.apiTemperature : undefined,
+      apiMaxTokens: formState.executionMode === 'api' ? editingAgentSnapshot?.apiMaxTokens : undefined
     };
 
     const succeeded = editingName
@@ -97,6 +100,7 @@ export function AgentManagementPanel({
 
     if (succeeded) {
       setEditingName(null);
+      setEditingAgentSnapshot(null);
       setFormState(EMPTY_FORM);
     }
   }
@@ -123,6 +127,7 @@ export function AgentManagementPanel({
               variant="secondary"
               onClick={() => {
                 setEditingName(null);
+                setEditingAgentSnapshot(null);
                 setFormState(EMPTY_FORM);
               }}
             >
@@ -243,6 +248,7 @@ export function AgentManagementPanel({
                     <div style={tableActionsStyle}>
                       <Button variant="secondary" onClick={() => {
                         setEditingName(agent.name);
+                        setEditingAgentSnapshot(agent);
                         setFormState(toFormState(agent));
                       }}>
                         编辑
