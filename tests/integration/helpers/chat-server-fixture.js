@@ -40,7 +40,7 @@ function parseSetCookie(setCookieHeader) {
 let didEnsureBuild = false;
 
 function ensureBuildArtifacts() {
-  if (didEnsureBuild) {
+  if (didEnsureBuild && existsSync(join(process.cwd(), 'dist', 'server.js'))) {
     return;
   }
 

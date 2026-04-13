@@ -30,7 +30,7 @@ function getRandomPort() {
 let didEnsureBuild = false;
 
 function ensureBuildArtifacts() {
-  if (didEnsureBuild) {
+  if (didEnsureBuild && existsSync(join(process.cwd(), 'dist', 'auth-admin-server.js'))) {
     return;
   }
 

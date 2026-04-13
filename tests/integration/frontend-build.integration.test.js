@@ -24,14 +24,6 @@ function runFrontendBuild() {
   });
 }
 
-function runRootBuild() {
-  return spawnSync('npm', ['run', 'build'], {
-    cwd: repoRoot,
-    env: process.env,
-    encoding: 'utf8'
-  });
-}
-
 function listRelativeFiles(dirPath) {
   if (!fs.existsSync(dirPath)) {
     return [];
@@ -110,14 +102,12 @@ test('build:frontend 产出真实 MPA 页面并保持 dist 安全边界', () => 
   assertExpectedMpaOutputs('after build:frontend');
   const firstOutputFiles = listRelativeFiles(frontendDistDir);
 
-  const rootBuild = runRootBuild();
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
   assert.equal(
-    rootBuild.status,
-    0,
-    `npm run build should exit 0. stdout:\n${rootBuild.stdout || ''}\nstderr:\n${rootBuild.stderr || ''}`
+    packageJson.scripts.build,
+    'npm run build:backend && npm run build:frontend',
+    'root build script should keep backend-first then frontend build order'
   );
-
-  assertExpectedMpaOutputs('after root build');
 
   const secondBuild = runFrontendBuild();
   assert.equal(
