@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '../../shared/layouts/AppShell';
 import { Button, Input } from '../../shared/ui';
 import { getMergedRuntimeConfig } from '../../shared/config/runtime-config';
-import { HttpClientError } from '../../shared/lib/http/http-client';
 import { ChatComposer } from '../features/composer/ChatComposer';
 import { ChatMessageList } from '../features/message-list/ChatMessageList';
 import { SessionSidebar } from '../features/session-sidebar/SessionSidebar';
@@ -369,10 +368,6 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
   const [historyState, setHistoryState] = useState<ChatHistoryResponse | null>(initialState ? normalizeHistoryState(initialState) : null);
   const [loadState, setLoadState] = useState<LoadState>(initialState ? 'ready' : 'loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(initialAuthStatus ?? null);
-  const [loginBusy, setLoginBusy] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [reloadNonce, setReloadNonce] = useState(0);
   const [panelRefreshSignal, setPanelRefreshSignal] = useState(0);
   const [isSessionDrawerOpen, setIsSessionDrawerOpen] = useState(false);
@@ -405,18 +400,11 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
     setErrorMessage(null);
   }, []);
 
-  const isLoginGateVisible = Boolean(authStatus?.authEnabled && !authStatus?.authenticated);
-  const canSubmitLogin = loginForm.username.trim().length > 0 && loginForm.password.trim().length > 0;
-
   useEffect(() => {
     let cancelled = false;
 
     if (initialState && reloadNonce === 0) {
       applyHistoryState(initialState);
-      return undefined;
-    }
-
-    if (isLoginGateVisible) {
       return undefined;
     }
 
@@ -434,12 +422,6 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
         if (cancelled) {
           return;
         }
-        if (error instanceof HttpClientError && error.status === 401) {
-          setAuthStatus({ authEnabled: true, authenticated: false });
-          setLoadState('ready');
-          setErrorMessage(null);
-          return;
-        }
         setLoadState('error');
         setErrorMessage(error instanceof Error ? error.message : '加载会话失败');
       });
@@ -447,48 +429,7 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
     return () => {
       cancelled = true;
     };
-  }, [applyHistoryState, chatApi, initialState, isLoginGateVisible, reloadNonce]);
-
-  const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!canSubmitLogin || loginBusy) {
-      return;
-    }
-
-    setLoginBusy(true);
-    setLoginError(null);
-
-    try {
-      const response = await fetch('/api/login', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          username: loginForm.username.trim(),
-          password: loginForm.password
-        })
-      });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        const message = typeof payload?.error === 'string'
-          ? payload.error
-          : (typeof payload?.message === 'string' ? payload.message : '登录失败，请稍后再试');
-        setLoginError(message);
-        return;
-      }
-
-      setAuthStatus({
-        authEnabled: payload?.authEnabled ?? true,
-        authenticated: true
-      });
-      setReloadNonce((value) => value + 1);
-    } catch (error) {
-      setLoginError(error instanceof Error ? error.message : '登录失败，请稍后再试');
-    } finally {
-      setLoginBusy(false);
-    }
-  };
+  }, [applyHistoryState, chatApi, initialState, reloadNonce]);
 
   useEffect(() => {
     const activeSessionId = historyState?.activeSessionId;
@@ -591,6 +532,8 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
     }
   };
 
+  const isLoginGateVisible = Boolean(initialAuthStatus?.authEnabled && !initialAuthStatus?.authenticated);
+
   if (isLoginGateVisible) {
     return (
       <div data-chat-page="login" className="chat-login">
@@ -616,18 +559,13 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
                 </div>
               </div>
 
-              <form className="chat-login__form" onSubmit={handleLoginSubmit}>
+              <form className="chat-login__form" data-chat-login="form">
                 <div className="chat-login__fields">
                   <Input
                     label="用户名"
                     name="username"
                     autoComplete="username"
                     placeholder="your-name@workspace"
-                    value={loginForm.username}
-                    onChange={(event) => setLoginForm((current) => ({
-                      ...current,
-                      username: event.target.value
-                    }))}
                     required
                     containerClassName="chat-login__field"
                   />
@@ -637,19 +575,13 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
                     type="password"
                     autoComplete="current-password"
                     placeholder="••••••••"
-                    value={loginForm.password}
-                    onChange={(event) => setLoginForm((current) => ({
-                      ...current,
-                      password: event.target.value
-                    }))}
                     required
                     containerClassName="chat-login__field"
                   />
                 </div>
-                {loginError ? <p className="chat-login__error">{loginError}</p> : null}
                 <div className="chat-login__actions">
-                  <Button type="submit" disabled={!canSubmitLogin || loginBusy}>
-                    {loginBusy ? '正在进入…' : '进入工作台'}
+                  <Button type="button" data-chat-login-action="submit">
+                    进入工作台
                   </Button>
                   <span className="chat-login__assist">如需开通账号，请联系管理员。</span>
                 </div>

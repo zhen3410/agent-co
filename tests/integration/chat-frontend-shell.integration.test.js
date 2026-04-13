@@ -258,6 +258,8 @@ test('ChatPage 渲染工作台登录入口提示与稳定的登录面板标记',
 
   assert.match(html, /data-chat-page="login"/);
   assert.match(html, /data-chat-login="panel"/);
+  assert.match(html, /data-chat-login="form"/);
+  assert.match(html, /data-chat-login-action="submit"/);
   assert.match(html, /进入工作台/);
   assert.match(html, /继续你的会话/);
 });
