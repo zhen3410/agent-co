@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
+import { ThemeToggle } from '../theme/theme';
 
 export interface AppShellProps {
   title: ReactNode;
@@ -25,7 +26,10 @@ export function AppShell({ title, subtitle, navigation, actions, children, style
           <h1 className="layout-app-shell__title">{title}</h1>
           {subtitle ? <p className="layout-app-shell__subtitle">{subtitle}</p> : null}
         </div>
-        <div className="layout-app-shell__actions">{actions}</div>
+        <div className="layout-app-shell__actions">
+          <ThemeToggle />
+          {actions}
+        </div>
       </header>
       <main
         data-layout="app-shell-main"

@@ -23,6 +23,13 @@
   gap: 0.1rem;
 }
 
+.home-nav__actions {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
 .home-nav__logo {
   color: var(--color-text-primary);
   font-size: 1.1rem;
@@ -298,6 +305,10 @@
 
   .home-nav__links {
     flex-wrap: wrap;
+  }
+
+  .home-nav__actions {
+    width: 100%;
   }
 }
 

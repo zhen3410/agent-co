@@ -74,6 +74,7 @@ test('chat and home shell entrypoints now serve the built frontend pages and ret
 
 test('chat frontend bindings now live in modular React entrypoint and services rather than removed public scripts', () => {
   const chatPageSource = readSourceFile('frontend/src/chat/pages/ChatPage.tsx');
+  const chatMainSource = readSourceFile('frontend/src/entries/chat-main.tsx');
   const chatApiSource = readSourceFile('frontend/src/chat/services/chat-api.ts');
   const chatRealtimeSource = readSourceFile('frontend/src/chat/services/chat-realtime.ts');
 
@@ -95,6 +96,12 @@ test('chat frontend bindings now live in modular React entrypoint and services r
     'data-chat-mobile-secondary="panels"',
     '@media (max-width: 959px)'
   ], 'chat page should compose the React frontend modules');
+
+  assertContainsAll(chatMainSource, [
+    "loadInitialChatAuthStatus",
+    "'/api/auth-status'",
+    'initialAuthStatus={authStatus}'
+  ], 'chat entrypoint should bootstrap auth status before mounting the chat page');
 
   assertContainsAll(chatApiSource, [
     "return client.request<ChatHistoryResponse>('/api/history'",
@@ -122,6 +129,7 @@ test('built chat asset preserves the current shell contract without resurrecting
   const chatAssetSource = fs.readFileSync(path.join(frontendDistDir, chatManifestEntry.file), 'utf8');
 
   assertContainsAll(chatAssetSource, [
+    '/api/auth-status',
     '/api/history',
     '/api/chat',
     '/api/ws/session-events',

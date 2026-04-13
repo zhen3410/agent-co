@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '../../shared/layouts/AppShell';
 import { Button, Input } from '../../shared/ui';
 import { getMergedRuntimeConfig } from '../../shared/config/runtime-config';
+import { ThemeToggle } from '../../shared/theme/theme';
 import { ChatComposer } from '../features/composer/ChatComposer';
 import { ChatMessageList } from '../features/message-list/ChatMessageList';
 import { SessionSidebar } from '../features/session-sidebar/SessionSidebar';
@@ -10,6 +11,7 @@ import { RuntimeStatusBadge } from '../features/runtime-status/RuntimeStatusBadg
 import { CallGraphPanel } from '../features/call-graph/CallGraphPanel';
 import { resolveChatRealtimeUrl } from '../services/chat-realtime-url';
 import { createChatApi, type ChatApi } from '../services/chat-api';
+import type { ChatAuthStatus } from '../bootstrap/chat-bootstrap';
 import {
   appendIncomingChatRealtimeData,
   createChatRealtimeConnection,
@@ -21,13 +23,12 @@ import type { ChatHistoryResponse, ChatMessage, ChatRealtimeEnvelope } from '../
 
 export interface ChatPageProps {
   initialState?: ChatHistoryResponse;
-  initialAuthStatus?: AuthStatus;
+  initialAuthStatus?: ChatAuthStatus;
   api?: ChatApi;
   createRealtimeConnection?: (options: ChatRealtimeOptions) => ChatRealtimeConnection;
 }
 
 type LoadState = 'loading' | 'ready' | 'error';
-type AuthStatus = { authEnabled: boolean; authenticated: boolean };
 
 const CHAT_PAGE_SHELL_STYLES = `
   .chat-page-shell {
@@ -218,6 +219,10 @@ const CHAT_LOGIN_STYLES = `
   .chat-login__tagline {
     color: var(--color-text-muted);
     margin: 0;
+  }
+
+  .chat-login__theme-toggle {
+    margin-left: auto;
   }
 
   .chat-login__panel {
@@ -550,6 +555,7 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
             <div className="chat-login__brand-row">
               <span className="chat-login__brand">agent-co</span>
               <span className="chat-login__badge">workspace</span>
+              <ThemeToggle className="chat-login__theme-toggle" />
             </div>
             <p className="chat-login__tagline">协作式 AI 工作台入口 · 登录后继续你的会话与执行记录。</p>
           </header>

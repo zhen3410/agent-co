@@ -220,6 +220,7 @@ test('HomePage 渲染首页入口结构与主行动按钮', () => {
   assert.match(html, /data-home-hero="intro"/);
   assert.match(html, /data-home-cta="primary"/);
   assert.match(html, /data-home-workflow="preview"/);
+  assert.match(html, /data-theme-toggle="group"/);
   assert.match(html, /开发者/);
   assert.match(html, /小团队/);
 });
@@ -241,6 +242,7 @@ test('ChatPage 渲染聊天页壳、会话侧边栏、消息列表与输入区',
   assert.match(html, /data-chat-sidebar="sessions"/);
   assert.match(html, /data-chat-message-list="messages"/);
   assert.match(html, /data-chat-composer="composer"/);
+  assert.match(html, /data-theme-toggle="group"/);
   assert.match(html, /默认会话/);
   assert.match(html, /你好/);
   assert.match(html, /已收到/);

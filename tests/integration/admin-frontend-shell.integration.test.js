@@ -345,11 +345,13 @@ test('authenticated AdminPage 渲染稳定导航，并加载 agents/groups/users
   const consoleShell = renderer.root.findByProps({ 'data-admin-page': 'console' });
   const overviewRegion = renderer.root.findByProps({ 'data-admin-region': 'overview' });
   const resourceSectionsRegion = renderer.root.findByProps({ 'data-admin-region': 'resource-sections' });
+  const themeToggle = renderer.root.findByProps({ 'data-theme-toggle': 'group' });
 
   assert.equal(new Set(calls).size, 4);
   assert.equal(consoleShell.props['data-admin-density'], 'console');
   assert.equal(overviewRegion.type, 'section');
   assert.equal(resourceSectionsRegion.type, 'section');
+  assert.equal(themeToggle.type, 'div');
   assert.match(text, /agent-co admin/i);
   assert.match(text, /管理工作台/);
   assert.match(text, /planner/);

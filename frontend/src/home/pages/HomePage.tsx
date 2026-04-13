@@ -1,6 +1,14 @@
 import { Surface } from '../../shared/ui';
+import { getMergedRuntimeConfig } from '../../shared/config/runtime-config';
+import { resolveAdminPageUrl } from '../../shared/config/admin-url';
+import { ThemeToggle } from '../../shared/theme/theme';
 
 export function HomePage() {
+  const adminPageUrl = resolveAdminPageUrl({
+    config: getMergedRuntimeConfig(),
+    location: typeof window === 'undefined' ? undefined : window.location
+  });
+
   return (
     <div className="home-page" data-home-page="shell">
       <div className="home-page__frame">
@@ -9,9 +17,12 @@ export function HomePage() {
             <span className="home-nav__logo">agent-co</span>
             <span className="home-nav__tag">协作式 AI 工作台</span>
           </div>
-          <div className="home-nav__links">
-            <a className="home-nav__link" href="/chat.html">进入控制台</a>
-            <a className="home-nav__link" href="/admin.html">管理入口</a>
+          <div className="home-nav__actions">
+            <ThemeToggle />
+            <div className="home-nav__links">
+              <a className="home-nav__link" href="/chat.html">进入控制台</a>
+              <a className="home-nav__link" href={adminPageUrl}>管理入口</a>
+            </div>
           </div>
         </nav>
 
@@ -36,7 +47,7 @@ export function HomePage() {
                 className="ui-button home-hero__button"
                 data-variant="secondary"
                 data-home-cta="secondary"
-                href="/admin.html"
+                href={adminPageUrl}
               >
                 查看协作配置
               </a>
@@ -146,7 +157,7 @@ export function HomePage() {
           <div className="home-footer__copy">agent-co · 为开发者与小团队打造的 AI 协作控制台</div>
           <div className="home-footer__links">
             <a href="/chat.html">进入聊天</a>
-            <a href="/admin.html">管理入口</a>
+            <a href={adminPageUrl}>管理入口</a>
             <a href="/deps-monitor.html">系统监控</a>
           </div>
         </footer>
