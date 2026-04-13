@@ -6,15 +6,16 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   error?: ReactNode;
 }
 
-export function Input({ id, label, hint, error, style, ...props }: InputProps) {
+export function Input({ id, label, hint, error, className, style, ...props }: InputProps) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
   const descriptionId = hint ? `${inputId}-hint` : undefined;
   const errorId = error ? `${inputId}-error` : undefined;
+  const resolvedInputClassName = ['ui-input__field', className].filter(Boolean).join(' ');
 
   return (
-    <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
-      <label htmlFor={inputId} style={{ fontWeight: 'var(--font-weight-medium)' }}>
+    <div data-ui="input" className="ui-input">
+      <label htmlFor={inputId} className="ui-input__label">
         {label}
       </label>
       <input
@@ -22,22 +23,16 @@ export function Input({ id, label, hint, error, style, ...props }: InputProps) {
         id={inputId}
         aria-describedby={[descriptionId, errorId].filter(Boolean).join(' ') || undefined}
         aria-invalid={error ? true : undefined}
-        style={{
-          backgroundColor: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-md)',
-          color: 'var(--color-text)',
-          padding: 'var(--space-2) var(--space-3)',
-          ...style
-        }}
+        className={resolvedInputClassName}
+        style={style}
       />
       {hint ? (
-        <small id={descriptionId} style={{ color: 'var(--color-text-muted)' }}>
+        <small id={descriptionId} className="ui-input__hint">
           {hint}
         </small>
       ) : null}
       {error ? (
-        <small id={errorId} style={{ color: 'var(--status-error)' }}>
+        <small id={errorId} className="ui-input__error">
           {error}
         </small>
       ) : null}

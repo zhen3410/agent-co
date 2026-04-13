@@ -16,45 +16,30 @@ export interface TableProps<T> {
 export function Table<T>({ columns, rows, getRowKey, caption }: TableProps<T>) {
   return (
     <table
-      style={{
-        backgroundColor: 'var(--color-surface)',
-        borderCollapse: 'collapse',
-        borderRadius: 'var(--radius-md)',
-        overflow: 'hidden',
-        width: '100%'
-      }}
+      data-ui="table"
+      className="ui-table"
     >
-      {caption ? <caption style={{ marginBottom: 'var(--space-2)' }}>{caption}</caption> : null}
-      <thead>
-        <tr>
+      {caption ? <caption className="ui-table__caption">{caption}</caption> : null}
+      <thead className="ui-table__head">
+        <tr className="ui-table__row">
           {columns.map((column) => (
             <th
               key={column.key}
               scope="col"
-              style={{
-                borderBottom: '1px solid var(--color-border)',
-                color: 'var(--color-text)',
-                fontWeight: 'var(--font-weight-semibold)',
-                padding: 'var(--space-2) var(--space-3)',
-                textAlign: 'left'
-              }}
+              className="ui-table__head-cell"
             >
               {column.header}
             </th>
           ))}
         </tr>
       </thead>
-      <tbody>
+      <tbody className="ui-table__body">
         {rows.map((row, rowIndex) => (
-          <tr key={getRowKey(row, rowIndex)}>
+          <tr key={getRowKey(row, rowIndex)} className="ui-table__row">
             {columns.map((column) => (
               <td
                 key={column.key}
-                style={{
-                  borderBottom: '1px solid var(--color-border)',
-                  color: 'var(--color-text)',
-                  padding: 'var(--space-2) var(--space-3)'
-                }}
+                className="ui-table__cell"
               >
                 {column.render(row)}
               </td>

@@ -10,30 +10,17 @@ export interface CardProps {
 export function Card({ title, actions, children, style }: CardProps) {
   return (
     <article
-      style={{
-        backgroundColor: 'var(--color-surface)',
-        border: '1px solid var(--color-border)',
-        borderRadius: 'var(--radius-lg)',
-        boxShadow: 'var(--shadow-sm)',
-        padding: 'var(--space-4)',
-        ...style
-      }}
+      data-ui="card"
+      className="ui-card"
+      style={style}
     >
       {title || actions ? (
-        <header
-          style={{
-            alignItems: 'center',
-            display: 'flex',
-            gap: 'var(--space-3)',
-            justifyContent: 'space-between',
-            marginBottom: 'var(--space-3)'
-          }}
-        >
-          {title ? <h2 style={{ margin: 0, fontSize: 'var(--font-size-lg)' }}>{title}</h2> : null}
-          {actions}
+        <header className="ui-card__header">
+          {title ? <h2 className="ui-card__title">{title}</h2> : null}
+          {actions ? <div className="ui-card__actions">{actions}</div> : null}
         </header>
       ) : null}
-      <div>{children}</div>
+      <div className="ui-card__body">{children}</div>
     </article>
   );
 }
