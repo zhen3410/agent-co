@@ -246,6 +246,22 @@ test('ChatPage 渲染聊天页壳、会话侧边栏、消息列表与输入区',
   assert.match(html, /已收到/);
 });
 
+test('ChatPage 渲染工作台登录入口提示与稳定的登录面板标记', () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const html = renderToStaticMarkup(React.createElement(ChatPage, {
+    initialAuthStatus: {
+      authEnabled: true,
+      authenticated: false
+    }
+  }));
+
+  assert.match(html, /data-chat-page="login"/);
+  assert.match(html, /data-chat-login="panel"/);
+  assert.match(html, /进入工作台/);
+  assert.match(html, /继续你的会话/);
+});
+
 test('ChatPage 渲染 runtime 状态、timeline 与 call-graph 二级面板', () => {
   const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
 

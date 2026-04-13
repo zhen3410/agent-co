@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { AppShell } from '../../shared/layouts/AppShell';
-import { Button } from '../../shared/ui';
+import { Button, Input } from '../../shared/ui';
 import { getMergedRuntimeConfig } from '../../shared/config/runtime-config';
+import { HttpClientError } from '../../shared/lib/http/http-client';
 import { ChatComposer } from '../features/composer/ChatComposer';
 import { ChatMessageList } from '../features/message-list/ChatMessageList';
 import { SessionSidebar } from '../features/session-sidebar/SessionSidebar';
@@ -21,11 +22,13 @@ import type { ChatHistoryResponse, ChatMessage, ChatRealtimeEnvelope } from '../
 
 export interface ChatPageProps {
   initialState?: ChatHistoryResponse;
+  initialAuthStatus?: AuthStatus;
   api?: ChatApi;
   createRealtimeConnection?: (options: ChatRealtimeOptions) => ChatRealtimeConnection;
 }
 
 type LoadState = 'loading' | 'ready' | 'error';
+type AuthStatus = { authEnabled: boolean; authenticated: boolean };
 
 const CHAT_PAGE_SHELL_STYLES = `
   .chat-page-shell {
@@ -168,6 +171,161 @@ const CHAT_PAGE_SHELL_STYLES = `
   }
 `;
 
+const CHAT_LOGIN_STYLES = `
+  .chat-login {
+    background:
+      radial-gradient(circle at top right, rgba(219, 233, 255, 0.7), transparent 42%),
+      linear-gradient(180deg, rgba(245, 246, 251, 0.92) 0%, rgba(236, 240, 246, 0.96) 100%);
+    min-height: 100vh;
+    padding: var(--space-7) var(--space-4);
+  }
+
+  .chat-login__frame {
+    display: grid;
+    gap: var(--space-5);
+    margin: 0 auto;
+    max-width: 58rem;
+    width: 100%;
+  }
+
+  .chat-login__header {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .chat-login__brand-row {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .chat-login__brand {
+    font-size: clamp(1.5rem, 2vw, 2rem);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.04em;
+  }
+
+  .chat-login__badge {
+    background: var(--color-primary-soft);
+    border-radius: 999px;
+    color: var(--color-primary);
+    font-size: 0.75rem;
+    letter-spacing: 0.18em;
+    padding: 0.1rem 0.65rem;
+    text-transform: uppercase;
+  }
+
+  .chat-login__tagline {
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+
+  .chat-login__panel {
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: calc(var(--radius-xl) + 8px);
+    box-shadow: 0 32px 60px rgba(15, 23, 42, 0.12);
+    display: grid;
+    gap: var(--space-4);
+    padding: var(--space-5);
+  }
+
+  .chat-login__panel-grid {
+    align-items: start;
+    display: grid;
+    gap: var(--space-5);
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  }
+
+  .chat-login__eyebrow {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+
+  .chat-login__title {
+    font-size: 1.6rem;
+    margin: var(--space-2) 0 0;
+  }
+
+  .chat-login__lead {
+    color: var(--color-text-muted);
+    margin: var(--space-2) 0 0;
+  }
+
+  .chat-login__meta {
+    display: grid;
+    gap: var(--space-2);
+    margin-top: var(--space-4);
+  }
+
+  .chat-login__meta-item {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .chat-login__form {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .chat-login__fields {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .chat-login__field .ui-input__label {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .chat-login__field .ui-input__field {
+    background: rgba(248, 250, 252, 0.96);
+    border-color: rgba(148, 163, 184, 0.28);
+    border-radius: calc(var(--radius-lg) + 4px);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .chat-login__error {
+    color: var(--status-error);
+    font-size: var(--font-size-sm);
+    margin: 0;
+  }
+
+  .chat-login__actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: space-between;
+  }
+
+  .chat-login__assist {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .chat-login__footer {
+    color: var(--color-text-muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: space-between;
+  }
+
+  @media (max-width: 900px) {
+    .chat-login {
+      padding: var(--space-6) var(--space-4);
+    }
+
+    .chat-login__panel-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+`;
+
 function createOptimisticUserMessage(text: string): ChatMessage {
   return {
     id: `optimistic-${Date.now()}`,
@@ -194,7 +352,7 @@ function normalizeHistoryState(state: ChatHistoryResponse): ChatHistoryResponse 
   };
 }
 
-export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPageProps) {
+export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeConnection }: ChatPageProps) {
   const runtimeConfig = getMergedRuntimeConfig();
   const chatApi = useMemo(() => {
     if (api) {
@@ -211,6 +369,10 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
   const [historyState, setHistoryState] = useState<ChatHistoryResponse | null>(initialState ? normalizeHistoryState(initialState) : null);
   const [loadState, setLoadState] = useState<LoadState>(initialState ? 'ready' : 'loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(initialAuthStatus ?? null);
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [reloadNonce, setReloadNonce] = useState(0);
   const [panelRefreshSignal, setPanelRefreshSignal] = useState(0);
   const [isSessionDrawerOpen, setIsSessionDrawerOpen] = useState(false);
@@ -243,11 +405,18 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
     setErrorMessage(null);
   }, []);
 
+  const isLoginGateVisible = Boolean(authStatus?.authEnabled && !authStatus?.authenticated);
+  const canSubmitLogin = loginForm.username.trim().length > 0 && loginForm.password.trim().length > 0;
+
   useEffect(() => {
     let cancelled = false;
 
     if (initialState && reloadNonce === 0) {
       applyHistoryState(initialState);
+      return undefined;
+    }
+
+    if (isLoginGateVisible) {
       return undefined;
     }
 
@@ -265,6 +434,12 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
         if (cancelled) {
           return;
         }
+        if (error instanceof HttpClientError && error.status === 401) {
+          setAuthStatus({ authEnabled: true, authenticated: false });
+          setLoadState('ready');
+          setErrorMessage(null);
+          return;
+        }
         setLoadState('error');
         setErrorMessage(error instanceof Error ? error.message : '加载会话失败');
       });
@@ -272,7 +447,48 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
     return () => {
       cancelled = true;
     };
-  }, [applyHistoryState, chatApi, initialState, reloadNonce]);
+  }, [applyHistoryState, chatApi, initialState, isLoginGateVisible, reloadNonce]);
+
+  const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmitLogin || loginBusy) {
+      return;
+    }
+
+    setLoginBusy(true);
+    setLoginError(null);
+
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          username: loginForm.username.trim(),
+          password: loginForm.password
+        })
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const message = typeof payload?.error === 'string'
+          ? payload.error
+          : (typeof payload?.message === 'string' ? payload.message : '登录失败，请稍后再试');
+        setLoginError(message);
+        return;
+      }
+
+      setAuthStatus({
+        authEnabled: payload?.authEnabled ?? true,
+        authenticated: true
+      });
+      setReloadNonce((value) => value + 1);
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : '登录失败，请稍后再试');
+    } finally {
+      setLoginBusy(false);
+    }
+  };
 
   useEffect(() => {
     const activeSessionId = historyState?.activeSessionId;
@@ -374,6 +590,81 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
       throw error;
     }
   };
+
+  if (isLoginGateVisible) {
+    return (
+      <div data-chat-page="login" className="chat-login">
+        <style>{CHAT_LOGIN_STYLES}</style>
+        <div className="chat-login__frame">
+          <header className="chat-login__header">
+            <div className="chat-login__brand-row">
+              <span className="chat-login__brand">agent-co</span>
+              <span className="chat-login__badge">workspace</span>
+            </div>
+            <p className="chat-login__tagline">协作式 AI 工作台入口 · 登录后继续你的会话与执行记录。</p>
+          </header>
+
+          <section data-chat-login="panel" className="chat-login__panel">
+            <div className="chat-login__panel-grid">
+              <div>
+                <span className="chat-login__eyebrow">Workspace Entry</span>
+                <h2 className="chat-login__title">进入工作台</h2>
+                <p className="chat-login__lead">登录后继续你的会话、执行状态与协作节奏。</p>
+                <div className="chat-login__meta">
+                  <div className="chat-login__meta-item">集中查看任务对话与运行时间线。</div>
+                  <div className="chat-login__meta-item">账号统一管理，确保工作区资源安全。</div>
+                </div>
+              </div>
+
+              <form className="chat-login__form" onSubmit={handleLoginSubmit}>
+                <div className="chat-login__fields">
+                  <Input
+                    label="用户名"
+                    name="username"
+                    autoComplete="username"
+                    placeholder="your-name@workspace"
+                    value={loginForm.username}
+                    onChange={(event) => setLoginForm((current) => ({
+                      ...current,
+                      username: event.target.value
+                    }))}
+                    required
+                    containerClassName="chat-login__field"
+                  />
+                  <Input
+                    label="密码"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    value={loginForm.password}
+                    onChange={(event) => setLoginForm((current) => ({
+                      ...current,
+                      password: event.target.value
+                    }))}
+                    required
+                    containerClassName="chat-login__field"
+                  />
+                </div>
+                {loginError ? <p className="chat-login__error">{loginError}</p> : null}
+                <div className="chat-login__actions">
+                  <Button type="submit" disabled={!canSubmitLogin || loginBusy}>
+                    {loginBusy ? '正在进入…' : '进入工作台'}
+                  </Button>
+                  <span className="chat-login__assist">如需开通账号，请联系管理员。</span>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <footer className="chat-login__footer">
+            <span>安全会话由 agent-co 统一管理。</span>
+            <span>登录后可继续未完成的工作流。</span>
+          </footer>
+        </div>
+      </div>
+    );
+  }
 
   const safeState = historyState ?? {
     messages: [],
