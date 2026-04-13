@@ -376,6 +376,7 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
   const realtimeSeqRef = useRef<number>(typeof initialState?.latestEventSeq === 'number' ? initialState.latestEventSeq : 0);
   const realtimeSessionIdRef = useRef<string | null>(historyState?.activeSessionId ?? null);
   const realtimeSubscribedRef = useRef(false);
+  const isLoginGateVisible = Boolean(initialAuthStatus?.authEnabled && !initialAuthStatus?.authenticated);
 
   const notifyPanelsToRefresh = useCallback(() => {
     setPanelRefreshSignal((current) => current + 1);
@@ -403,6 +404,10 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
   useEffect(() => {
     let cancelled = false;
 
+    if (isLoginGateVisible) {
+      return undefined;
+    }
+
     if (initialState && reloadNonce === 0) {
       applyHistoryState(initialState);
       return undefined;
@@ -429,9 +434,13 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
     return () => {
       cancelled = true;
     };
-  }, [applyHistoryState, chatApi, initialState, reloadNonce]);
+  }, [applyHistoryState, chatApi, initialState, isLoginGateVisible, reloadNonce]);
 
   useEffect(() => {
+    if (isLoginGateVisible) {
+      return undefined;
+    }
+
     const activeSessionId = historyState?.activeSessionId;
     if (!activeSessionId || typeof window === 'undefined') {
       return undefined;
@@ -482,7 +491,7 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
     return () => {
       connection.disconnect();
     };
-  }, [historyState?.activeSessionId, notifyPanelsToRefresh, realtimeConnectionFactory]);
+  }, [historyState?.activeSessionId, isLoginGateVisible, notifyPanelsToRefresh, realtimeConnectionFactory]);
 
   const handleSubmit = async (message: string): Promise<void> => {
     const optimistic = createOptimisticUserMessage(message);
@@ -532,8 +541,6 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
     }
   };
 
-  const isLoginGateVisible = Boolean(initialAuthStatus?.authEnabled && !initialAuthStatus?.authenticated);
-
   if (isLoginGateVisible) {
     return (
       <div data-chat-page="login" className="chat-login">
@@ -559,14 +566,18 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
                 </div>
               </div>
 
-              <form className="chat-login__form" data-chat-login="form">
+              <div
+                className="chat-login__form"
+                data-chat-login="form"
+                role="group"
+                aria-label="登录入口展示"
+              >
                 <div className="chat-login__fields">
                   <Input
                     label="用户名"
                     name="username"
                     autoComplete="username"
                     placeholder="your-name@workspace"
-                    required
                     containerClassName="chat-login__field"
                   />
                   <Input
@@ -575,17 +586,16 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
                     type="password"
                     autoComplete="current-password"
                     placeholder="••••••••"
-                    required
                     containerClassName="chat-login__field"
                   />
                 </div>
                 <div className="chat-login__actions">
-                  <Button type="button" data-chat-login-action="submit">
+                  <Button type="button" data-chat-login-action="submit" disabled>
                     进入工作台
                   </Button>
-                  <span className="chat-login__assist">如需开通账号，请联系管理员。</span>
+                  <span className="chat-login__assist">认证入口由统一登录服务提供，请联系管理员开通账号。</span>
                 </div>
-              </form>
+              </div>
             </div>
           </section>
 
@@ -740,18 +750,18 @@ export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeC
             </header>
 
             <div id="chat-mobile-secondary-panels" className="chat-page-shell__secondary-panels">
-            <RuntimeStatusBadge
-              sessionId={safeState.activeSessionId}
-              refreshSignal={panelRefreshSignal}
-            />
-            <TimelinePanel
-              sessionId={safeState.activeSessionId}
-              refreshSignal={panelRefreshSignal}
-            />
-            <CallGraphPanel
-              sessionId={safeState.activeSessionId}
-              refreshSignal={panelRefreshSignal}
-            />
+              <RuntimeStatusBadge
+                sessionId={safeState.activeSessionId}
+                refreshSignal={panelRefreshSignal}
+              />
+              <TimelinePanel
+                sessionId={safeState.activeSessionId}
+                refreshSignal={panelRefreshSignal}
+              />
+              <CallGraphPanel
+                sessionId={safeState.activeSessionId}
+                refreshSignal={panelRefreshSignal}
+              />
             </div>
           </aside>
         </section>

@@ -264,6 +264,45 @@ test('ChatPage 渲染工作台登录入口提示与稳定的登录面板标记',
   assert.match(html, /继续你的会话/);
 });
 
+test('ChatPage 登录门禁可见时不触发 history 或 realtime 请求', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const calls = { history: 0, realtime: 0 };
+  const api = {
+    loadHistory: async () => {
+      calls.history += 1;
+      return createSampleHistoryState();
+    },
+    sendMessage: async () => ({ accepted: true })
+  };
+  const createRealtimeConnection = () => {
+    calls.realtime += 1;
+    return {
+      connect() {},
+      disconnect() {}
+    };
+  };
+
+  let renderer;
+  await act(async () => {
+    renderer = TestRenderer.create(React.createElement(ChatPage, {
+      initialAuthStatus: {
+        authEnabled: true,
+        authenticated: false
+      },
+      api,
+      createRealtimeConnection
+    }));
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  assert.equal(calls.history, 0);
+  assert.equal(calls.realtime, 0);
+  assert.match(JSON.stringify(renderer.toJSON()), /data-chat-page":"login"/);
+});
+
 test('ChatPage 渲染 runtime 状态、timeline 与 call-graph 二级面板', () => {
   const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
 
