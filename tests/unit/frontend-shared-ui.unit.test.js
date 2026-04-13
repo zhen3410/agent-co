@@ -210,3 +210,15 @@ test('token usage stays consistent with design token definitions without couplin
     }
   }
 });
+
+test('theme foundation exposes the motion and dual-theme hooks the rest of the app expects', () => {
+  const tokensCss = readFile('frontend/src/shared/styles/tokens.css');
+  const baseCss = readFile('frontend/src/shared/styles/base.css');
+
+  assert.match(tokensCss, /--color-bg-canvas:/);
+  assert.match(tokensCss, /--color-surface-elevated:/);
+  assert.match(tokensCss, /--color-text-primary:/);
+  assert.match(tokensCss, /--motion-fast:/);
+  assert.match(baseCss, /prefers-reduced-motion/);
+  assert.match(baseCss, /\[data-theme='dark'\]/);
+});
