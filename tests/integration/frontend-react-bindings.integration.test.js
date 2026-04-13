@@ -88,7 +88,12 @@ test('chat frontend bindings now live in modular React entrypoint and services r
     'data-chat-layout="conversation-first"',
     'data-chat-region="conversation-stage"',
     'data-chat-region="composer-dock"',
-    'data-chat-mobile-drawer="sessions"'
+    'data-chat-mobile-drawer="sessions"',
+    'data-chat-mobile-toggle="sessions"',
+    'data-chat-desktop-only="session-rail"',
+    'data-chat-mobile-toggle="secondary-panels"',
+    'data-chat-mobile-secondary="panels"',
+    '@media (max-width: 959px)'
   ], 'chat page should compose the React frontend modules');
 
   assertContainsAll(chatApiSource, [

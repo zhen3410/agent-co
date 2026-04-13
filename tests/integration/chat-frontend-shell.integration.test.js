@@ -236,6 +236,8 @@ test('ChatPage 渲染聊天页壳、会话侧边栏、消息列表与输入区',
   assert.match(html, /data-chat-region="conversation-stage"/);
   assert.match(html, /data-chat-region="composer-dock"/);
   assert.match(html, /data-chat-mobile-drawer="sessions"/);
+  assert.match(html, /data-chat-mobile-toggle="sessions"/);
+  assert.match(html, /data-chat-desktop-only="session-rail"/);
   assert.match(html, /data-chat-sidebar="sessions"/);
   assert.match(html, /data-chat-message-list="messages"/);
   assert.match(html, /data-chat-composer="composer"/);
@@ -251,6 +253,8 @@ test('ChatPage 渲染 runtime 状态、timeline 与 call-graph 二级面板', ()
     initialState: createSampleHistoryState()
   }));
 
+  assert.match(html, /data-chat-mobile-toggle="secondary-panels"/);
+  assert.match(html, /data-chat-mobile-secondary="panels"/);
   assert.match(html, /data-chat-runtime-status="badge"/);
   assert.match(html, /data-chat-timeline-panel="timeline"/);
   assert.match(html, /data-chat-call-graph-panel="call-graph"/);
