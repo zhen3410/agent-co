@@ -342,8 +342,14 @@ test('authenticated AdminPage 渲染稳定导航，并加载 agents/groups/users
   const renderer = await renderAdminPage({ api, initialAuthToken: 'token-123' });
   const text = collectText(renderer.toJSON());
   const navItems = renderer.root.findAll((node) => typeof node.props?.['data-admin-nav'] === 'string');
+  const consoleShell = renderer.root.findByProps({ 'data-admin-page': 'console' });
+  const overviewRegion = renderer.root.findByProps({ 'data-admin-region': 'overview' });
+  const resourceSectionsRegion = renderer.root.findByProps({ 'data-admin-region': 'resource-sections' });
 
   assert.equal(new Set(calls).size, 4);
+  assert.equal(consoleShell.props['data-admin-density'], 'console');
+  assert.equal(overviewRegion.type, 'section');
+  assert.equal(resourceSectionsRegion.type, 'section');
   assert.match(text, /agent-co admin/i);
   assert.match(text, /管理工作台/);
   assert.match(text, /planner/);
@@ -354,6 +360,18 @@ test('authenticated AdminPage 渲染稳定导航，并加载 agents/groups/users
     navItems.map((node) => node.props['data-admin-nav']),
     ['agents', 'groups', 'users', 'model-connections']
   );
+});
+
+test('AdminPage 在未认证时仍保留 console shell，并提供稳定的 auth 入口区域', async () => {
+  const renderer = await renderAdminPage();
+  const text = collectText(renderer.toJSON());
+  const consoleShell = renderer.root.findByProps({ 'data-admin-page': 'console' });
+  const authEntryRegion = renderer.root.findByProps({ 'data-admin-region': 'auth-entry' });
+
+  assert.equal(consoleShell.props['data-admin-density'], 'console');
+  assert.equal(authEntryRegion.type, 'section');
+  assert.match(text, /管理员 Token/);
+  assert.match(text, /连接后台/);
 });
 
 test('AdminPage 的 create\/edit 操作使用一致的成功\/失败状态提示', async () => {
