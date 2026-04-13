@@ -40,7 +40,7 @@ function parseSetCookie(setCookieHeader) {
 let didEnsureBuild = false;
 
 function ensureBuildArtifacts() {
-  if (didEnsureBuild) {
+  if (didEnsureBuild && existsSync(join(process.cwd(), 'dist', 'server.js'))) {
     return;
   }
 
@@ -60,6 +60,7 @@ function ensureBuildArtifacts() {
 
 async function createChatServerFixture(options = {}) {
   const maxAttempts = options.maxAttempts || 5;
+  const startupTimeoutMs = options.startupTimeoutMs || 10000;
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-co-chat-it-'));
   const agentDataFile = join(tempDir, 'agents.json');
   let authFixture = null;
@@ -77,7 +78,7 @@ async function createChatServerFixture(options = {}) {
       cwd: process.cwd(),
       env: {
         ...process.env,
-        NODE_ENV: 'test',
+        NODE_ENV: options.nodeEnv || 'test',
         PORT: String(port),
         AGENT_CO_AUTH_ENABLED: 'true',
         AGENT_CO_REDIS_REQUIRED: 'false',
@@ -98,7 +99,7 @@ async function createChatServerFixture(options = {}) {
     });
 
     try {
-      await waitForServer(port);
+      await waitForServer(port, startupTimeoutMs);
       lastStartupError = null;
       break;
     } catch (error) {

@@ -3,6 +3,8 @@ import { parseBody } from '../../shared/http/body';
 import { AIAgentConfig } from '../../types';
 import { sendHttpError } from '../../shared/http/errors';
 import { sendJson } from '../../shared/http/json';
+import { serveStaticFile } from '../../shared/http/static-files';
+import { resolveFrontendAssetRequest } from '../../shared/http/frontend-asset-resolver';
 import { AgentAdminService, AgentAdminServiceError, parseApplyMode } from '../application/agent-admin-service';
 import { UserAdminService, UserAdminServiceError } from '../application/user-admin-service';
 import { requireAdmin } from './admin-auth';
@@ -50,6 +52,32 @@ export async function handleAuthAdminRoutes(
 ): Promise<boolean> {
   const pathname = requestUrl.pathname;
   const method = req.method || 'GET';
+
+  if (method === 'GET') {
+    const frontendResolution = resolveFrontendAssetRequest(pathname, 'admin.html');
+    if (frontendResolution) {
+      if (frontendResolution.kind === 'missing-required') {
+        sendJson(res, 500, { error: frontendResolution.errorMessage });
+        return true;
+      }
+      if (frontendResolution.kind === 'missing-asset') {
+        sendJson(res, 404, { error: 'Not Found' });
+        return true;
+      }
+
+      const frontendAsset = frontendResolution.asset;
+      serveStaticFile(res, {
+        rootDir: frontendAsset.rootDir,
+        filePath: frontendAsset.filePath,
+        contentType: frontendAsset.contentType,
+        disableHtmlCache: frontendAsset.disableHtmlCache,
+        onNotFound: response => sendJson(response, frontendAsset.required ? 500 : 404, frontendAsset.required
+          ? { error: `前端构建产物缺失: ${frontendAsset.filePath}。请先执行 npm run build 生成 dist/frontend。` }
+          : { error: 'Not Found' })
+      });
+      return true;
+    }
+  }
 
   if (method === 'POST' && pathname === '/api/auth/verify') {
     try {

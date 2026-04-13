@@ -14,6 +14,10 @@ npm install
 npm run build
 ```
 
+`npm run build` 会按“后端 -> 前端”的顺序执行，并把聊天页、管理页、依赖监控页、verbose 日志页输出到 `dist/frontend/`。systemd 启动流程不会替你补做这一步。
+
+如果跳过前端构建，聊天页 `/`、管理页 `/admin.html`、运维页 `/deps-monitor.html` 与 `/verbose-logs.html` 会直接返回 `500`，并提示“前端构建产物缺失”。回滚时也必须同时恢复匹配版本的 `dist/frontend`，或者切回目标版本后重新执行 `npm run build`。
+
 ## 二、使用 systemd 启动服务（推荐）
 
 ### 1）部署目录
@@ -39,6 +43,7 @@ sudo APP_DIR=/path/to/agent-co bash /path/to/agent-co/scripts/install-systemd.sh
 
 脚本会自动完成：
 
+- 校验 `dist/server.js`、`dist/auth-admin-server.js` 与 `dist/frontend/*.html` 已存在；若缺失会要求你先执行 `npm run build`
 - 移除旧的双服务 unit（如有）
 - 复制 unit 文件到 `/etc/systemd/system`
 - 合并或生成环境变量文件 `/etc/agent-co/agent-co.env`

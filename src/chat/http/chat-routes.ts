@@ -11,6 +11,8 @@ import { loadGroupStore } from '../../group-store';
 import { AgentManager } from '../../agent-manager';
 import { RichBlock } from '../../types';
 import { ChatRuntime } from '../runtime/chat-runtime';
+import { serveStaticFile } from '../../shared/http/static-files';
+import { resolveFrontendAssetRequest } from '../../shared/http/frontend-asset-resolver';
 import {
   buildChatRateLimitBody,
   normalizeBodyText,
@@ -55,6 +57,32 @@ export async function handleChatRoutes(
   deps: ChatRoutesDependencies
 ): Promise<boolean> {
   const method = req.method || 'GET';
+
+  if (method === 'GET') {
+    const frontendResolution = resolveFrontendAssetRequest(requestUrl.pathname, 'chat.html');
+    if (frontendResolution) {
+      if (frontendResolution.kind === 'missing-required') {
+        sendJson(res, 500, { error: frontendResolution.errorMessage });
+        return true;
+      }
+      if (frontendResolution.kind === 'missing-asset') {
+        sendJson(res, 404, { error: 'Not Found' });
+        return true;
+      }
+
+      const frontendAsset = frontendResolution.asset;
+      serveStaticFile(res, {
+        rootDir: frontendAsset.rootDir,
+        filePath: frontendAsset.filePath,
+        contentType: frontendAsset.contentType,
+        disableHtmlCache: frontendAsset.disableHtmlCache,
+        onNotFound: response => sendJson(response, frontendAsset.required ? 500 : 404, frontendAsset.required
+          ? { error: `前端构建产物缺失: ${frontendAsset.filePath}。请先执行 npm run build 生成 dist/frontend。` }
+          : { error: 'Not Found' })
+      });
+      return true;
+    }
+  }
 
   if (await handleEventQueryRoutes(req, res, requestUrl, { runtime: deps.runtime, userKey: deps.userKey })) {
     return true;

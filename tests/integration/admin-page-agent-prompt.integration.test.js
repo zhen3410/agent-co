@@ -2,90 +2,212 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const ts = require('typescript');
+const React = require('react');
+const { renderToStaticMarkup } = require('react-dom/server');
+const { createAuthAdminFixture } = require('./helpers/auth-admin-fixture');
 
-test('管理后台智能体列表展示并支持就地修改当前提示词', () => {
-  const htmlPath = path.join(__dirname, '..', '..', 'public-auth', 'admin.html');
-  const html = fs.readFileSync(htmlPath, 'utf8');
+const repoRoot = path.resolve(__dirname, '..', '..');
+const frontendDistDir = path.join(repoRoot, 'dist', 'frontend');
+const moduleCache = new Map();
 
-  assert.ok(html.includes('当前提示词'), 'should render current prompt label in agent card');
-  assert.ok(html.includes('<select id="agentCli">'), 'should render cli selector for manual agent creation');
-  assert.ok(html.includes('<select id="agentWorkdirRoot">'), 'should render workdir root selector');
-  assert.ok(html.includes('<select id="agentWorkdirLevel2">'), 'should render workdir level2 selector');
-  assert.ok(html.includes('<select id="agentWorkdirLevel3">'), 'should render workdir level3 selector');
-  assert.ok(html.includes("fetch(`/api/system/dirs${query}`"), 'should load workdir options from runtime filesystem');
-  assert.ok(html.includes('await loadWorkdirHierarchy();'), 'should load workdir options after token verification');
-  assert.ok(html.includes('initializeWorkdirSelectors();'), 'should initialize placeholder selectors before admin token verification');
-  assert.ok(html.includes('loadWorkdirHierarchy(agent.workdir || \'\')'), 'should restore saved workdir hierarchy when editing');
-  assert.ok(html.includes("document.getElementById('agentCli').value"), 'should read and restore cli type in the form');
-  assert.ok(html.includes("(agent.cli || 'claude').toUpperCase()"), 'should show current cli type in agent list');
-  assert.ok(html.includes('data-agent-prompt="${escapeHtml(agent.name)}"'), 'should bind prompt editor to agent name');
-  assert.ok(html.includes('保存提示词'), 'should provide save prompt action');
-  assert.ok(html.includes('const promptInput = document.querySelector(`[data-agent-prompt="${cssEscape(name)}"]`);'), 'should read prompt from inline textarea');
+function readBuiltFrontendFile(fileName) {
+  return fs.readFileSync(path.join(frontendDistDir, fileName), 'utf8');
+}
+
+function readSourceFile(relativePath) {
+  return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+}
+
+function extractFirstJsAssetPath(html, messagePrefix) {
+  const match = html.match(/<script[^>]+src="(\/assets\/[^"]+\.js)"/i);
+  assert.ok(match, `${messagePrefix}: should reference a bundled /assets/*.js entry script`);
+  return match[1];
+}
+
+function resolveExistingFile(basePath) {
+  const candidates = [
+    basePath,
+    `${basePath}.ts`,
+    `${basePath}.tsx`,
+    `${basePath}.js`,
+    path.join(basePath, 'index.ts'),
+    path.join(basePath, 'index.tsx')
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Cannot resolve module path: ${basePath}`);
+}
+
+function loadTsModule(relativePath) {
+  const absolutePath = path.resolve(repoRoot, relativePath);
+  const resolvedPath = resolveExistingFile(absolutePath);
+
+  if (moduleCache.has(resolvedPath)) {
+    return moduleCache.get(resolvedPath);
+  }
+
+  const source = fs.readFileSync(resolvedPath, 'utf8');
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2020,
+      module: ts.ModuleKind.CommonJS,
+      jsx: ts.JsxEmit.ReactJSX,
+      esModuleInterop: true
+    },
+    fileName: resolvedPath
+  });
+
+  const mod = { exports: {} };
+  moduleCache.set(resolvedPath, mod.exports);
+
+  const localRequire = (specifier) => {
+    if (specifier.endsWith('.css')) {
+      return {};
+    }
+
+    if (specifier.startsWith('.')) {
+      const childBasePath = path.resolve(path.dirname(resolvedPath), specifier);
+      const childRelativePath = path.relative(repoRoot, childBasePath);
+      return loadTsModule(childRelativePath);
+    }
+
+    return require(specifier);
+  };
+
+  const fn = new Function('require', 'module', 'exports', '__filename', '__dirname', transpiled.outputText);
+  fn(localRequire, mod, mod.exports, resolvedPath, path.dirname(resolvedPath));
+  moduleCache.set(resolvedPath, mod.exports);
+  return mod.exports;
+}
+
+function assertContainsAll(source, snippets, messagePrefix = 'missing snippet') {
+  for (const snippet of snippets) {
+    assert.ok(source.includes(snippet), `${messagePrefix}: ${snippet}`);
+  }
+}
+
+function assertOmitsAll(source, snippets, messagePrefix = 'unexpected snippet') {
+  for (const snippet of snippets) {
+    assert.ok(!source.includes(snippet), `${messagePrefix}: ${snippet}`);
+  }
+}
+
+test('admin shell entrypoints now serve the built frontend page instead of removed public-auth html', async () => {
+  const builtAdminHtml = readBuiltFrontendFile('admin.html');
+  assert.match(builtAdminHtml, /<meta name="agent-co-page" content="admin"\s*\/>/);
+
+  const fixture = await createAuthAdminFixture();
+
+  try {
+    const rootResponse = await fetch(`http://127.0.0.1:${fixture.port}/`);
+    const indexResponse = await fetch(`http://127.0.0.1:${fixture.port}/index.html`);
+    const adminResponse = await fetch(`http://127.0.0.1:${fixture.port}/admin.html`);
+
+    const rootHtml = await rootResponse.text();
+    const indexHtml = await indexResponse.text();
+    const adminHtml = await adminResponse.text();
+
+    assert.equal(rootResponse.status, 200);
+    assert.equal(indexResponse.status, 200);
+    assert.equal(adminResponse.status, 200);
+    assert.match(rootHtml, /<meta name="agent-co-page" content="admin"\s*\/>/);
+    assert.equal(indexHtml, rootHtml, 'admin /index.html should serve the same built shell as /');
+    assert.equal(adminHtml, rootHtml, 'admin /admin.html should serve the same built shell as /');
+
+    const adminAssetPath = extractFirstJsAssetPath(rootHtml, 'served admin shell');
+    const assetResponse = await fetch(`http://127.0.0.1:${fixture.port}${adminAssetPath}`);
+    const assetBody = await assetResponse.text();
+
+    assert.equal(assetResponse.status, 200);
+    assert.ok(assetBody.length > 0, 'admin shell asset should not be empty');
+  } finally {
+    await fixture.cleanup();
+  }
 });
 
-test('管理后台包含 API connection 管理和 agent API 模式配置 UI', () => {
-  const htmlPath = path.join(__dirname, '..', '..', 'public-auth', 'admin.html');
-  const html = fs.readFileSync(htmlPath, 'utf8');
+test('AgentManagementPanel renders the current prompt, workdir, CLI/API, and model-connection controls in the React admin workspace', () => {
+  const { AgentManagementPanel } = loadTsModule('frontend/src/admin/features/agents/AgentManagementPanel.tsx');
 
-  assert.ok(html.includes('模型连接'), 'should render model connection management section');
-  assert.ok(html.includes('/api/model-connections'), 'should call model connection CRUD endpoints');
-  assert.ok(html.includes('id="agentExecutionMode"'), 'should render execution mode selector');
-  assert.ok(html.includes('id="agentApiConnectionId"'), 'should render api connection selector');
-  assert.ok(html.includes('id="agentApiModel"'), 'should render api model input');
-  assert.ok(html.includes('id="agentApiTemperature"'), 'should render api temperature input');
-  assert.ok(html.includes('id="agentApiMaxTokens"'), 'should render api max tokens input');
-  assert.ok(html.includes('toggleAgentExecutionFields('), 'should toggle CLI/API field visibility');
-  assert.ok(html.includes("executionMode: document.getElementById('agentExecutionMode').value"), 'should submit execution mode');
-  assert.ok(html.includes("apiConnectionId: document.getElementById('agentApiConnectionId').value"), 'should submit api connection id');
-  assert.ok(html.includes("apiModel: document.getElementById('agentApiModel').value.trim()"), 'should submit api model');
-  assert.ok(html.includes("apiTemperature: parseOptionalNumber(document.getElementById('agentApiTemperature').value)"), 'should submit api temperature');
-  assert.ok(html.includes("apiMaxTokens: parseOptionalInteger(document.getElementById('agentApiMaxTokens').value)"), 'should submit api max tokens');
-  assert.ok(html.includes("agent.executionMode === 'api'"), 'should render API mode summary in agent cards');
-  assert.ok(html.includes('API · ${escapeHtml(connectionName)} · ${escapeHtml(agent.apiModel || \'\')}'), 'should show API summary in agent list');
+  const html = renderToStaticMarkup(React.createElement(AgentManagementPanel, {
+    agents: [
+      {
+        name: 'Alice',
+        avatar: '🤖',
+        personality: 'helper',
+        color: '#2563eb',
+        systemPrompt: 'You are Alice.',
+        workdir: '/workspace/demo',
+        executionMode: 'api',
+        apiConnectionId: 'primary',
+        apiModel: 'gpt-5'
+      }
+    ],
+    pendingReason: null,
+    pendingUpdatedAt: null,
+    connections: [
+      {
+        id: 'primary',
+        name: 'Primary OpenAI',
+        baseURL: 'https://api.example.test',
+        apiKeyMasked: 'sk-***',
+        enabled: true
+      }
+    ],
+    onCreate: async () => true,
+    onUpdate: async () => true,
+    onDelete: async () => true,
+    onApplyPending: async () => true
+  }));
+
+  assert.match(html, /data-admin-form="agent-editor"/);
+  assert.match(html, /name="agent-systemPrompt"/);
+  assert.match(html, /name="agent-workdir"/);
+  assert.match(html, /name="agent-executionMode"/);
+  assert.match(html, /name="agent-cliName"/);
+  assert.match(html, /name="agent-apiConnectionId"/);
+  assert.match(html, /系统提示词/);
+  assert.match(html, /Workdir/);
+  assert.match(html, /模型连接/);
+  assert.match(html, /智能体列表/);
+  assert.match(html, /Alice/);
 });
 
-test('编辑已绑定停用 connection 的 API agent 时仍会保留当前连接选项', () => {
-  const htmlPath = path.join(__dirname, '..', '..', 'public-auth', 'admin.html');
-  const html = fs.readFileSync(htmlPath, 'utf8');
+test('admin React source keeps agent, group, and model-connection management wired through the current contracts', () => {
+  const adminPageSource = readSourceFile('frontend/src/admin/pages/AdminPage.tsx');
+  const adminApiSource = readSourceFile('frontend/src/admin/services/admin-api.ts');
+  const agentPanelSource = readSourceFile('frontend/src/admin/features/agents/AgentManagementPanel.tsx');
 
-  assert.ok(html.includes('selectedConnection && !selectedConnection.enabled'), 'should detect disabled selected connection');
-  assert.ok(html.includes('（已停用）'), 'should label disabled selected connection clearly');
-  assert.ok(html.includes('const enabledOptions = modelConnections'), 'should keep normal enabled options separate');
-});
+  assertContainsAll(adminPageSource, [
+    '<section id="agents">',
+    '<section id="groups">',
+    '<section id="model-connections">',
+    'GroupManagementPanel',
+    'ModelConnectionManagementPanel'
+  ], 'admin page should keep the current workspace sections');
 
-test('聊天首页在加载分组后会默认展开分组并渲染分组头部', () => {
-  const htmlPath = path.join(__dirname, '..', '..', 'public', 'index.html');
-  const html = fs.readFileSync(htmlPath, 'utf8');
+  assertContainsAll(agentPanelSource, [
+    'systemPrompt: formState.systemPrompt.trim()',
+    'workdir: formState.workdir.trim()',
+    "executionMode: formState.executionMode",
+    "apiConnectionId: formState.executionMode === 'api' ? formState.apiConnectionId || undefined : undefined",
+    "apiModel: formState.executionMode === 'api' ? formState.apiModel || undefined : undefined"
+  ], 'agent management panel should submit the current agent management contract');
 
-  assert.ok(html.includes('function getGroupedAgents()'), 'should build grouped agent list on chat page');
-  assert.ok(html.includes('expandedGroups = new Set(groupedAgents.map(group => group.id));'), 'should expand loaded groups by default');
-  assert.ok(html.includes('class="agent-group-header'), 'should render group headers in chat sidebar');
-});
+  assertContainsAll(adminApiSource, [
+    "return request('/api/agents'",
+    "return request('/api/groups'",
+    "return request('/api/model-connections'"
+  ], 'admin API client should target the current management endpoints');
 
-test('管理后台会加载分组并按分组展示智能体', () => {
-  const htmlPath = path.join(__dirname, '..', '..', 'public-auth', 'admin.html');
-  const html = fs.readFileSync(htmlPath, 'utf8');
-
-  assert.ok(html.includes("let groups = [];"), 'should keep group state in admin page');
-  assert.ok(html.includes("await loadGroups();"), 'should load groups after token verification');
-  assert.ok(html.includes("fetch('/api/groups'"), 'should request group data from admin api');
-  assert.ok(html.includes('function getGroupedAgentsForAdmin('), 'should build grouped agent view in admin page');
-  assert.ok(html.includes('agent-group-section'), 'should render grouped admin sections');
-});
-
-test('管理后台提供分组管理界面和创建分组弹窗', () => {
-  const htmlPath = path.join(__dirname, '..', '..', 'public-auth', 'admin.html');
-  const html = fs.readFileSync(htmlPath, 'utf8');
-
-  assert.ok(html.includes('分组管理'), 'should render group management section title');
-  assert.ok(html.includes('showGroupModal()'), 'should provide create-group trigger');
-  assert.ok(html.includes('id="groups-list"'), 'should render groups list container');
-  assert.ok(html.includes('id="group-modal"'), 'should render group modal');
-  assert.ok(html.includes('id="group-form"'), 'should render group form');
-  assert.ok(html.includes('id="group-id"'), 'should render group id input');
-  assert.ok(html.includes('id="group-name"'), 'should render group name input');
-  assert.ok(html.includes('id="group-icon"'), 'should render group icon input');
-  assert.ok(html.includes('id="group-agents-checkboxes"'), 'should render group member checkbox container');
-  assert.ok(html.includes("document.getElementById('group-form').addEventListener('submit'"), 'should bind group form submit handler');
-  assert.ok(html.includes("fetch(`/api/groups/${encodeURIComponent(id)}`"), 'should delete groups through api');
+  assertOmitsAll(
+    `${adminPageSource}\n${adminApiSource}\n${agentPanelSource}`,
+    ['public-auth/admin.html', 'restore-template', 'prompt/template'],
+    'admin React sources should not depend on retired legacy admin page contracts'
+  );
 });

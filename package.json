@@ -5,7 +5,7 @@
   "main": "dist/server.js",
   "scripts": {
     "init": "bash scripts/init-dev.sh",
-    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "build": "npm run build:backend && npm run build:frontend",
     "start": "npm run start:chat",
     "dev": "ts-node src/server.ts",
     "start:chat": "node dist/server.js",
@@ -15,7 +15,10 @@
     "test": "npm run test:integration",
     "test:unit": "npm run build && node --test tests/unit/*.unit.test.js",
     "test:fast": "npm run build && node --test tests/unit/*.unit.test.js tests/integration/chat-server-runtime-contract.integration.test.js tests/integration/chat-server-service-boundaries.integration.test.js tests/integration/chat-server-session-service-boundaries.integration.test.js tests/integration/chat-server-ops-boundaries.integration.test.js",
-    "test:integration": "npm run build && node --test tests/integration/*.integration.test.js"
+    "test:integration": "npm run build && node --test tests/integration/*.integration.test.js",
+    "dev:frontend": "npm run dev -w @agent-co/frontend",
+    "build:frontend": "npm run build -w @agent-co/frontend",
+    "build:backend": "rm -rf dist && tsc -p tsconfig.json"
   },
   "keywords": [],
   "author": "",
@@ -29,7 +32,11 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",
+    "react-test-renderer": "^18.3.1",
     "ts-node": "^10.9.0",
     "typescript": "^5.9.3"
-  }
+  },
+  "workspaces": [
+    "frontend"
+  ]
 }

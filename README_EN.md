@@ -36,8 +36,8 @@ This repository ships two HTTP services:
 - **Chat service**: `src/server.ts`, default port `3002`
 - **Auth/Admin service**: `src/auth-admin-server.ts`, default port `3003`
 
-The chat service serves the main UI from `public/index.html`.
-The auth/admin service serves the admin page from `public-auth/admin.html`.
+The chat service serves the main UI from the built `dist/frontend/chat.html` artifact (routes `/`, `/index.html`, and `/chat.html`).
+The auth/admin service serves the admin page from the built `dist/frontend/admin.html` artifact (routes `/`, `/index.html`, and `/admin.html`).
 
 #### Chat read/write architecture
 
@@ -81,6 +81,19 @@ set +a
 npm run build
 ```
 
+> `npm run build` compiles the backend first and then builds the React + Vite multi-page frontend. The chat, admin, and ops page shells are emitted to `dist/frontend/`.
+
+#### 3.1 Frontend local development loop
+
+```bash
+npm run dev:frontend
+```
+
+- `npm run dev:frontend` starts the Vite dev server for isolated React page work.
+- The Node chat/admin services always serve built files from `dist/frontend/` in both local and production workflows.
+- After changing anything under `frontend/`, rerun `npm run build` before reloading `/`, `/admin.html`, `/deps-monitor.html`, or `/verbose-logs.html`.
+- If the frontend build artifacts are missing, the services return `500` responses that mention the missing build output. During rollback, restore the matching `dist/frontend` artifacts together with the backend release, or rerun `npm run build` after switching back.
+
 #### 4. Start the chat service
 
 ```bash
@@ -120,10 +133,11 @@ Default dev credentials:
 
 ```bash
 npm run init            # Initialize local directories
-npm run build           # Compile TypeScript
-npm run dev             # Run in development mode
+npm run build           # Build backend first, then emit dist/frontend MPA assets
+npm run dev             # Run the chat service in development mode (serves dist/frontend)
 npm run start:chat      # Run compiled chat service
 npm run start:auth      # Run compiled auth/admin service
+npm run dev:frontend    # Start the React/Vite frontend dev server
 npm test                # Run integration tests
 npm run test:unit       # Run unit tests
 npm run test:fast       # Fast run (unit + key integration)
@@ -184,15 +198,14 @@ src/
     errors/                AppError class, error codes, HTTP status mapping
     http/                  Shared HTTP helpers: body, cors, json, static, error mapper
   providers/               CLI / OpenAI-compatible agent providers
-public/                    Main chat UI and static assets
-public-auth/               Admin UI static assets
+public/                    Shared runtime static assets (PWA/icon/styles, etc.)
 data/                      Runtime data directory
 logs/                      Runtime logs (including ai-cli-verbose/)
 scripts/                   Bootstrap and deployment scripts
 systemd/                   Example systemd service unit files
 tests/unit/                Unit tests
 tests/integration/         Integration tests
-dist/                      Compiled build output
+dist/                      Compiled build output (including `dist/frontend/*.html` MPA assets)
 ```
 
 #### Module Conventions

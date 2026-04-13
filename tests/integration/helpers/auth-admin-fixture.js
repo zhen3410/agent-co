@@ -30,7 +30,7 @@ function getRandomPort() {
 let didEnsureBuild = false;
 
 function ensureBuildArtifacts() {
-  if (didEnsureBuild) {
+  if (didEnsureBuild && existsSync(join(process.cwd(), 'dist', 'auth-admin-server.js'))) {
     return;
   }
 
@@ -73,6 +73,7 @@ async function createAuthAdminFixture(options = {}) {
       cwd: process.cwd(),
       env: {
         ...process.env,
+        ...(options.env || {}),
         NODE_ENV: 'test',
         AUTH_ADMIN_PORT: String(port),
         AUTH_ADMIN_TOKEN: options.authAdminTokenEnv || adminToken,
