@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AdminPage } from '../admin/pages/AdminPage';
+import { AdminApp } from '../admin/app/AdminApp';
 import { ThemeProvider } from '../shared/theme/theme';
 import '../shared/styles/tokens.css';
 import '../shared/styles/base.css';
@@ -11,7 +11,7 @@ if (mountNode) {
   createRoot(mountNode).render(
     <StrictMode>
       <ThemeProvider>
-        <AdminPage />
+        <AdminApp initialPathname={window.location.pathname} />
       </ThemeProvider>
     </StrictMode>
   );
