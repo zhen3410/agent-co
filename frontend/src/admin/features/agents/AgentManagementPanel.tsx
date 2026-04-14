@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
-import { Button, Card, EmptyState, Table } from '../../../shared/ui';
+import { Button, EmptyState, Table } from '../../../shared/ui';
 import type { AdminAgent, AdminModelConnection, ApplyMode } from '../../types';
 
 export interface AgentManagementPanelProps {
@@ -65,6 +65,7 @@ export function AgentManagementPanel({
   onApplyPending
 }: AgentManagementPanelProps) {
   const [editingName, setEditingName] = useState<string | null>(null);
+  const [editingAgentSnapshot, setEditingAgentSnapshot] = useState<AdminAgent | null>(null);
   const [formState, setFormState] = useState<AgentFormState>(EMPTY_FORM);
 
   function handleChange(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
@@ -88,7 +89,9 @@ export function AgentManagementPanel({
       executionMode: formState.executionMode,
       cliName: formState.executionMode === 'cli' ? formState.cliName : undefined,
       apiConnectionId: formState.executionMode === 'api' ? formState.apiConnectionId || undefined : undefined,
-      apiModel: formState.executionMode === 'api' ? formState.apiModel || undefined : undefined
+      apiModel: formState.executionMode === 'api' ? formState.apiModel || undefined : undefined,
+      apiTemperature: formState.executionMode === 'api' ? editingAgentSnapshot?.apiTemperature : undefined,
+      apiMaxTokens: formState.executionMode === 'api' ? editingAgentSnapshot?.apiMaxTokens : undefined
     };
 
     const succeeded = editingName
@@ -97,15 +100,23 @@ export function AgentManagementPanel({
 
     if (succeeded) {
       setEditingName(null);
+      setEditingAgentSnapshot(null);
       setFormState(EMPTY_FORM);
     }
   }
 
   return (
-    <Card
-      title="智能体"
-      actions={
-        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+    <section data-admin-panel="agents" style={panelStyle}>
+      <header style={panelHeaderStyle}>
+        <div style={titleGroupStyle}>
+          <span style={eyebrowStyle}>Agent registry</span>
+          <div style={headingRowStyle}>
+            <h3 style={titleStyle}>智能体</h3>
+            <span style={countStyle}>{agents.length} 个已加载</span>
+          </div>
+          <p style={descriptionStyle}>维护角色设定、执行方式与运行目标，让聊天工作台与控制平面使用同一套语义。</p>
+        </div>
+        <div style={actionsRowStyle}>
           {pendingReason ? (
             <Button variant="secondary" onClick={() => void onApplyPending()}>
               应用待生效配置
@@ -116,6 +127,7 @@ export function AgentManagementPanel({
               variant="secondary"
               onClick={() => {
                 setEditingName(null);
+                setEditingAgentSnapshot(null);
                 setFormState(EMPTY_FORM);
               }}
             >
@@ -123,60 +135,64 @@ export function AgentManagementPanel({
             </Button>
           ) : null}
         </div>
-      }
-    >
-      <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
-        {pendingReason ? (
-          <div style={{ color: 'var(--color-text-muted)' }}>
-            待生效原因：{pendingReason}
-            {pendingUpdatedAt ? `（${new Date(pendingUpdatedAt).toLocaleString('zh-CN')}）` : ''}
-          </div>
-        ) : null}
+      </header>
 
-        <form data-admin-form="agent-editor" onSubmit={handleSubmit} style={{ display: 'grid', gap: 'var(--space-3)' }}>
-          <div style={{ display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>名称</span>
+      {pendingReason ? (
+        <div style={pendingStyle}>
+          <strong>待生效原因：</strong>
+          <span>{pendingReason}</span>
+          {pendingUpdatedAt ? <span style={pendingTimeStyle}>{new Date(pendingUpdatedAt).toLocaleString('zh-CN')}</span> : null}
+        </div>
+      ) : null}
+
+      <div style={compositionStyle}>
+        <form data-admin-form="agent-editor" onSubmit={handleSubmit} style={formStyle}>
+          <div style={gridFourStyle}>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>名称</span>
               <input name="agent-name" value={formState.name} onChange={handleChange} disabled={Boolean(editingName)} style={fieldStyle} />
             </label>
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>头像</span>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>头像</span>
               <input name="agent-avatar" value={formState.avatar} onChange={handleChange} style={fieldStyle} />
             </label>
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>颜色</span>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>颜色</span>
               <input name="agent-color" value={formState.color} onChange={handleChange} style={fieldStyle} />
             </label>
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>执行模式</span>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>执行模式</span>
               <select name="agent-executionMode" value={formState.executionMode} onChange={handleChange} style={fieldStyle}>
                 <option value="cli">CLI</option>
                 <option value="api">API</option>
               </select>
             </label>
           </div>
-          <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-            <span>个性说明</span>
+
+          <label style={fieldGroupStyle}>
+            <span style={fieldLabelStyle}>个性说明</span>
             <input name="agent-personality" value={formState.personality} onChange={handleChange} style={fieldStyle} />
           </label>
-          <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-            <span>系统提示词</span>
-            <textarea name="agent-systemPrompt" value={formState.systemPrompt} onChange={handleChange} rows={4} style={fieldStyle} />
+
+          <label style={fieldGroupStyle}>
+            <span style={fieldLabelStyle}>系统提示词</span>
+            <textarea name="agent-systemPrompt" value={formState.systemPrompt} onChange={handleChange} rows={4} style={textareaStyle} />
           </label>
-          <div style={{ display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>Workdir</span>
+
+          <div style={gridThreeStyle}>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>Workdir</span>
               <input name="agent-workdir" value={formState.workdir} onChange={handleChange} style={fieldStyle} />
             </label>
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>CLI</span>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>CLI</span>
               <select name="agent-cliName" value={formState.cliName} onChange={handleChange} disabled={formState.executionMode !== 'cli'} style={fieldStyle}>
                 <option value="codex">codex</option>
                 <option value="claude">claude</option>
               </select>
             </label>
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>模型连接</span>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>模型连接</span>
               <select
                 name="agent-apiConnectionId"
                 value={formState.apiConnectionId}
@@ -191,58 +207,237 @@ export function AgentManagementPanel({
               </select>
             </label>
           </div>
+
           {formState.executionMode === 'api' ? (
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>API Model</span>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>API Model</span>
               <input name="agent-apiModel" value={formState.apiModel} onChange={handleChange} style={fieldStyle} />
             </label>
           ) : null}
-          <div>
+
+          <div style={submitRowStyle}>
             <Button type="submit">{editingName ? '保存智能体' : '创建智能体'}</Button>
+            <span style={assistStyle}>统一支持 CLI 与 API 两种执行路径。</span>
           </div>
         </form>
 
-        {agents.length === 0 ? (
-          <EmptyState title="暂无智能体" description="创建后可分配到分组或切换为 API 模式。" />
-        ) : (
-          <Table
-            caption="智能体列表"
-            rows={agents}
-            getRowKey={(agent) => agent.name}
-            columns={[
-              { key: 'name', header: '名称', render: (agent) => `${agent.avatar} ${agent.name}` },
-              { key: 'personality', header: '个性', render: (agent) => agent.personality },
-              { key: 'mode', header: '模式', render: (agent) => agent.executionMode || 'cli' },
-              { key: 'target', header: '运行目标', render: (agent) => agent.executionMode === 'api' ? (agent.apiConnectionId || '未绑定连接') : (agent.cliName || 'codex') },
-              {
-                key: 'actions',
-                header: '操作',
-                render: (agent) => (
-                  <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                    <Button variant="secondary" onClick={() => {
-                      setEditingName(agent.name);
-                      setFormState(toFormState(agent));
-                    }}>
-                      编辑
-                    </Button>
-                    <Button variant="danger" onClick={() => void onDelete(agent.name)}>
-                      删除
-                    </Button>
-                  </div>
-                )
-              }
-            ]}
-          />
-        )}
+        <div style={listBlockStyle}>
+          <div style={listHeaderStyle}>
+            <div>
+              <p style={listTitleStyle}>当前智能体</p>
+              <p style={listCaptionStyle}>保持更高信息密度，但用轻边框和稳定排版代替厚重卡片。</p>
+            </div>
+          </div>
+
+          {agents.length === 0 ? (
+            <EmptyState title="暂无智能体" description="创建后可分配到分组或切换为 API 模式。" />
+          ) : (
+            <Table
+              caption="智能体列表"
+              rows={agents}
+              getRowKey={(agent) => agent.name}
+              columns={[
+                { key: 'name', header: '名称', render: (agent) => `${agent.avatar} ${agent.name}` },
+                { key: 'personality', header: '个性', render: (agent) => agent.personality },
+                { key: 'mode', header: '模式', render: (agent) => agent.executionMode || 'cli' },
+                { key: 'target', header: '运行目标', render: (agent) => agent.executionMode === 'api' ? (agent.apiConnectionId || '未绑定连接') : (agent.cliName || 'codex') },
+                {
+                  key: 'actions',
+                  header: '操作',
+                  render: (agent) => (
+                    <div style={tableActionsStyle}>
+                      <Button variant="secondary" onClick={() => {
+                        setEditingName(agent.name);
+                        setEditingAgentSnapshot(agent);
+                        setFormState(toFormState(agent));
+                      }}>
+                        编辑
+                      </Button>
+                      <Button variant="danger" onClick={() => void onDelete(agent.name)}>
+                        删除
+                      </Button>
+                    </div>
+                  )
+                }
+              ]}
+            />
+          )}
+        </div>
       </div>
-    </Card>
+    </section>
   );
 }
+
+const panelStyle = {
+  background: 'var(--color-surface)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: 'calc(var(--radius-lg) + 0.125rem)',
+  display: 'grid',
+  gap: 'var(--space-4)',
+  padding: 'var(--space-4)'
+} as const;
+
+const panelHeaderStyle = {
+  alignItems: 'start',
+  display: 'grid',
+  gap: 'var(--space-3)',
+  gridTemplateColumns: 'minmax(0, 1fr) auto'
+} as const;
+
+const titleGroupStyle = {
+  display: 'grid',
+  gap: 'var(--space-2)'
+} as const;
+
+const eyebrowStyle = {
+  color: 'var(--color-text-muted)',
+  fontFamily: 'var(--font-family-mono)',
+  fontSize: '0.75rem',
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase'
+} as const;
+
+const headingRowStyle = {
+  alignItems: 'center',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)'
+} as const;
+
+const titleStyle = {
+  fontSize: '1.125rem',
+  margin: 0
+} as const;
+
+const countStyle = {
+  background: 'var(--color-surface-muted)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: '999px',
+  color: 'var(--color-text-secondary)',
+  fontSize: 'var(--font-size-sm)',
+  padding: 'var(--space-1) var(--space-2)'
+} as const;
+
+const descriptionStyle = {
+  color: 'var(--color-text-secondary)',
+  margin: 0,
+  maxWidth: '46rem'
+} as const;
+
+const actionsRowStyle = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)',
+  justifyContent: 'flex-end'
+} as const;
+
+const pendingStyle = {
+  alignItems: 'center',
+  background: 'var(--color-surface-muted)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: 'var(--radius-md)',
+  color: 'var(--color-text-secondary)',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)',
+  padding: 'var(--space-3)'
+} as const;
+
+const pendingTimeStyle = {
+  color: 'var(--color-text-muted)',
+  fontSize: 'var(--font-size-sm)'
+} as const;
+
+const compositionStyle = {
+  display: 'grid',
+  gap: 'var(--space-4)'
+} as const;
+
+const formStyle = {
+  background: 'color-mix(in srgb, var(--color-surface-muted) 72%, transparent)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: 'var(--radius-md)',
+  display: 'grid',
+  gap: 'var(--space-3)',
+  padding: 'var(--space-4)'
+} as const;
+
+const gridFourStyle = {
+  display: 'grid',
+  gap: 'var(--space-3)',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(10rem, 1fr))'
+} as const;
+
+const gridThreeStyle = {
+  display: 'grid',
+  gap: 'var(--space-3)',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(11rem, 1fr))'
+} as const;
+
+const fieldGroupStyle = {
+  display: 'grid',
+  gap: 'var(--space-2)'
+} as const;
+
+const fieldLabelStyle = {
+  color: 'var(--color-text)',
+  fontWeight: 'var(--font-weight-medium)'
+} as const;
 
 const fieldStyle = {
   backgroundColor: 'var(--color-surface)',
   border: '1px solid var(--color-border)',
   borderRadius: 'var(--radius-md)',
   color: 'var(--color-text)',
+  minHeight: '2.625rem',
   padding: 'var(--space-2) var(--space-3)'
-};
+} as const;
+
+const textareaStyle = {
+  ...fieldStyle,
+  minHeight: '7rem',
+  paddingBlock: 'var(--space-3)',
+  resize: 'vertical'
+} as const;
+
+const submitRowStyle = {
+  alignItems: 'center',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-3)'
+} as const;
+
+const assistStyle = {
+  color: 'var(--color-text-muted)',
+  fontSize: 'var(--font-size-sm)'
+} as const;
+
+const listBlockStyle = {
+  borderTop: '1px solid var(--color-border-muted)',
+  display: 'grid',
+  gap: 'var(--space-3)',
+  paddingTop: 'var(--space-4)'
+} as const;
+
+const listHeaderStyle = {
+  display: 'grid',
+  gap: 'var(--space-1)'
+} as const;
+
+const listTitleStyle = {
+  color: 'var(--color-text)',
+  fontWeight: 'var(--font-weight-semibold)',
+  margin: 0
+} as const;
+
+const listCaptionStyle = {
+  color: 'var(--color-text-muted)',
+  fontSize: 'var(--font-size-sm)',
+  margin: 0
+} as const;
+
+const tableActionsStyle = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)'
+} as const;

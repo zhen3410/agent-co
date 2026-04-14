@@ -98,6 +98,16 @@ function assertOmitsAll(source, snippets, messagePrefix = 'unexpected snippet') 
   }
 }
 
+function assertMatchesAll(source, patterns, messagePrefix = 'missing pattern') {
+  for (const pattern of patterns) {
+    if (pattern instanceof RegExp) {
+      assert.match(source, pattern, `${messagePrefix}: ${pattern}`);
+    } else {
+      assert.ok(source.includes(pattern), `${messagePrefix}: ${pattern}`);
+    }
+  }
+}
+
 test('admin shell entrypoints now serve the built frontend page instead of removed public-auth html', async () => {
   const builtAdminHtml = readBuiltFrontendFile('admin.html');
   assert.match(builtAdminHtml, /<meta name="agent-co-page" content="admin"\s*\/>/);
@@ -183,10 +193,10 @@ test('admin React source keeps agent, group, and model-connection management wir
   const adminApiSource = readSourceFile('frontend/src/admin/services/admin-api.ts');
   const agentPanelSource = readSourceFile('frontend/src/admin/features/agents/AgentManagementPanel.tsx');
 
-  assertContainsAll(adminPageSource, [
-    '<section id="agents">',
-    '<section id="groups">',
-    '<section id="model-connections">',
+  assertMatchesAll(adminPageSource, [
+    /<section id="agents"[^>]*>/,
+    /<section id="groups"[^>]*>/,
+    /<section id="model-connections"[^>]*>/,
     'GroupManagementPanel',
     'ModelConnectionManagementPanel'
   ], 'admin page should keep the current workspace sections');

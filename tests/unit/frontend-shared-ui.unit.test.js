@@ -89,13 +89,35 @@ function findClassNames(text) {
     }
     match = regex.exec(text);
   }
+  const expressionRegex = /className\s*=\s*\{([^}]+)\}/g;
+  let expressionMatch = expressionRegex.exec(text);
+  while (expressionMatch) {
+    const expression = expressionMatch[1];
+    const literalRegex = /['"`]([^'"`]+)['"`]/g;
+    let literalMatch = literalRegex.exec(expression);
+    while (literalMatch) {
+      const raw = literalMatch[1] ?? '';
+      for (const className of raw.split(/\s+/).filter(Boolean)) {
+        result.add(className);
+      }
+      literalMatch = literalRegex.exec(expression);
+    }
+    expressionMatch = expressionRegex.exec(text);
+  }
   return result;
+}
+
+function findCssBlock(css, selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`${escaped}\\s*\\{([\\s\\S]*?)\\}`, 'm');
+  return css.match(regex)?.[1] ?? null;
 }
 
 test('shared primitives render semantic HTML elements', () => {
   const { Button } = loadTsModule('frontend/src/shared/ui/Button.tsx');
   const { Input } = loadTsModule('frontend/src/shared/ui/Input.tsx');
   const { Card } = loadTsModule('frontend/src/shared/ui/Card.tsx');
+  const { Surface } = loadTsModule('frontend/src/shared/ui/Surface.tsx');
   const { Table } = loadTsModule('frontend/src/shared/ui/Table.tsx');
 
   const buttonHtml = render(Button, { children: 'Save' });
@@ -108,6 +130,10 @@ test('shared primitives render semantic HTML elements', () => {
   const cardHtml = render(Card, { title: 'Title', children: React.createElement('p', null, 'Body') });
   assert.match(cardHtml, /^<article\b/);
   assert.match(cardHtml, /<header\b/);
+
+  const surfaceHtml = render(Surface, { children: 'Panel' });
+  assert.match(surfaceHtml, /^<section\b/);
+  assert.match(surfaceHtml, /data-ui="surface"/);
 
   const tableHtml = render(Table, {
     columns: [{ key: 'name', header: 'Name', render: (row) => row.name }],
@@ -158,6 +184,54 @@ test('loading/error/empty primitives compose with shared actions and spinner beh
   assert.equal(typeof ui.Spinner, 'function');
 });
 
+test('shared layouts keep stable data attributes for composition', () => {
+  const { AppShell } = loadTsModule('frontend/src/shared/layouts/AppShell.tsx');
+  const { ToolPageLayout } = loadTsModule('frontend/src/shared/layouts/ToolPageLayout.tsx');
+
+  const appShellHtml = render(AppShell, { title: 'Workbench', children: 'Body' });
+  assert.match(appShellHtml, /data-layout="app-shell"/);
+  assert.match(appShellHtml, /data-layout="app-shell-header"/);
+  assert.match(appShellHtml, /data-layout="app-shell-main"/);
+
+  const toolPageHtml = render(ToolPageLayout, {
+    appTitle: 'Workbench',
+    pageTitle: 'Tool',
+    description: 'Overview',
+    sidebar: React.createElement('div', null, 'Sidebar'),
+    children: React.createElement('div', null, 'Content')
+  });
+  assert.match(toolPageHtml, /data-layout="tool-page"/);
+  assert.match(toolPageHtml, /data-layout="tool-page-sidebar"/);
+  assert.match(toolPageHtml, /data-layout="tool-page-content"/);
+});
+
+test('button and surface preserve foundation hooks while merging class names', () => {
+  const { Button } = loadTsModule('frontend/src/shared/ui/Button.tsx');
+  const { Surface } = loadTsModule('frontend/src/shared/ui/Surface.tsx');
+
+  const buttonHtml = render(Button, {
+    children: 'Click',
+    className: 'custom-button',
+    variant: 'secondary',
+    'data-ui': 'override',
+    'data-variant': 'override'
+  });
+  assert.match(buttonHtml, /data-ui="button"/);
+  assert.match(buttonHtml, /data-variant="secondary"/);
+  assert.match(buttonHtml, /class="[^"]*ui-button[^"]*custom-button[^"]*"/);
+
+  const surfaceHtml = render(Surface, {
+    children: 'Panel',
+    className: 'custom-surface',
+    tone: 'muted',
+    'data-ui': 'override',
+    'data-tone': 'override'
+  });
+  assert.match(surfaceHtml, /data-ui="surface"/);
+  assert.match(surfaceHtml, /data-tone="muted"/);
+  assert.match(surfaceHtml, /class="[^"]*ui-surface[^"]*custom-surface[^"]*"/);
+});
+
 test('shared primitives use deterministic ids and keep foundation CSS scope', () => {
   const inputSource = readFile('frontend/src/shared/ui/Input.tsx');
   const baseCss = readFile('frontend/src/shared/styles/base.css');
@@ -176,6 +250,7 @@ test('token usage stays consistent with design token definitions without couplin
     'frontend/src/shared/ui/Button.tsx',
     'frontend/src/shared/ui/Input.tsx',
     'frontend/src/shared/ui/Card.tsx',
+    'frontend/src/shared/ui/Surface.tsx',
     'frontend/src/shared/ui/Table.tsx',
     'frontend/src/shared/ui/EmptyState.tsx',
     'frontend/src/shared/ui/ErrorState.tsx',
@@ -209,4 +284,36 @@ test('token usage stays consistent with design token definitions without couplin
       assert.ok(declaredTokens.has(token), `${componentPath} references undefined token ${token}`);
     }
   }
+});
+
+test('card framing stays lightweight and avoids heavy shadow assumptions', () => {
+  const baseCss = readFile('frontend/src/shared/styles/base.css');
+  const cardBlock = findCssBlock(baseCss, '.ui-card');
+  assert.ok(cardBlock, 'ui-card class exists');
+  assert.doesNotMatch(cardBlock, /box-shadow|--shadow/);
+});
+
+test('theme foundation exposes the motion and dual-theme hooks the rest of the app expects', () => {
+  const tokensCss = readFile('frontend/src/shared/styles/tokens.css');
+  const baseCss = readFile('frontend/src/shared/styles/base.css');
+
+  assert.match(tokensCss, /--color-bg-canvas:/);
+  assert.match(tokensCss, /--color-surface-elevated:/);
+  assert.match(tokensCss, /--color-text-primary:/);
+  assert.match(tokensCss, /--motion-fast:/);
+
+  const darkThemeMatch = tokensCss.match(/:root\[data-theme='dark'\]\s*\{([\s\S]*?)\n\}/);
+  assert.ok(darkThemeMatch, 'dark theme token block exists');
+  const darkThemeBlock = darkThemeMatch[0];
+  assert.match(darkThemeBlock, /--color-bg-canvas:/);
+  assert.match(darkThemeBlock, /--color-text-primary:/);
+
+  const focusMatch = baseCss.match(/:focus-visible\s*\{([\s\S]*?outline:[\s\S]*?)\}/);
+  assert.ok(focusMatch, ':focus-visible rule exists');
+  const focusBlock = focusMatch[1];
+  assert.match(focusBlock, /var\(--focus-ring\)/);
+  assert.match(focusBlock, /var\(--focus-offset\)/);
+
+  assert.match(baseCss, /prefers-reduced-motion/);
+  assert.match(baseCss, /\[data-theme='dark'\]/);
 });

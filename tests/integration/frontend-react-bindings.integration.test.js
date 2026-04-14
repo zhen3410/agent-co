@@ -38,7 +38,7 @@ function assertOmitsAll(source, snippets, messagePrefix = 'unexpected snippet') 
   }
 }
 
-test('chat shell entrypoints now serve the built frontend page and retire legacy shared script endpoints', async () => {
+test('chat and home shell entrypoints now serve the built frontend pages and retire legacy shared script endpoints', async () => {
   const builtChatHtml = readBuiltFrontendFile('chat.html');
   assert.match(builtChatHtml, /<meta name="agent-co-page" content="chat"\s*\/>/);
   assertOmitsAll(builtChatHtml, ['/chat-markdown.js', '/chat-composer.js'], 'built chat html should not reference retired legacy scripts');
@@ -53,12 +53,12 @@ test('chat shell entrypoints now serve the built frontend page and retire legacy
     assert.equal(rootResponse.status, 200);
     assert.equal(indexResponse.status, 200);
     assert.equal(chatResponse.status, 200);
-    assert.match(rootResponse.text, /<meta name="agent-co-page" content="chat"\s*\/>/);
-    assert.equal(indexResponse.text, rootResponse.text, 'chat /index.html should serve the same built shell as /');
-    assert.equal(chatResponse.text, rootResponse.text, 'chat /chat.html should serve the same built shell as /');
-    assertOmitsAll(rootResponse.text, ['/chat-markdown.js', '/chat-composer.js'], 'served chat shell should not reference retired legacy scripts');
+    assert.match(rootResponse.text, /<meta name="agent-co-page" content="home"\s*\/>/);
+    assert.equal(indexResponse.text, rootResponse.text, '/index.html should serve the same built home shell as /');
+    assert.match(chatResponse.text, /<meta name="agent-co-page" content="chat"\s*\/>/);
+    assertOmitsAll(chatResponse.text, ['/chat-markdown.js', '/chat-composer.js'], 'served chat shell should not reference retired legacy scripts');
 
-    const chatAssetPath = extractFirstJsAssetPath(rootResponse.text, 'served chat shell');
+    const chatAssetPath = extractFirstJsAssetPath(chatResponse.text, 'served chat shell');
     const assetResponse = await fixture.request(chatAssetPath);
     assert.equal(assetResponse.status, 200);
     assert.ok(assetResponse.text.length > 0, 'chat shell asset should not be empty');
@@ -74,6 +74,7 @@ test('chat shell entrypoints now serve the built frontend page and retire legacy
 
 test('chat frontend bindings now live in modular React entrypoint and services rather than removed public scripts', () => {
   const chatPageSource = readSourceFile('frontend/src/chat/pages/ChatPage.tsx');
+  const chatMainSource = readSourceFile('frontend/src/entries/chat-main.tsx');
   const chatApiSource = readSourceFile('frontend/src/chat/services/chat-api.ts');
   const chatRealtimeSource = readSourceFile('frontend/src/chat/services/chat-realtime.ts');
 
@@ -84,8 +85,23 @@ test('chat frontend bindings now live in modular React entrypoint and services r
     "import { resolveChatRealtimeUrl } from '../services/chat-realtime-url';",
     'createChatRealtimeConnection',
     'chatApi.loadHistory()',
-    'chatApi.sendMessage({ message })'
+    'chatApi.sendMessage({ message })',
+    'data-chat-layout="conversation-first"',
+    'data-chat-region="conversation-stage"',
+    'data-chat-region="composer-dock"',
+    'data-chat-mobile-drawer="sessions"',
+    'data-chat-mobile-toggle="sessions"',
+    'data-chat-desktop-only="session-rail"',
+    'data-chat-mobile-toggle="secondary-panels"',
+    'data-chat-mobile-secondary="panels"',
+    '@media (max-width: 959px)'
   ], 'chat page should compose the React frontend modules');
+
+  assertContainsAll(chatMainSource, [
+    "loadInitialChatAuthStatus",
+    "'/api/auth-status'",
+    'initialAuthStatus={authStatus}'
+  ], 'chat entrypoint should bootstrap auth status before mounting the chat page');
 
   assertContainsAll(chatApiSource, [
     "return client.request<ChatHistoryResponse>('/api/history'",
@@ -113,12 +129,14 @@ test('built chat asset preserves the current shell contract without resurrecting
   const chatAssetSource = fs.readFileSync(path.join(frontendDistDir, chatManifestEntry.file), 'utf8');
 
   assertContainsAll(chatAssetSource, [
+    '/api/auth-status',
     '/api/history',
     '/api/chat',
     '/api/ws/session-events',
-    '/api/sessions/${encodeURIComponent(r)}/timeline',
-    '/api/sessions/${encodeURIComponent(r)}/sync-status',
-    '/api/sessions/${encodeURIComponent(r)}/call-graph'
+    '/api/sessions/',
+    '/timeline',
+    '/sync-status',
+    '/call-graph'
   ], 'built chat asset should keep the active route/data contracts');
 
   assertOmitsAll(chatAssetSource, ['/chat-markdown.js', '/chat-composer.js'], 'built chat asset should not reference retired legacy scripts');

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { createHttpClient } from '../../../shared/lib/http/http-client';
-import { Card, EmptyState, ErrorState, Spinner } from '../../../shared/ui';
+import { EmptyState, ErrorState, Spinner } from '../../../shared/ui';
 import { getMergedRuntimeConfig } from '../../../shared/config/runtime-config';
 import { useSessionPanelResource } from '../shared/useSessionPanelResource';
 
@@ -120,7 +120,24 @@ export function CallGraphPanel({ sessionId = null, refreshSignal = 0, fetch }: C
   });
 
   return (
-    <Card title="调用图谱">
+    <section
+      aria-label="调用图谱"
+      style={{
+        background: 'rgba(248, 250, 252, 0.8)',
+        border: '1px solid rgba(148, 163, 184, 0.16)',
+        borderRadius: 'calc(var(--radius-lg) + 2px)',
+        display: 'grid',
+        gap: 'var(--space-3)',
+        padding: 'var(--space-4)'
+      }}
+    >
+      <header style={{ display: 'grid', gap: 'var(--space-1)' }}>
+        <strong style={{ color: 'var(--color-text)' }}>调用图谱</strong>
+        <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
+          以摘要方式展示调用链路，避免压过主对话。
+        </span>
+      </header>
+
       <section data-chat-call-graph-panel="call-graph" style={{ display: 'grid', gap: 'var(--space-3)' }}>
         {!sessionId ? (
           <EmptyState
@@ -179,6 +196,6 @@ export function CallGraphPanel({ sessionId = null, refreshSignal = 0, fetch }: C
           </>
         ) : null}
       </section>
-    </Card>
+    </section>
   );
 }

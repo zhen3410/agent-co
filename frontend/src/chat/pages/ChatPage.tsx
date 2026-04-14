@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '../../shared/layouts/AppShell';
-import { Button } from '../../shared/ui';
+import { Button, Input } from '../../shared/ui';
 import { getMergedRuntimeConfig } from '../../shared/config/runtime-config';
+import { ThemeToggle } from '../../shared/theme/theme';
 import { ChatComposer } from '../features/composer/ChatComposer';
 import { ChatMessageList } from '../features/message-list/ChatMessageList';
 import { SessionSidebar } from '../features/session-sidebar/SessionSidebar';
@@ -10,6 +11,7 @@ import { RuntimeStatusBadge } from '../features/runtime-status/RuntimeStatusBadg
 import { CallGraphPanel } from '../features/call-graph/CallGraphPanel';
 import { resolveChatRealtimeUrl } from '../services/chat-realtime-url';
 import { createChatApi, type ChatApi } from '../services/chat-api';
+import type { ChatAuthStatus } from '../bootstrap/chat-bootstrap';
 import {
   appendIncomingChatRealtimeData,
   createChatRealtimeConnection,
@@ -21,11 +23,312 @@ import type { ChatHistoryResponse, ChatMessage, ChatRealtimeEnvelope } from '../
 
 export interface ChatPageProps {
   initialState?: ChatHistoryResponse;
+  initialAuthStatus?: ChatAuthStatus;
   api?: ChatApi;
   createRealtimeConnection?: (options: ChatRealtimeOptions) => ChatRealtimeConnection;
 }
 
 type LoadState = 'loading' | 'ready' | 'error';
+
+const CHAT_PAGE_SHELL_STYLES = `
+  .chat-page-shell {
+    display: grid;
+    gap: var(--space-4);
+    position: relative;
+  }
+
+  .chat-page-shell__actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .chat-page-shell__layout {
+    align-items: start;
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr) minmax(16rem, 20rem);
+  }
+
+  .chat-page-shell__session-rail {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
+  .chat-page-shell__conversation-stage {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
+  .chat-page-shell__composer-dock {
+    bottom: 0;
+    position: sticky;
+    z-index: 5;
+  }
+
+  .chat-page-shell__secondary-shell {
+    align-content: start;
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
+  .chat-page-shell__secondary-header {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .chat-page-shell__secondary-header-copy {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+    margin: 0;
+  }
+
+  .chat-page-shell__mobile-secondary-trigger,
+  .chat-page-shell__mobile-action {
+    display: none;
+  }
+
+  .chat-page-shell__secondary-panels {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .chat-page-shell__drawer {
+    background: rgba(15, 23, 42, 0.12);
+    display: grid;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    position: fixed;
+    transition: opacity 160ms ease;
+    z-index: 30;
+  }
+
+  .chat-page-shell__drawer[data-open="true"] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .chat-page-shell__drawer-panel {
+    background: var(--color-surface, #ffffff);
+    box-shadow: 0 24px 64px rgba(15, 23, 42, 0.18);
+    height: 100%;
+    max-width: 22rem;
+    overflow-y: auto;
+    padding: var(--space-4);
+    transform: translateX(-100%);
+    transition: transform 180ms ease;
+    width: min(88vw, 22rem);
+  }
+
+  .chat-page-shell__drawer[data-open="true"] .chat-page-shell__drawer-panel {
+    transform: translateX(0);
+  }
+
+  .chat-page-shell__drawer-close {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--space-3);
+  }
+
+  @media (max-width: 959px) {
+    .chat-page-shell__layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .chat-page-shell__session-rail {
+      display: none;
+    }
+
+    .chat-page-shell__mobile-action {
+      display: inline-flex;
+    }
+
+    .chat-page-shell__secondary-shell {
+      background: rgba(248, 250, 252, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: calc(var(--radius-lg) + 2px);
+      padding: var(--space-3);
+    }
+
+    .chat-page-shell__mobile-secondary-trigger {
+      display: inline-flex;
+      justify-content: center;
+      width: fit-content;
+    }
+
+    .chat-page-shell__secondary-shell[data-mobile-expanded="false"] .chat-page-shell__secondary-panels {
+      display: none;
+    }
+
+    .chat-page-shell__composer-dock {
+      bottom: calc(env(safe-area-inset-bottom, 0px));
+    }
+  }
+`;
+
+const CHAT_LOGIN_STYLES = `
+  .chat-login {
+    background:
+      radial-gradient(circle at top right, rgba(219, 233, 255, 0.7), transparent 42%),
+      linear-gradient(180deg, rgba(245, 246, 251, 0.92) 0%, rgba(236, 240, 246, 0.96) 100%);
+    min-height: 100vh;
+    padding: var(--space-7) var(--space-4);
+  }
+
+  .chat-login__frame {
+    display: grid;
+    gap: var(--space-5);
+    margin: 0 auto;
+    max-width: 58rem;
+    width: 100%;
+  }
+
+  .chat-login__header {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .chat-login__brand-row {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .chat-login__brand {
+    font-size: clamp(1.5rem, 2vw, 2rem);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.04em;
+  }
+
+  .chat-login__badge {
+    background: var(--color-primary-soft);
+    border-radius: 999px;
+    color: var(--color-primary);
+    font-size: 0.75rem;
+    letter-spacing: 0.18em;
+    padding: 0.1rem 0.65rem;
+    text-transform: uppercase;
+  }
+
+  .chat-login__tagline {
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+
+  .chat-login__theme-toggle {
+    margin-left: auto;
+  }
+
+  .chat-login__panel {
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: calc(var(--radius-xl) + 8px);
+    box-shadow: 0 32px 60px rgba(15, 23, 42, 0.12);
+    display: grid;
+    gap: var(--space-4);
+    padding: var(--space-5);
+  }
+
+  .chat-login__panel-grid {
+    align-items: start;
+    display: grid;
+    gap: var(--space-5);
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  }
+
+  .chat-login__eyebrow {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+
+  .chat-login__title {
+    font-size: 1.6rem;
+    margin: var(--space-2) 0 0;
+  }
+
+  .chat-login__lead {
+    color: var(--color-text-muted);
+    margin: var(--space-2) 0 0;
+  }
+
+  .chat-login__meta {
+    display: grid;
+    gap: var(--space-2);
+    margin-top: var(--space-4);
+  }
+
+  .chat-login__meta-item {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .chat-login__form {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .chat-login__fields {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .chat-login__field .ui-input__label {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .chat-login__field .ui-input__field {
+    background: rgba(248, 250, 252, 0.96);
+    border-color: rgba(148, 163, 184, 0.28);
+    border-radius: calc(var(--radius-lg) + 4px);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .chat-login__error {
+    color: var(--status-error);
+    font-size: var(--font-size-sm);
+    margin: 0;
+  }
+
+  .chat-login__actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: space-between;
+  }
+
+  .chat-login__assist {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .chat-login__footer {
+    color: var(--color-text-muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: space-between;
+  }
+
+  @media (max-width: 900px) {
+    .chat-login {
+      padding: var(--space-6) var(--space-4);
+    }
+
+    .chat-login__panel-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+`;
 
 function createOptimisticUserMessage(text: string): ChatMessage {
   return {
@@ -53,7 +356,7 @@ function normalizeHistoryState(state: ChatHistoryResponse): ChatHistoryResponse 
   };
 }
 
-export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPageProps) {
+export function ChatPage({ initialState, initialAuthStatus, api, createRealtimeConnection }: ChatPageProps) {
   const runtimeConfig = getMergedRuntimeConfig();
   const chatApi = useMemo(() => {
     if (api) {
@@ -72,10 +375,13 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [panelRefreshSignal, setPanelRefreshSignal] = useState(0);
+  const [isSessionDrawerOpen, setIsSessionDrawerOpen] = useState(false);
+  const [isMobileSecondaryOpen, setIsMobileSecondaryOpen] = useState(false);
   const messagesRef = useRef<ChatMessage[]>(historyState?.messages ?? []);
   const realtimeSeqRef = useRef<number>(typeof initialState?.latestEventSeq === 'number' ? initialState.latestEventSeq : 0);
   const realtimeSessionIdRef = useRef<string | null>(historyState?.activeSessionId ?? null);
   const realtimeSubscribedRef = useRef(false);
+  const isLoginGateVisible = Boolean(initialAuthStatus?.authEnabled && !initialAuthStatus?.authenticated);
 
   const notifyPanelsToRefresh = useCallback(() => {
     setPanelRefreshSignal((current) => current + 1);
@@ -103,6 +409,10 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
   useEffect(() => {
     let cancelled = false;
 
+    if (isLoginGateVisible) {
+      return undefined;
+    }
+
     if (initialState && reloadNonce === 0) {
       applyHistoryState(initialState);
       return undefined;
@@ -129,9 +439,13 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
     return () => {
       cancelled = true;
     };
-  }, [applyHistoryState, chatApi, initialState, reloadNonce]);
+  }, [applyHistoryState, chatApi, initialState, isLoginGateVisible, reloadNonce]);
 
   useEffect(() => {
+    if (isLoginGateVisible) {
+      return undefined;
+    }
+
     const activeSessionId = historyState?.activeSessionId;
     if (!activeSessionId || typeof window === 'undefined') {
       return undefined;
@@ -182,7 +496,7 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
     return () => {
       connection.disconnect();
     };
-  }, [historyState?.activeSessionId, notifyPanelsToRefresh, realtimeConnectionFactory]);
+  }, [historyState?.activeSessionId, isLoginGateVisible, notifyPanelsToRefresh, realtimeConnectionFactory]);
 
   const handleSubmit = async (message: string): Promise<void> => {
     const optimistic = createOptimisticUserMessage(message);
@@ -232,6 +546,74 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
     }
   };
 
+  if (isLoginGateVisible) {
+    return (
+      <div data-chat-page="login" className="chat-login">
+        <style>{CHAT_LOGIN_STYLES}</style>
+        <div className="chat-login__frame">
+          <header className="chat-login__header">
+            <div className="chat-login__brand-row">
+              <span className="chat-login__brand">agent-co</span>
+              <span className="chat-login__badge">workspace</span>
+              <ThemeToggle className="chat-login__theme-toggle" />
+            </div>
+            <p className="chat-login__tagline">协作式 AI 工作台入口 · 登录后继续你的会话与执行记录。</p>
+          </header>
+
+          <section data-chat-login="panel" className="chat-login__panel">
+            <div className="chat-login__panel-grid">
+              <div>
+                <span className="chat-login__eyebrow">Workspace Entry</span>
+                <h2 className="chat-login__title">进入工作台</h2>
+                <p className="chat-login__lead">登录后继续你的会话、执行状态与协作节奏。</p>
+                <div className="chat-login__meta">
+                  <div className="chat-login__meta-item">集中查看任务对话与运行时间线。</div>
+                  <div className="chat-login__meta-item">账号统一管理，确保工作区资源安全。</div>
+                </div>
+              </div>
+
+              <div
+                className="chat-login__form"
+                data-chat-login="form"
+                role="group"
+                aria-label="登录入口展示"
+              >
+                <div className="chat-login__fields">
+                  <Input
+                    label="用户名"
+                    name="username"
+                    autoComplete="username"
+                    placeholder="your-name@workspace"
+                    containerClassName="chat-login__field"
+                  />
+                  <Input
+                    label="密码"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    containerClassName="chat-login__field"
+                  />
+                </div>
+                <div className="chat-login__actions">
+                  <Button type="button" data-chat-login-action="submit" disabled>
+                    进入工作台
+                  </Button>
+                  <span className="chat-login__assist">认证入口由统一登录服务提供，请联系管理员开通账号。</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <footer className="chat-login__footer">
+            <span>安全会话由 agent-co 统一管理。</span>
+            <span>登录后可继续未完成的工作流。</span>
+          </footer>
+        </div>
+      </div>
+    );
+  }
+
   const safeState = historyState ?? {
     messages: [],
     session: null,
@@ -242,58 +624,153 @@ export function ChatPage({ initialState, api, createRealtimeConnection }: ChatPa
     agentWorkdirs: {},
     agents: []
   };
+  const sessionTitle = safeState.session?.name || '当前会话';
+  const messageCountLabel = safeState.messages.length > 0 ? `${safeState.messages.length} 条消息` : '等待第一条消息';
 
   return (
     <AppShell
       title="agent-co chat"
-      subtitle={safeState.session?.name || '当前会话'}
+      subtitle={sessionTitle}
       actions={
-        <Button variant="secondary" onClick={() => setReloadNonce((value) => value + 1)}>
-          刷新
-        </Button>
+        <div className="chat-page-shell__actions">
+          <Button
+            variant="secondary"
+            className="chat-page-shell__mobile-action"
+            aria-controls="chat-session-drawer"
+            aria-expanded={isSessionDrawerOpen}
+            data-chat-mobile-toggle="sessions"
+            onClick={() => setIsSessionDrawerOpen((current) => !current)}
+          >
+            会话
+          </Button>
+          <Button variant="secondary" onClick={() => setReloadNonce((value) => value + 1)}>
+            刷新
+          </Button>
+        </div>
       }
     >
       <section
         data-chat-page="shell"
-        style={{
-          display: 'grid',
-          gap: 'var(--space-4)',
-          gridTemplateColumns: 'minmax(16rem, 20rem) minmax(0, 1fr) minmax(18rem, 24rem)'
-        }}
+        data-chat-layout="conversation-first"
+        className="chat-page-shell"
       >
-        <SessionSidebar
-          sessions={safeState.chatSessions}
-          activeSessionId={safeState.activeSessionId}
-          currentAgent={safeState.currentAgent}
-          enabledAgents={safeState.enabledAgents}
-        />
-
-        <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
-          <ChatMessageList
-            messages={safeState.messages}
-            isLoading={loadState === 'loading'}
-            errorMessage={loadState === 'error' ? errorMessage : null}
-          />
-          <ChatComposer
-            disabled={loadState !== 'ready'}
-            onSubmit={handleSubmit}
-          />
-        </div>
-
-        <aside style={{ display: 'grid', gap: 'var(--space-4)' }}>
-          <RuntimeStatusBadge
-            sessionId={safeState.activeSessionId}
-            refreshSignal={panelRefreshSignal}
-          />
-          <TimelinePanel
-            sessionId={safeState.activeSessionId}
-            refreshSignal={panelRefreshSignal}
-          />
-          <CallGraphPanel
-            sessionId={safeState.activeSessionId}
-            refreshSignal={panelRefreshSignal}
-          />
+        <style>{CHAT_PAGE_SHELL_STYLES}</style>
+        <aside
+          id="chat-session-drawer"
+          data-chat-mobile-drawer="sessions"
+          aria-hidden={!isSessionDrawerOpen}
+          data-open={isSessionDrawerOpen}
+          className="chat-page-shell__drawer"
+        >
+          <div className="chat-page-shell__drawer-panel">
+            <div className="chat-page-shell__drawer-close">
+              <Button variant="secondary" onClick={() => setIsSessionDrawerOpen(false)}>
+                关闭
+              </Button>
+            </div>
+            <SessionSidebar
+              sessions={safeState.chatSessions}
+              activeSessionId={safeState.activeSessionId}
+              currentAgent={safeState.currentAgent}
+              enabledAgents={safeState.enabledAgents}
+            />
+          </div>
         </aside>
+
+        <section className="chat-page-shell__layout">
+          <aside
+            data-chat-region="session-rail"
+            data-chat-desktop-only="session-rail"
+            className="chat-page-shell__session-rail"
+          >
+            <SessionSidebar
+              sessions={safeState.chatSessions}
+              activeSessionId={safeState.activeSessionId}
+              currentAgent={safeState.currentAgent}
+              enabledAgents={safeState.enabledAgents}
+            />
+          </aside>
+
+          <main
+            data-chat-region="conversation-stage"
+            className="chat-page-shell__conversation-stage"
+          >
+            <section
+              aria-label="当前会话概览"
+              style={{
+                background: 'rgba(248, 250, 252, 0.76)',
+                border: '1px solid rgba(148, 163, 184, 0.16)',
+                borderRadius: 'calc(var(--radius-lg) + 4px)',
+                display: 'grid',
+                gap: 'var(--space-2)',
+                padding: 'var(--space-4)'
+              }}
+            >
+              <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', justifyContent: 'space-between' }}>
+                <strong style={{ color: 'var(--color-text)', fontSize: 'var(--font-size-lg)' }}>{sessionTitle}</strong>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>{messageCountLabel}</span>
+              </div>
+              <p style={{ color: 'var(--color-text-muted)', margin: 0 }}>
+                主舞台聚焦消息流与输入区；运行状态与执行细节保留在右侧次级面板。
+              </p>
+            </section>
+
+            <ChatMessageList
+              messages={safeState.messages}
+              isLoading={loadState === 'loading'}
+              errorMessage={loadState === 'error' ? errorMessage : null}
+            />
+
+            <section
+              data-chat-region="composer-dock"
+              className="chat-page-shell__composer-dock"
+            >
+              <ChatComposer
+                disabled={loadState !== 'ready'}
+                onSubmit={handleSubmit}
+              />
+            </section>
+          </main>
+
+          <aside
+            data-chat-region="secondary-panels"
+            data-chat-mobile-secondary="panels"
+            data-mobile-expanded={isMobileSecondaryOpen}
+            className="chat-page-shell__secondary-shell"
+          >
+            <header className="chat-page-shell__secondary-header">
+              <strong style={{ color: 'var(--color-text)' }}>运行详情</strong>
+              <p className="chat-page-shell__secondary-header-copy">
+                运行状态、时间线与调用图在移动端收纳为次级区域。
+              </p>
+              <Button
+                variant="secondary"
+                className="chat-page-shell__mobile-secondary-trigger"
+                aria-controls="chat-mobile-secondary-panels"
+                aria-expanded={isMobileSecondaryOpen}
+                data-chat-mobile-toggle="secondary-panels"
+                onClick={() => setIsMobileSecondaryOpen((current) => !current)}
+              >
+                {isMobileSecondaryOpen ? '收起运行详情' : '查看运行详情'}
+              </Button>
+            </header>
+
+            <div id="chat-mobile-secondary-panels" className="chat-page-shell__secondary-panels">
+              <RuntimeStatusBadge
+                sessionId={safeState.activeSessionId}
+                refreshSignal={panelRefreshSignal}
+              />
+              <TimelinePanel
+                sessionId={safeState.activeSessionId}
+                refreshSignal={panelRefreshSignal}
+              />
+              <CallGraphPanel
+                sessionId={safeState.activeSessionId}
+                refreshSignal={panelRefreshSignal}
+              />
+            </div>
+          </aside>
+        </section>
       </section>
     </AppShell>
   );

@@ -1,6 +1,8 @@
 export interface RuntimeConfig {
   apiBaseUrl?: string;
   realtimeBaseUrl?: string;
+  adminBaseUrl?: string;
+  authAdminBaseUrl?: string;
   page?: string;
   [key: string]: unknown;
 }

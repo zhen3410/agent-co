@@ -443,3 +443,149 @@ test('runtime config helpers reject array and non-plain object payloads', () => 
     global.document = originalDocument;
   }
 });
+
+test('admin URL resolver prefers explicit runtime config and otherwise falls back to default auth-admin port semantics', () => {
+  const { resolveAdminPageUrl } = loadTsModule('frontend/src/shared/config/admin-url.ts');
+
+  assert.equal(
+    resolveAdminPageUrl({
+      config: {
+        adminBaseUrl: 'https://admin.example.com/ops'
+      },
+      location: {
+        href: 'https://chat.example.com/chat.html',
+        origin: 'https://chat.example.com',
+        protocol: 'https:',
+        hostname: 'chat.example.com',
+        port: ''
+      }
+    }),
+    'https://admin.example.com/ops/admin.html'
+  );
+
+  assert.equal(
+    resolveAdminPageUrl({
+      location: {
+        href: 'http://127.0.0.1:3002/chat.html',
+        origin: 'http://127.0.0.1:3002',
+        protocol: 'http:',
+        hostname: '127.0.0.1',
+        port: '3002'
+      }
+    }),
+    'http://127.0.0.1:3003/admin.html'
+  );
+
+  assert.equal(
+    resolveAdminPageUrl({
+      location: {
+        href: 'http://myhost:3002/chat.html',
+        origin: 'http://myhost:3002',
+        protocol: 'http:',
+        hostname: 'myhost',
+        port: '3002'
+      }
+    }),
+    'http://myhost:3003/admin.html'
+  );
+
+  assert.equal(
+    resolveAdminPageUrl({
+      location: {
+        href: 'https://chat.example.com:8443/chat.html',
+        origin: 'https://chat.example.com:8443',
+        protocol: 'https:',
+        hostname: 'chat.example.com',
+        port: '8443'
+      }
+    }),
+    'https://chat.example.com:8443/admin.html'
+  );
+});
+
+test('chat bootstrap auth loader requests auth-status and falls back to auth-disabled behavior when unavailable', async () => {
+  const { loadInitialChatAuthStatus } = loadTsModule('frontend/src/chat/bootstrap/chat-bootstrap.tsx');
+  const calls = [];
+
+  const authStatus = await loadInitialChatAuthStatus({
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      return {
+        ok: true,
+        json: async () => ({
+          authEnabled: true,
+          authenticated: false
+        })
+      };
+    }
+  });
+
+  assert.deepEqual(authStatus, {
+    authEnabled: true,
+    authenticated: false
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/auth-status');
+  assert.equal(calls[0].init.credentials, 'include');
+  assert.equal(calls[0].init.cache, 'no-store');
+
+  const fallbackStatus = await loadInitialChatAuthStatus({
+    runtimeConfig: {
+      apiBaseUrl: 'https://chat.example.com'
+    },
+    fetchImpl: async () => {
+      throw new Error('network unavailable');
+    }
+  });
+
+  assert.deepEqual(fallbackStatus, {
+    authEnabled: false,
+    authenticated: true
+  });
+});
+
+test('theme runtime resolves system preference, applies document theme, and persists manual selections', () => {
+  const {
+    THEME_STORAGE_KEY,
+    resolveThemeChoice,
+    resolveAppliedTheme,
+    applyThemeToDocument,
+    persistThemeChoice
+  } = loadTsModule('frontend/src/shared/theme/theme.tsx');
+
+  assert.equal(resolveThemeChoice('dark'), 'dark');
+  assert.equal(resolveThemeChoice('unexpected'), 'system');
+  assert.equal(resolveAppliedTheme('system', true), 'dark');
+  assert.equal(resolveAppliedTheme('system', false), 'light');
+  assert.equal(resolveAppliedTheme('light', true), 'light');
+
+  const documentElement = {
+    dataset: {}
+  };
+
+  applyThemeToDocument({
+    documentElement
+  }, {
+    choice: 'system',
+    theme: 'dark'
+  });
+
+  assert.equal(documentElement.dataset.theme, 'dark');
+  assert.equal(documentElement.dataset.themeChoice, 'system');
+
+  const storage = {
+    values: new Map(),
+    setItem(key, value) {
+      this.values.set(key, value);
+    },
+    removeItem(key) {
+      this.values.delete(key);
+    }
+  };
+
+  persistThemeChoice(storage, 'dark');
+  assert.equal(storage.values.get(THEME_STORAGE_KEY), 'dark');
+
+  persistThemeChoice(storage, 'system');
+  assert.equal(storage.values.has(THEME_STORAGE_KEY), false);
+});

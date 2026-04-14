@@ -24,37 +24,26 @@ export function ToolPageLayout({
     <AppShell title={appTitle} navigation={navigation} actions={actions}>
       <div
         data-layout="tool-page"
-        style={{
-          display: 'grid',
-          gap: 'var(--space-4)',
-          gridTemplateColumns: sidebar ? 'minmax(14rem, 18rem) minmax(0, 1fr)' : '1fr'
-        }}
+        data-has-sidebar={sidebar ? 'true' : 'false'}
+        className="layout-tool-page"
       >
         {sidebar ? (
           <aside
             data-layout="tool-page-sidebar"
-            style={{
-              background: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-3)'
-            }}
+            className="layout-tool-page__sidebar"
           >
             {sidebar}
           </aside>
         ) : null}
         <section
           data-layout="tool-page-content"
-          style={{
-            display: 'grid',
-            gap: 'var(--space-3)'
-          }}
+          className="layout-tool-page__content"
         >
-          <header>
-            <h2 style={{ margin: 0, fontSize: 'var(--font-size-xl)' }}>{pageTitle}</h2>
-            {description ? <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>{description}</p> : null}
+          <header className="layout-tool-page__header">
+            <h2 className="layout-tool-page__title">{pageTitle}</h2>
+            {description ? <p className="layout-tool-page__description">{description}</p> : null}
           </header>
-          <div>{children}</div>
+          <div className="layout-tool-page__body">{children}</div>
         </section>
       </div>
     </AppShell>

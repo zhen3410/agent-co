@@ -1,5 +1,5 @@
 import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
-import { Button, Card, EmptyState, Table } from '../../../shared/ui';
+import { Button, EmptyState, Table } from '../../../shared/ui';
 import type { AdminAgent, AdminGroup } from '../../types';
 
 export interface GroupManagementPanelProps {
@@ -82,10 +82,17 @@ export function GroupManagementPanel({ groups, agents, onCreate, onUpdate, onDel
   }
 
   return (
-    <Card
-      title="分组"
-      actions={
-        editingId ? (
+    <section data-admin-panel="groups" style={panelStyle}>
+      <header style={panelHeaderStyle}>
+        <div style={titleGroupStyle}>
+          <span style={eyebrowStyle}>Group topology</span>
+          <div style={headingRowStyle}>
+            <h3 style={titleStyle}>分组</h3>
+            <span style={countStyle}>{groups.length} 个编排单元</span>
+          </div>
+          <p style={descriptionStyle}>用轻量分段方式维护协作编组，让成员关系与运行职责清晰可读。</p>
+        </div>
+        {editingId ? (
           <Button
             variant="secondary"
             onClick={() => {
@@ -95,14 +102,14 @@ export function GroupManagementPanel({ groups, agents, onCreate, onUpdate, onDel
           >
             取消编辑
           </Button>
-        ) : null
-      }
-    >
-      <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
-        <form data-admin-form="group-editor" onSubmit={handleSubmit} style={{ display: 'grid', gap: 'var(--space-3)' }}>
-          <div style={{ display: 'grid', gap: 'var(--space-3)', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>ID</span>
+        ) : null}
+      </header>
+
+      <div style={compositionStyle}>
+        <form data-admin-form="group-editor" onSubmit={handleSubmit} style={formStyle}>
+          <div style={gridThreeStyle}>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>ID</span>
               <input
                 name="group-id"
                 value={formState.id}
@@ -111,75 +118,217 @@ export function GroupManagementPanel({ groups, agents, onCreate, onUpdate, onDel
                 style={fieldStyle}
               />
             </label>
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>名称</span>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>名称</span>
               <input name="group-name" value={formState.name} onChange={handleChange} style={fieldStyle} />
             </label>
-            <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-              <span>图标</span>
+            <label style={fieldGroupStyle}>
+              <span style={fieldLabelStyle}>图标</span>
               <input name="group-icon" value={formState.icon} onChange={handleChange} style={fieldStyle} />
             </label>
           </div>
-          <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-            <span>成员智能体（逗号分隔）</span>
+          <label style={fieldGroupStyle}>
+            <span style={fieldLabelStyle}>成员智能体（逗号分隔）</span>
             <input name="group-agentNames" value={formState.agentNames} onChange={handleChange} style={fieldStyle} />
-            <small style={{ color: 'var(--color-text-muted)' }}>可选：{agentHint || '当前暂无已加载智能体'}</small>
+            <small style={hintStyle}>可选：{agentHint || '当前暂无已加载智能体'}</small>
           </label>
-          <div>
+          <div style={submitRowStyle}>
             <Button type="submit" disabled={Boolean(busyAction)}>
               {editingId ? '保存分组' : '创建分组'}
             </Button>
+            <span style={assistStyle}>适合维护小团队的固定协作编组与职责边界。</span>
           </div>
         </form>
 
-        {groups.length === 0 ? (
-          <EmptyState title="暂无分组" description="创建分组后可在这里维护成员关系。" />
-        ) : (
-          <Table
-            caption="分组列表"
-            rows={groups}
-            getRowKey={(group) => group.id}
-            columns={[
-              { key: 'id', header: 'ID', render: (group) => group.id },
-              { key: 'name', header: '名称', render: (group) => `${group.icon} ${group.name}` },
-              { key: 'members', header: '成员', render: (group) => group.agentNames.join(', ') || '—' },
-              {
-                key: 'actions',
-                header: '操作',
-                render: (group) => (
-                  <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        setEditingId(group.id);
-                        setFormState(toFormState(group));
-                      }}
-                    >
-                      编辑
-                    </Button>
-                    <Button
-                      variant="danger"
-                      onClick={() => {
-                        void onDelete(group.id);
-                      }}
-                    >
-                      删除
-                    </Button>
-                  </div>
-                )
-              }
-            ]}
-          />
-        )}
+        <div style={listBlockStyle}>
+          <div style={listHeaderStyle}>
+            <p style={listTitleStyle}>分组视图</p>
+            <p style={listCaptionStyle}>列表作为控制台的主阅读面，不再使用一叠厚卡片分散注意力。</p>
+          </div>
+
+          {groups.length === 0 ? (
+            <EmptyState title="暂无分组" description="创建分组后可在这里维护成员关系。" />
+          ) : (
+            <Table
+              caption="分组列表"
+              rows={groups}
+              getRowKey={(group) => group.id}
+              columns={[
+                { key: 'id', header: 'ID', render: (group) => group.id },
+                { key: 'name', header: '名称', render: (group) => `${group.icon} ${group.name}` },
+                { key: 'members', header: '成员', render: (group) => group.agentNames.join(', ') || '—' },
+                {
+                  key: 'actions',
+                  header: '操作',
+                  render: (group) => (
+                    <div style={tableActionsStyle}>
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setEditingId(group.id);
+                          setFormState(toFormState(group));
+                        }}
+                      >
+                        编辑
+                      </Button>
+                      <Button
+                        variant="danger"
+                        onClick={() => {
+                          void onDelete(group.id);
+                        }}
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  )
+                }
+              ]}
+            />
+          )}
+        </div>
       </div>
-    </Card>
+    </section>
   );
 }
+
+const panelStyle = {
+  background: 'var(--color-surface)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: 'calc(var(--radius-lg) + 0.125rem)',
+  display: 'grid',
+  gap: 'var(--space-4)',
+  padding: 'var(--space-4)'
+} as const;
+
+const panelHeaderStyle = {
+  alignItems: 'start',
+  display: 'grid',
+  gap: 'var(--space-3)',
+  gridTemplateColumns: 'minmax(0, 1fr) auto'
+} as const;
+
+const titleGroupStyle = {
+  display: 'grid',
+  gap: 'var(--space-2)'
+} as const;
+
+const eyebrowStyle = {
+  color: 'var(--color-text-muted)',
+  fontFamily: 'var(--font-family-mono)',
+  fontSize: '0.75rem',
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase'
+} as const;
+
+const headingRowStyle = {
+  alignItems: 'center',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)'
+} as const;
+
+const titleStyle = {
+  fontSize: '1.125rem',
+  margin: 0
+} as const;
+
+const countStyle = {
+  background: 'var(--color-surface-muted)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: '999px',
+  color: 'var(--color-text-secondary)',
+  fontSize: 'var(--font-size-sm)',
+  padding: 'var(--space-1) var(--space-2)'
+} as const;
+
+const descriptionStyle = {
+  color: 'var(--color-text-secondary)',
+  margin: 0,
+  maxWidth: '44rem'
+} as const;
+
+const compositionStyle = {
+  display: 'grid',
+  gap: 'var(--space-4)'
+} as const;
+
+const formStyle = {
+  background: 'color-mix(in srgb, var(--color-surface-muted) 72%, transparent)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: 'var(--radius-md)',
+  display: 'grid',
+  gap: 'var(--space-3)',
+  padding: 'var(--space-4)'
+} as const;
+
+const gridThreeStyle = {
+  display: 'grid',
+  gap: 'var(--space-3)',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(10rem, 1fr))'
+} as const;
+
+const fieldGroupStyle = {
+  display: 'grid',
+  gap: 'var(--space-2)'
+} as const;
+
+const fieldLabelStyle = {
+  color: 'var(--color-text)',
+  fontWeight: 'var(--font-weight-medium)'
+} as const;
 
 const fieldStyle = {
   backgroundColor: 'var(--color-surface)',
   border: '1px solid var(--color-border)',
   borderRadius: 'var(--radius-md)',
   color: 'var(--color-text)',
+  minHeight: '2.625rem',
   padding: 'var(--space-2) var(--space-3)'
-};
+} as const;
+
+const hintStyle = {
+  color: 'var(--color-text-muted)',
+  fontSize: 'var(--font-size-sm)'
+} as const;
+
+const submitRowStyle = {
+  alignItems: 'center',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-3)'
+} as const;
+
+const assistStyle = {
+  color: 'var(--color-text-muted)',
+  fontSize: 'var(--font-size-sm)'
+} as const;
+
+const listBlockStyle = {
+  borderTop: '1px solid var(--color-border-muted)',
+  display: 'grid',
+  gap: 'var(--space-3)',
+  paddingTop: 'var(--space-4)'
+} as const;
+
+const listHeaderStyle = {
+  display: 'grid',
+  gap: 'var(--space-1)'
+} as const;
+
+const listTitleStyle = {
+  color: 'var(--color-text)',
+  fontWeight: 'var(--font-weight-semibold)',
+  margin: 0
+} as const;
+
+const listCaptionStyle = {
+  color: 'var(--color-text-muted)',
+  fontSize: 'var(--font-size-sm)',
+  margin: 0
+} as const;
+
+const tableActionsStyle = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)'
+} as const;

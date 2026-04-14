@@ -87,6 +87,7 @@ function validateGroupMembers(group: AdminGroup, agents: AdminAgent[]): AdminGro
 export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
   const runtimeConfig = getMergedRuntimeConfig();
   const [authToken, setAuthToken] = useState(initialAuthToken);
+  const [isTokenEditorVisible, setIsTokenEditorVisible] = useState(false);
   const [resources, setResources] = useState<AdminResources>(EMPTY_RESOURCES);
   const [loadState, setLoadState] = useState<LoadState>('idle');
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
@@ -158,6 +159,20 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
 
   function showError(error: unknown, fallback: string) {
     setNotice({ tone: 'error', message: toErrorMessage(error, fallback) });
+  }
+
+  function openTokenEditor() {
+    setIsTokenEditorVisible(true);
+    setNotice(null);
+    setErrorMessage(null);
+  }
+
+  function handleAuthTokenSubmit(token: string) {
+    setIsTokenEditorVisible(false);
+    setNotice(null);
+    setErrorMessage(null);
+    setAuthToken(token);
+    setReloadNonce((value) => value + 1);
   }
 
   async function runMutation<T>(action: () => Promise<T>, fallbackMessage: string): Promise<T> {
@@ -374,7 +389,7 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
   }
 
   const navigation = (
-    <nav aria-label="Admin sections" style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+    <nav aria-label="Admin sections" style={navStyle}>
       <a href="#agents" data-admin-nav="agents" style={navLinkStyle}>智能体</a>
       <a href="#groups" data-admin-nav="groups" style={navLinkStyle}>分组</a>
       <a href="#users" data-admin-nav="users" style={navLinkStyle}>用户</a>
@@ -385,24 +400,62 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
   const activeNotice = loadState === 'error' && errorMessage
     ? { tone: 'error' as const, message: errorMessage }
     : notice;
-  let content = null;
+  const showTokenGate = !api && (!canLoad || isTokenEditorVisible);
 
-  if (!canLoad) {
-    content = <AdminTokenGate onSubmit={setAuthToken} busy={loadState === 'loading'} />;
+  const statusLabel = !canLoad
+    ? '等待认证'
+    : loadState === 'loading'
+      ? '同步中'
+      : loadState === 'error'
+        ? '最近刷新失败'
+        : '已连接';
+  const overviewLead = !canLoad
+    ? '先通过管理员 Token 进入控制平面，再继续查看各资源区段。'
+    : loadState === 'loading' && !hasLoadedData
+      ? '正在同步智能体、分组、用户与模型连接。'
+      : loadState === 'error' && hasLoadedData
+        ? '最近一次刷新失败，但当前控制台仍保留已加载内容。'
+        : '统一管理智能体、分组、用户与模型连接，保持与聊天工作台一致的内容优先体验。';
+  const overviewMetrics = [
+    { label: '状态', value: statusLabel },
+    { label: '智能体', value: String(resources.agents.length) },
+    { label: '分组', value: String(resources.groups.length) },
+    { label: '用户', value: String(resources.users.length) },
+    { label: '连接', value: String(resources.connections.length) }
+  ];
+
+  let panelContent = null;
+
+  if (showTokenGate) {
+    panelContent = (
+      <AdminTokenGate
+        onSubmit={handleAuthTokenSubmit}
+        busy={loadState === 'loading'}
+      />
+    );
   } else if (loadState === 'loading' && !hasLoadedData) {
-    content = <Spinner label="正在加载管理工作台…" />;
+    panelContent = <Spinner label="正在加载管理工作台…" />;
   } else if (loadState === 'error' && !hasLoadedData) {
-    content = (
+    panelContent = (
       <ErrorState
         title="管理资源加载失败"
         message={errorMessage || '请检查管理员 Token 或服务状态。'}
-        action={<Button onClick={() => setReloadNonce((value) => value + 1)}>重试</Button>}
+        action={(
+          <div style={errorActionsStyle}>
+            <Button onClick={() => setReloadNonce((value) => value + 1)}>重试</Button>
+            {!api ? (
+              <Button variant="secondary" onClick={openTokenEditor}>
+                更换 Token
+              </Button>
+            ) : null}
+          </div>
+        )}
       />
     );
   } else {
-    content = (
-      <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
-        <section id="agents">
+    panelContent = (
+      <div style={panelStackStyle}>
+        <section id="agents" data-admin-section="agents">
           <AgentManagementPanel
             agents={resources.agents}
             pendingReason={resources.pendingReason}
@@ -414,7 +467,7 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
             onApplyPending={handleApplyPendingAgents}
           />
         </section>
-        <section id="groups">
+        <section id="groups" data-admin-section="groups">
           <GroupManagementPanel
             groups={resources.groups}
             agents={resources.agents}
@@ -423,7 +476,7 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
             onDelete={handleDeleteGroup}
           />
         </section>
-        <section id="users">
+        <section id="users" data-admin-section="users">
           <UserManagementPanel
             users={resources.users}
             onCreate={handleCreateUser}
@@ -431,7 +484,7 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
             onDelete={handleDeleteUser}
           />
         </section>
-        <section id="model-connections">
+        <section id="model-connections" data-admin-section="model-connections">
           <ModelConnectionManagementPanel
             connections={resources.connections}
             onCreate={handleCreateConnection}
@@ -448,7 +501,7 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
     <ToolPageLayout
       appTitle="agent-co admin"
       pageTitle="管理工作台"
-      description="统一管理智能体、分组、用户与模型连接。"
+      description="高密度控制台模式，保持与聊天工作区一致的设计语言。"
       navigation={navigation}
       actions={(
         <Button variant="secondary" onClick={() => setReloadNonce((value) => value + 1)}>
@@ -456,18 +509,225 @@ export function AdminPage({ api, initialAuthToken = '' }: AdminPageProps) {
         </Button>
       )}
     >
-      <AdminFeatureNotice notice={activeNotice}>
-        {content}
-      </AdminFeatureNotice>
+      <div data-admin-page="console" data-admin-density="console" style={consoleShellStyle}>
+        <section data-admin-region="overview" style={overviewStyle}>
+          <div style={overviewHeaderStyle}>
+            <div style={overviewCopyStyle}>
+              <span style={overviewEyebrowStyle}>Control plane · console mode</span>
+              <div style={overviewTitleRowStyle}>
+                <h3 style={overviewTitleStyle}>统一配置与访问控制</h3>
+                <span style={overviewBadgeStyle}>{statusLabel}</span>
+              </div>
+              <p style={overviewLeadStyle}>{overviewLead}</p>
+            </div>
+            <div style={overviewMetaStyle}>
+              <span style={overviewMetaItemStyle}>与聊天端统一的设计语言</span>
+              <span style={overviewMetaItemStyle}>更高信息密度，但不过度后台化</span>
+            </div>
+          </div>
+          <div style={overviewMetricsStyle}>
+            {overviewMetrics.map((metric) => (
+              <div key={metric.label} style={metricCardStyle}>
+                <span style={metricLabelStyle}>{metric.label}</span>
+                <strong style={metricValueStyle}>{metric.value}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section data-admin-region="resource-sections" style={resourceSectionsStyle}>
+          <div style={resourceHeaderStyle}>
+            <div>
+              <p style={resourceTitleStyle}>资源区段</p>
+              <p style={resourceLeadStyle}>表单、列表与反馈都保持轻量编排，减少传统后台面板的沉重感。</p>
+            </div>
+            <div style={resourceHeaderActionsStyle}>
+              <div style={resourceHintStyle}>按资源分区浏览 · 直接在当前控制台完成编辑</div>
+              {!api && canLoad && !showTokenGate ? (
+                <Button variant="secondary" onClick={openTokenEditor}>
+                  更换 Token
+                </Button>
+              ) : null}
+            </div>
+          </div>
+
+          <AdminFeatureNotice notice={activeNotice}>
+            {panelContent}
+          </AdminFeatureNotice>
+        </section>
+      </div>
     </ToolPageLayout>
   );
 }
 
+const navStyle = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)'
+} as const;
+
 const navLinkStyle = {
   backgroundColor: 'var(--color-surface)',
-  border: '1px solid var(--color-border)',
+  border: '1px solid var(--color-border-muted)',
   borderRadius: '999px',
   color: 'var(--color-text)',
   padding: 'var(--space-2) var(--space-3)',
   textDecoration: 'none'
+} as const;
+
+const consoleShellStyle = {
+  display: 'grid',
+  gap: 'var(--space-4)'
+} as const;
+
+const overviewStyle = {
+  background: 'linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 95%, var(--color-primary-soft) 5%), var(--color-surface))',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: 'calc(var(--radius-xl) + 0.125rem)',
+  display: 'grid',
+  gap: 'var(--space-4)',
+  padding: 'clamp(var(--space-4), 2vw, var(--space-6))'
+} as const;
+
+const overviewHeaderStyle = {
+  display: 'grid',
+  gap: 'var(--space-3)',
+  gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)'
+} as const;
+
+const overviewCopyStyle = {
+  display: 'grid',
+  gap: 'var(--space-2)'
+} as const;
+
+const overviewEyebrowStyle = {
+  color: 'var(--color-text-muted)',
+  fontFamily: 'var(--font-family-mono)',
+  fontSize: '0.75rem',
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase'
+} as const;
+
+const overviewTitleRowStyle = {
+  alignItems: 'center',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)'
+} as const;
+
+const overviewTitleStyle = {
+  fontSize: 'clamp(1.35rem, 2vw, 1.85rem)',
+  lineHeight: 1.15,
+  margin: 0
+} as const;
+
+const overviewBadgeStyle = {
+  background: 'var(--color-surface-muted)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: '999px',
+  color: 'var(--color-text-secondary)',
+  fontSize: 'var(--font-size-sm)',
+  padding: 'var(--space-1) var(--space-3)'
+} as const;
+
+const overviewLeadStyle = {
+  color: 'var(--color-text-secondary)',
+  margin: 0,
+  maxWidth: '46rem'
+} as const;
+
+const overviewMetaStyle = {
+  alignContent: 'start',
+  display: 'grid',
+  gap: 'var(--space-2)',
+  justifyItems: 'start'
+} as const;
+
+const overviewMetaItemStyle = {
+  background: 'var(--color-surface-muted)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: '999px',
+  color: 'var(--color-text-secondary)',
+  fontSize: 'var(--font-size-sm)',
+  padding: 'var(--space-2) var(--space-3)'
+} as const;
+
+const overviewMetricsStyle = {
+  display: 'grid',
+  gap: 'var(--space-3)',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(7.5rem, 1fr))'
+} as const;
+
+const metricCardStyle = {
+  background: 'color-mix(in srgb, var(--color-surface-muted) 72%, transparent)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: 'var(--radius-md)',
+  display: 'grid',
+  gap: 'var(--space-1)',
+  padding: 'var(--space-3)'
+} as const;
+
+const metricLabelStyle = {
+  color: 'var(--color-text-muted)',
+  fontSize: 'var(--font-size-sm)'
+} as const;
+
+const metricValueStyle = {
+  color: 'var(--color-text)',
+  fontSize: '1.125rem',
+  fontWeight: 'var(--font-weight-semibold)'
+} as const;
+
+const resourceSectionsStyle = {
+  background: 'var(--color-surface)',
+  border: '1px solid var(--color-border-muted)',
+  borderRadius: 'calc(var(--radius-lg) + 0.125rem)',
+  display: 'grid',
+  gap: 'var(--space-4)',
+  padding: 'var(--space-4)'
+} as const;
+
+const resourceHeaderStyle = {
+  alignItems: 'end',
+  borderBottom: '1px solid var(--color-border-muted)',
+  display: 'grid',
+  gap: 'var(--space-3)',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  paddingBottom: 'var(--space-3)'
+} as const;
+
+const resourceHeaderActionsStyle = {
+  alignItems: 'center',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-3)',
+  justifyContent: 'flex-end'
+} as const;
+
+const resourceTitleStyle = {
+  color: 'var(--color-text)',
+  fontWeight: 'var(--font-weight-semibold)',
+  margin: 0
+} as const;
+
+const resourceLeadStyle = {
+  color: 'var(--color-text-muted)',
+  fontSize: 'var(--font-size-sm)',
+  margin: 'var(--space-1) 0 0'
+} as const;
+
+const resourceHintStyle = {
+  color: 'var(--color-text-muted)',
+  fontSize: 'var(--font-size-sm)'
+} as const;
+
+const panelStackStyle = {
+  display: 'grid',
+  gap: 'var(--space-4)'
+} as const;
+
+const errorActionsStyle = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)'
 } as const;

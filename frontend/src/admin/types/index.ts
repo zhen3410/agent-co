@@ -85,7 +85,7 @@ export interface AdminModelConnectionListResponse {
 export interface AdminModelConnectionDraft {
   name: string;
   baseURL: string;
-  apiKey: string;
+  apiKey?: string;
   enabled: boolean;
 }
 

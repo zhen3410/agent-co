@@ -178,7 +178,7 @@ function createSampleCallGraphProjection() {
   };
 }
 
-test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /assets 静态资源', async () => {
+test('chat 服务在主入口 URL 返回首页 shell，并可访问 /chat.html 与 /assets 静态资源', async () => {
   const fixture = await createChatServerFixture();
 
   try {
@@ -187,7 +187,14 @@ test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /asset
 
     assert.equal(homeResponse.status, 200);
     assert.match(homeResponse.headers.get('content-type') || '', /text\/html/i);
-    assert.match(homeHtml, /<meta name="agent-co-page" content="chat"\s*\/>/);
+    assert.match(homeHtml, /<meta name="agent-co-page" content="home"\s*\/>/);
+
+    const chatResponse = await fetch(`http://127.0.0.1:${fixture.port}/chat.html`);
+    const chatHtml = await chatResponse.text();
+
+    assert.equal(chatResponse.status, 200);
+    assert.match(chatResponse.headers.get('content-type') || '', /text\/html/i);
+    assert.match(chatHtml, /<meta name="agent-co-page" content="chat"\s*\/>/);
 
     const assetPath = extractFirstJsAssetPath(homeHtml);
     const assetResponse = await fetch(`http://127.0.0.1:${fixture.port}${assetPath}`);
@@ -204,6 +211,20 @@ test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /asset
   }
 });
 
+test('HomePage 渲染首页入口结构与主行动按钮', () => {
+  const { HomePage } = loadTsModule('frontend/src/home/pages/HomePage.tsx');
+
+  const html = renderToStaticMarkup(React.createElement(HomePage));
+
+  assert.match(html, /data-home-page="shell"/);
+  assert.match(html, /data-home-hero="intro"/);
+  assert.match(html, /data-home-cta="primary"/);
+  assert.match(html, /data-home-workflow="preview"/);
+  assert.match(html, /data-theme-toggle="group"/);
+  assert.match(html, /开发者/);
+  assert.match(html, /小团队/);
+});
+
 test('ChatPage 渲染聊天页壳、会话侧边栏、消息列表与输入区', () => {
   const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
 
@@ -212,12 +233,76 @@ test('ChatPage 渲染聊天页壳、会话侧边栏、消息列表与输入区',
   }));
 
   assert.match(html, /data-chat-page="shell"/);
+  assert.match(html, /data-chat-layout="conversation-first"/);
+  assert.match(html, /data-chat-region="conversation-stage"/);
+  assert.match(html, /data-chat-region="composer-dock"/);
+  assert.match(html, /data-chat-mobile-drawer="sessions"/);
+  assert.match(html, /data-chat-mobile-toggle="sessions"/);
+  assert.match(html, /data-chat-desktop-only="session-rail"/);
   assert.match(html, /data-chat-sidebar="sessions"/);
   assert.match(html, /data-chat-message-list="messages"/);
   assert.match(html, /data-chat-composer="composer"/);
+  assert.match(html, /data-theme-toggle="group"/);
   assert.match(html, /默认会话/);
   assert.match(html, /你好/);
   assert.match(html, /已收到/);
+});
+
+test('ChatPage 渲染工作台登录入口提示与稳定的登录面板标记', () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const html = renderToStaticMarkup(React.createElement(ChatPage, {
+    initialAuthStatus: {
+      authEnabled: true,
+      authenticated: false
+    }
+  }));
+
+  assert.match(html, /data-chat-page="login"/);
+  assert.match(html, /data-chat-login="panel"/);
+  assert.match(html, /data-chat-login="form"/);
+  assert.match(html, /data-chat-login-action="submit"/);
+  assert.match(html, /进入工作台/);
+  assert.match(html, /继续你的会话/);
+});
+
+test('ChatPage 登录门禁可见时不触发 history 或 realtime 请求', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const calls = { history: 0, realtime: 0 };
+  const api = {
+    loadHistory: async () => {
+      calls.history += 1;
+      return createSampleHistoryState();
+    },
+    sendMessage: async () => ({ accepted: true })
+  };
+  const createRealtimeConnection = () => {
+    calls.realtime += 1;
+    return {
+      connect() {},
+      disconnect() {}
+    };
+  };
+
+  let renderer;
+  await act(async () => {
+    renderer = TestRenderer.create(React.createElement(ChatPage, {
+      initialAuthStatus: {
+        authEnabled: true,
+        authenticated: false
+      },
+      api,
+      createRealtimeConnection
+    }));
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  assert.equal(calls.history, 0);
+  assert.equal(calls.realtime, 0);
+  assert.match(JSON.stringify(renderer.toJSON()), /data-chat-page":"login"/);
 });
 
 test('ChatPage 渲染 runtime 状态、timeline 与 call-graph 二级面板', () => {
@@ -227,6 +312,8 @@ test('ChatPage 渲染 runtime 状态、timeline 与 call-graph 二级面板', ()
     initialState: createSampleHistoryState()
   }));
 
+  assert.match(html, /data-chat-mobile-toggle="secondary-panels"/);
+  assert.match(html, /data-chat-mobile-secondary="panels"/);
   assert.match(html, /data-chat-runtime-status="badge"/);
   assert.match(html, /data-chat-timeline-panel="timeline"/);
   assert.match(html, /data-chat-call-graph-panel="call-graph"/);
