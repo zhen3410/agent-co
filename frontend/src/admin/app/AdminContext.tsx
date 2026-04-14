@@ -8,7 +8,8 @@ import type {
   AdminModelConnectionDraft,
   AdminNotice,
   AdminResources,
-  AdminUser
+  AdminUser,
+  AdminAgentPromptTemplatePreviewResult
 } from '../types';
 
 export interface AdminContextProps {
@@ -52,6 +53,8 @@ interface AdminContextValue {
   updateAgent: (name: string, input: { agent: AdminAgent }) => Promise<boolean>;
   deleteAgent: (name: string) => Promise<boolean>;
   applyPendingAgents: () => Promise<boolean>;
+  previewAgentPromptTemplate: (name: string) => Promise<AdminAgentPromptTemplatePreviewResult | null>;
+  restoreAgentPromptTemplate: (name: string) => Promise<string | null>;
   createUser: (input: { username: string; password: string }) => Promise<boolean>;
   changeUserPassword: (username: string, input: { password: string }) => Promise<boolean>;
   deleteUser: (username: string) => Promise<boolean>;
@@ -333,6 +336,23 @@ export function AdminContextProvider({ api, initialAuthToken = '', children }: A
     return true;
   }
 
+  async function previewAgentPromptTemplate(name: string): Promise<AdminAgentPromptTemplatePreviewResult | null> {
+    return runMutation(() => adminApi.getAgentPromptTemplate(name), '加载默认提示词失败').catch(() => null);
+  }
+
+  async function restoreAgentPromptTemplate(name: string): Promise<string | null> {
+    const result = await runMutation(() => adminApi.restoreAgentPromptTemplate(name), '恢复默认提示词失败').catch(() => null);
+    if (!result) {
+      return null;
+    }
+    setResources((current) => ({
+      ...current,
+      agents: current.agents.map((agent) => agent.name === name ? { ...agent, systemPrompt: result.systemPrompt } : agent)
+    }));
+    showSuccess('已恢复默认提示词');
+    return result.systemPrompt;
+  }
+
   async function applyPendingAgents(): Promise<boolean> {
     const result = await runMutation(() => adminApi.applyPendingAgents(), '应用待生效配置失败').catch(() => null);
     if (!result) {
@@ -415,6 +435,8 @@ export function AdminContextProvider({ api, initialAuthToken = '', children }: A
     updateAgent,
     deleteAgent,
     applyPendingAgents,
+    previewAgentPromptTemplate,
+    restoreAgentPromptTemplate,
     createUser,
     changeUserPassword,
     deleteUser

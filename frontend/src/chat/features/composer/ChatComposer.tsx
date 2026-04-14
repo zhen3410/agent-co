@@ -1,5 +1,4 @@
 import { Button } from '../../../shared/ui';
-import { renderMarkdownHtml } from '../../services/chat-markdown';
 import { useChatComposer } from './useChatComposer';
 
 export interface ChatComposerProps {
@@ -7,97 +6,134 @@ export interface ChatComposerProps {
   onSubmit: (message: string) => Promise<void>;
 }
 
+const CHAT_COMPOSER_STYLES = `
+  .chat-composer {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 999px;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+    display: grid;
+    gap: var(--space-2);
+    max-width: 100%;
+    min-width: 0;
+    padding: 0.35rem;
+    width: 100%;
+  }
+
+  .chat-composer__form,
+  .chat-composer__field {
+    display: grid;
+  }
+
+  .chat-composer__form {
+    gap: var(--space-2);
+  }
+
+  .chat-composer__field {
+    align-items: center;
+    gap: var(--space-2);
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .chat-composer__error {
+    color: var(--status-error);
+    font-size: var(--font-size-sm);
+    padding: 0 0.7rem 0.1rem;
+  }
+
+  .chat-composer__textarea {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: var(--color-text);
+    font-size: 16px;
+    line-height: 1.45;
+    min-height: 2.75rem;
+    padding: 0.55rem 0.7rem;
+    resize: none;
+    width: 100%;
+  }
+
+  .chat-composer__textarea::placeholder {
+    color: var(--color-text-muted);
+  }
+
+  .chat-composer__textarea:focus {
+    outline: none;
+  }
+
+  .chat-composer__submit {
+    align-items: center;
+    border-radius: 999px;
+    display: inline-flex;
+    height: 2.75rem;
+    justify-content: center;
+    min-width: 2.75rem;
+    padding: 0;
+    width: 2.75rem;
+  }
+
+  .chat-composer__submit-icon {
+    display: inline-flex;
+    font-size: 1rem;
+    line-height: 1;
+    transform: translateX(0.03rem);
+  }
+
+  @media (max-width: 720px) {
+    .chat-composer {
+      background: rgba(255, 255, 255, 0.98);
+      border-radius: 999px;
+      box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.08);
+      gap: var(--space-2);
+      padding: 0.28rem;
+    }
+
+    .chat-composer__form {
+      gap: var(--space-2);
+    }
+
+    .chat-composer__field {
+      gap: var(--space-2);
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .chat-composer__textarea {
+      min-height: 2.6rem;
+      padding: 0.5rem 0.72rem;
+    }
+  }
+`;
+
 export function ChatComposer({ disabled = false, onSubmit }: ChatComposerProps) {
   const composer = useChatComposer({ disabled, onSubmit });
-  const lineCount = composer.value ? composer.value.split('\n').length : 1;
-  const charCount = composer.value.length;
 
   return (
     <section
       aria-label="消息输入区"
-      style={{
-        background: 'rgba(255, 255, 255, 0.9)',
-        border: '1px solid rgba(148, 163, 184, 0.24)',
-        borderRadius: 'calc(var(--radius-lg) + 4px)',
-        boxShadow: '0 20px 48px rgba(15, 23, 42, 0.06)',
-        display: 'grid',
-        gap: 'var(--space-4)',
-        padding: 'var(--space-4)'
-      }}
+      className="chat-composer"
     >
-      <form data-chat-composer="composer" onSubmit={composer.submit} style={{ display: 'grid', gap: 'var(--space-4)' }}>
-        <header style={{ alignItems: 'flex-start', display: 'flex', gap: 'var(--space-3)', justifyContent: 'space-between' }}>
-          <div style={{ display: 'grid', gap: 'var(--space-1)' }}>
-            <strong style={{ color: 'var(--color-text)', fontSize: 'var(--font-size-base)' }}>继续当前对话</strong>
-            <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
-              支持 Markdown，使用 Ctrl/⌘ + Enter 发送。
-            </span>
-          </div>
-          <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', textAlign: 'right' }}>
-            <div>{lineCount} 行</div>
-            <div>{charCount} 字符</div>
-          </div>
-        </header>
-
-        <label style={{ display: 'grid', gap: 'var(--space-2)' }}>
-          <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-medium)' }}>
-            消息
-          </span>
+      <style>{CHAT_COMPOSER_STYLES}</style>
+      <form data-chat-composer="composer" onSubmit={composer.submit} className="chat-composer__form">
+        <label className="chat-composer__field">
           <textarea
             ref={composer.textareaRef}
             value={composer.value}
             onChange={(event) => composer.setValue(event.target.value)}
             onKeyDown={composer.handleTextareaKeyDown}
             disabled={disabled || composer.isSubmitting}
-            rows={6}
+            rows={1}
             aria-label="输入消息"
-            placeholder="输入你的消息、计划或下一步操作…"
-            style={{
-              background: 'rgba(248, 250, 252, 0.92)',
-              border: '1px solid rgba(148, 163, 184, 0.28)',
-              borderRadius: 'var(--radius-lg)',
-              color: 'var(--color-text)',
-              minHeight: '9rem',
-              padding: 'var(--space-4)',
-              resize: 'none',
-              width: '100%'
-            }}
+            placeholder="输入消息"
+            className="chat-composer__textarea"
           />
-        </label>
-
-        <section
-          aria-label="Markdown 预览"
-          style={{
-            background: 'rgba(248, 250, 252, 0.72)',
-            border: '1px solid rgba(148, 163, 184, 0.22)',
-            borderRadius: 'var(--radius-lg)',
-            display: 'grid',
-            gap: 'var(--space-2)',
-            minHeight: '4.5rem',
-            padding: 'var(--space-3)'
-          }}
-        >
-          <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>实时预览</div>
-          {composer.value.trim() ? (
-            <div dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(composer.value) }} />
-          ) : (
-            <div style={{ color: 'var(--color-text-muted)' }}>输入内容后，这里会显示排版后的消息。</div>
-          )}
-        </section>
-
-        <footer style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', justifyContent: 'space-between' }}>
-          {composer.errorMessage ? (
-            <div role="alert" style={{ color: 'var(--status-error)', fontSize: 'var(--font-size-sm)' }}>{composer.errorMessage}</div>
-          ) : (
-            <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
-              发送后会保持当前会话与实时同步状态。
-            </span>
-          )}
-
-          <Button type="submit" disabled={!composer.canSubmit}>
-            {composer.isSubmitting ? '发送中…' : '发送消息'}
+          <Button type="submit" className="chat-composer__submit" disabled={!composer.canSubmit} aria-label={composer.isSubmitting ? '发送中' : '发送消息'}>
+            <span className="chat-composer__submit-icon" aria-hidden="true">➤</span>
           </Button>
-        </footer>
+        </label>
+        {composer.errorMessage ? (
+          <div role="alert" className="chat-composer__error">{composer.errorMessage}</div>
+        ) : null}
       </form>
     </section>
   );

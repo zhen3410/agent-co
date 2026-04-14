@@ -74,6 +74,8 @@
   --status-warning: #d97706;
   --status-error: #dc2626;
   --status-info: #0ea5e9;
+  --app-shell-header-height: 5.5rem;
+  --chat-composer-dock-height: 6.5rem;
 }
 
 :root[data-theme='dark'] {

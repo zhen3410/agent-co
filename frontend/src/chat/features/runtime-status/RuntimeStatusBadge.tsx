@@ -101,18 +101,15 @@ export function RuntimeStatusBadge({ sessionId = null, refreshSignal = 0, fetch 
         padding: 'var(--space-4)'
       }}
     >
-      <header style={{ display: 'grid', gap: 'var(--space-1)' }}>
+      <header>
         <strong style={{ color: 'var(--color-text)' }}>运行状态</strong>
-        <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
-          当前会话的同步与讨论状态。
-        </span>
       </header>
 
       <section data-chat-runtime-status="badge" style={{ display: 'grid', gap: 'var(--space-3)' }}>
         {!sessionId ? (
           <EmptyState
             title="未选择会话"
-            description="请选择会话后查看同步进度。"
+            description=""
           />
         ) : null}
 

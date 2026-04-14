@@ -76,6 +76,15 @@ export function createAdminApi(options: AdminApiOptions = {}): AdminApi {
     applyPendingAgents() {
       return request('/api/agents/apply-pending', { method: 'POST' });
     },
+    getAgentPromptTemplate(name: string) {
+      return request(`/api/agents/${encodeURIComponent(name)}/prompt/template`);
+    },
+    restoreAgentPromptTemplate(name: string) {
+      return request(`/api/agents/${encodeURIComponent(name)}/prompt/restore-template`, {
+        method: 'POST',
+        json: { applyMode: 'immediate' }
+      });
+    },
     listGroups(): Promise<AdminGroupListResponse> {
       return request('/api/groups');
     },

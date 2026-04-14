@@ -51,6 +51,18 @@ export interface AdminAgentMutationResult {
   agent: AdminAgent;
 }
 
+export interface AdminAgentPromptTemplatePreviewResult {
+  success: true;
+  currentPrompt: string;
+  templatePrompt: string;
+}
+
+export interface AdminAgentPromptRestoreResult {
+  success: true;
+  applyMode: ApplyMode;
+  systemPrompt: string;
+}
+
 export interface AdminGroup {
   id: string;
   name: string;
@@ -120,6 +132,8 @@ export interface AdminApi {
   updateAgent(name: string, input: { agent: AdminAgent; applyMode?: ApplyMode }): Promise<AdminAgentMutationResult>;
   deleteAgent(name: string, applyMode?: ApplyMode): Promise<{ success: true; applyMode: ApplyMode; name: string }>;
   applyPendingAgents(): Promise<{ success: true; agents: AdminAgent[] }>;
+  getAgentPromptTemplate(name: string): Promise<AdminAgentPromptTemplatePreviewResult>;
+  restoreAgentPromptTemplate(name: string): Promise<AdminAgentPromptRestoreResult>;
   listGroups(): Promise<AdminGroupListResponse>;
   createGroup(input: AdminGroup): Promise<AdminGroupMutationResult>;
   updateGroup(id: string, input: Omit<AdminGroup, 'id'>): Promise<AdminGroupMutationResult>;

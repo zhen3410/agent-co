@@ -3,7 +3,7 @@ import { AdminFormPage } from '../components/AdminFormPage';
 import { AgentForm } from '../features/agents/AgentForm';
 
 export function AgentEditPage({ name, onNavigate }: { name: string; onNavigate: (path: string) => void }) {
-  const { resources, updateAgent } = useAdminContext();
+  const { resources, updateAgent, previewAgentPromptTemplate, restoreAgentPromptTemplate } = useAdminContext();
   const agent = resources.agents.find((item) => item.name === name);
   if (!agent) {
     return <AdminFormPage title="未找到智能体" description={name} />;
@@ -22,6 +22,11 @@ export function AgentEditPage({ name, onNavigate }: { name: string; onNavigate: 
           }
           return succeeded;
         }}
+        onPreviewDefaultPrompt={async () => {
+          const result = await previewAgentPromptTemplate(agent.name);
+          return result?.templatePrompt || null;
+        }}
+        onRestoreDefaultPrompt={() => restoreAgentPromptTemplate(agent.name)}
         onCancel={() => onNavigate('/admin/agents')}
       />
     </AdminFormPage>

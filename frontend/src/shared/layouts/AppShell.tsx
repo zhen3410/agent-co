@@ -21,7 +21,7 @@ export function AppShell({ title, subtitle, navigation, actions, children, style
         data-layout="app-shell-header"
         className="layout-app-shell__header"
       >
-        <div className="layout-app-shell__nav">{navigation}</div>
+        {navigation ? <div className="layout-app-shell__nav">{navigation}</div> : null}
         <div className="layout-app-shell__titles">
           <h1 className="layout-app-shell__title">{title}</h1>
           {subtitle ? <p className="layout-app-shell__subtitle">{subtitle}</p> : null}

@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin Options</title>
+<style>
+  :root {
+    --bg: #eef2f7;
+    --panel: rgba(255,255,255,.88);
+    --line: rgba(148,163,184,.18);
+    --text: #0f172a;
+    --muted: #64748b;
+    --soft: #f8fafc;
+    --accent: #2563eb;
+    --accent-soft: rgba(37,99,235,.10);
+    --green: #16a34a;
+    --amber: #d97706;
+    --radius: 22px;
+    --shadow: 0 24px 60px rgba(15,23,42,.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(circle at top left, rgba(219,234,254,.9), transparent 28%),
+      radial-gradient(circle at top right, rgba(240,253,244,.95), transparent 24%),
+      linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  }
+  .page {
+    padding: 36px;
+    display: grid;
+    gap: 20px;
+  }
+  .hero {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 20px;
+  }
+  .hero h1 { margin: 0; font-size: 28px; }
+  .hero p { margin: 8px 0 0; color: var(--muted); }
+  .badges { display:flex; gap:10px; flex-wrap:wrap; }
+  .badge {
+    border:1px solid var(--line); background: rgba(255,255,255,.7); color: var(--muted);
+    border-radius: 999px; padding: 8px 12px; font-size: 13px;
+  }
+  .grid { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 18px; }
+  .card {
+    background: var(--panel); border:1px solid rgba(255,255,255,.75); backdrop-filter: blur(18px);
+    border-radius: 30px; box-shadow: var(--shadow); overflow:hidden;
+  }
+  .card-head { padding: 18px 20px 14px; border-bottom:1px solid var(--line); }
+  .eyebrow { font-size: 12px; letter-spacing:.14em; color: var(--muted); text-transform:uppercase; }
+  .title-row { display:flex; justify-content:space-between; align-items:center; margin-top: 10px; }
+  .title-row h2 { margin:0; font-size: 22px; }
+  .tag { font-size:12px; border-radius:999px; padding:6px 10px; background:var(--accent-soft); color:var(--accent); }
+  .sub { color: var(--muted); margin-top: 8px; font-size: 14px; line-height:1.5; }
+  .frame { padding: 18px; background: linear-gradient(180deg, rgba(248,250,252,.95), rgba(241,245,249,.8)); }
+  .mock {
+    height: 620px; border:1px solid var(--line); border-radius: 26px; background: rgba(255,255,255,.9);
+    overflow:hidden; display:grid;
+  }
+  .topbar { height: 62px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; padding: 0 18px; background: rgba(255,255,255,.9); }
+  .brand { font-weight:600; }
+  .icons { display:flex; gap:10px; }
+  .ic { width: 34px; height: 34px; border-radius: 12px; background: var(--soft); border:1px solid var(--line); }
+  .chipline { display:flex; gap:8px; padding: 14px 18px 0; flex-wrap:wrap; }
+  .chip { padding: 7px 10px; border-radius:999px; background: var(--soft); color:var(--muted); font-size:12px; border:1px solid var(--line); }
+  .chip.active { background: var(--accent-soft); color:var(--accent); border-color: rgba(37,99,235,.2); }
+  .layout-a { grid-template-columns: 86px 1fr; }
+  .rail { border-right:1px solid var(--line); padding: 14px 10px; display:grid; align-content:start; gap:10px; background: rgba(248,250,252,.72); }
+  .rail .dot { height:42px; border-radius:14px; background:var(--soft); border:1px solid var(--line); }
+  .rail .dot.active { background: linear-gradient(180deg, rgba(37,99,235,.12), rgba(37,99,235,.06)); border-color: rgba(37,99,235,.2); }
+  .main { padding: 16px; display:grid; gap:14px; align-content:start; }
+  .toolbar { display:flex; justify-content:space-between; align-items:center; }
+  .search { width: 52%; height: 38px; border-radius: 14px; background: var(--soft); border:1px solid var(--line); }
+  .btn { width: 88px; height: 38px; border-radius: 14px; background: #0f172a; }
+  .list { display:grid; gap:12px; }
+  .row { display:grid; grid-template-columns: 1fr auto; gap: 12px; padding: 16px; border-radius: 18px; background: rgba(255,255,255,.86); border:1px solid var(--line); }
+  .row strong { display:block; margin-bottom:6px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .pill { width: 62px; height: 28px; border-radius:999px; background: rgba(22,163,74,.12); border:1px solid rgba(22,163,74,.18); }
+  .editor-drawer { position: absolute; right: 14px; top: 114px; width: 39%; height: 73%; border-radius: 24px; background: rgba(255,255,255,.96); border:1px solid var(--line); box-shadow: 0 18px 40px rgba(15,23,42,.10); padding: 14px; display:grid; gap:10px; }
+  .field { height: 42px; border-radius: 14px; background: var(--soft); border:1px solid var(--line); }
+  .field.tall { height: 110px; }
+  .section-title { font-size: 13px; color: var(--muted); }
+  .layout-b { grid-template-rows: auto auto 1fr; }
+  .stack { padding: 14px 18px 18px; display:grid; gap: 14px; }
+  .module { border:1px solid var(--line); border-radius: 22px; background: rgba(255,255,255,.88); padding: 14px; display:grid; gap: 12px; }
+  .module-head { display:flex; justify-content:space-between; align-items:center; }
+  .module-list { display:grid; gap:10px; }
+  .small-row { height: 54px; border-radius: 16px; background: var(--soft); border:1px solid var(--line); }
+  .inline-drawer { border:1px dashed rgba(37,99,235,.35); background: rgba(37,99,235,.05); }
+  .layout-c { grid-template-rows: auto auto 1fr; }
+  .stats { display:grid; grid-template-columns: repeat(3,1fr); gap:12px; padding: 14px 18px 0; }
+  .stat { border:1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,.9); padding: 14px; }
+  .stat .n { font-size: 26px; font-weight:700; }
+  .two-col { display:grid; grid-template-columns: 1.2fr .8fr; gap: 12px; padding: 14px 18px 18px; }
+  .panel { border:1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.88); padding: 14px; }
+  .kanban { display:grid; gap:10px; }
+  .bar { height: 44px; border-radius: 14px; background: var(--soft); border:1px solid var(--line); }
+  .note { margin: 10px 18px 0; padding: 10px 12px; border-radius: 14px; background: rgba(245,158,11,.08); color: var(--amber); font-size: 13px; border:1px solid rgba(245,158,11,.18); }
+  .relative { position: relative; }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <div>
+        <h1>后台管理区重构方向样例</h1>
+        <p>基于聊天区已验证的经验：极简顶部、内容优先、控制收纳、编辑弹出、减少后台味。</p>
+      </div>
+      <div class="badges">
+        <span class="badge">移动端优先</span>
+        <span class="badge">内容优先</span>
+        <span class="badge">避免卡片 AI 风</span>
+      </div>
+    </div>
+    <div class="grid">
+      <section class="card">
+        <div class="card-head">
+          <div class="eyebrow">Recommended</div>
+          <div class="title-row"><h2>A · 工作台式</h2><span class="tag">推荐</span></div>
+          <div class="sub">左侧轻导航，中间列表主区，编辑从右侧抽屉进入。最像你现在满意的聊天区思路。</div>
+        </div>
+        <div class="frame">
+          <div class="mock layout-a relative">
+            <div class="rail">
+              <div class="dot active"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
+            </div>
+            <div>
+              <div class="topbar"><div class="brand">admin-co</div><div class="icons"><div class="ic"></div><div class="ic"></div></div></div>
+              <div class="chipline"><span class="chip active">智能体</span><span class="chip">分组</span><span class="chip">用户</span><span class="chip">模型连接</span></div>
+              <div class="main">
+                <div class="toolbar"><div class="search"></div><div class="btn"></div></div>
+                <div class="list">
+                  <div class="row"><div><strong>Codex架构师</strong><div class="meta">高频调用 · 启用 · Prompt 已配置</div></div><div class="pill"></div></div>
+                  <div class="row"><div><strong>Alice</strong><div class="meta">协作智能体 · 允许分组 · 工作区正常</div></div><div class="pill"></div></div>
+                  <div class="row"><div><strong>Bob</strong><div class="meta">审阅型智能体 · 草稿待应用</div></div><div class="pill" style="background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.18)"></div></div>
+                </div>
+              </div>
+              <div class="editor-drawer">
+                <div class="toolbar"><strong>编辑智能体</strong><div class="ic"></div></div>
+                <div class="section-title">名称</div><div class="field"></div>
+                <div class="section-title">模型</div><div class="field"></div>
+                <div class="section-title">Prompt</div><div class="field tall"></div>
+                <div class="toolbar"><div class="chip">取消</div><div class="btn" style="width:96px"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <div class="eyebrow">Conservative</div>
+          <div class="title-row"><h2>B · 单列内容流</h2><span class="tag" style="background:rgba(22,163,74,.10);color:#15803d">稳妥</span></div>
+          <div class="sub">保留现在的纵向结构，但压缩卡片感，模块折叠展开，编辑器以内联抽屉插入。</div>
+        </div>
+        <div class="frame">
+          <div class="mock layout-b">
+            <div class="topbar"><div class="brand">admin-co</div><div class="icons"><div class="ic"></div><div class="ic"></div></div></div>
+            <div class="chipline"><span class="chip active">全部模块</span><span class="chip">最近改动</span><span class="chip">待处理</span></div>
+            <div class="stack">
+              <div class="module">
+                <div class="module-head"><strong>智能体管理</strong><span class="chip">12 项</span></div>
+                <div class="module-list">
+                  <div class="small-row"></div>
+                  <div class="small-row inline-drawer"></div>
+                  <div class="small-row"></div>
+                </div>
+              </div>
+              <div class="module">
+                <div class="module-head"><strong>分组管理</strong><span class="chip">4 组</span></div>
+                <div class="module-list"><div class="small-row"></div><div class="small-row"></div></div>
+              </div>
+              <div class="module">
+                <div class="module-head"><strong>模型连接</strong><span class="chip">3 个</span></div>
+                <div class="module-list"><div class="small-row"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <div class="eyebrow">Dashboard</div>
+          <div class="title-row"><h2>C · 仪表盘式</h2><span class="tag" style="background:rgba(245,158,11,.10);color:#b45309">传统</span></div>
+          <div class="sub">顶部概览卡 + 下方管理区，更像常规后台。信息全，但不如 A 聚焦，也更有“后台味”。</div>
+        </div>
+        <div class="frame">
+          <div class="mock layout-c">
+            <div class="topbar"><div class="brand">admin-co</div><div class="icons"><div class="ic"></div><div class="ic"></div></div></div>
+            <div class="stats">
+              <div class="stat"><div class="meta">智能体</div><div class="n">12</div></div>
+              <div class="stat"><div class="meta">分组</div><div class="n">4</div></div>
+              <div class="stat"><div class="meta">异常连接</div><div class="n">1</div></div>
+            </div>
+            <div class="note">这种方向信息最全，但会重新变成“后台首页 + 管理页面”的感觉。</div>
+            <div class="two-col">
+              <div class="panel"><strong>核心管理</strong><div class="kanban" style="margin-top:12px"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div></div>
+              <div class="panel"><strong>最近动作</strong><div class="kanban" style="margin-top:12px"><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

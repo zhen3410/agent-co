@@ -1,11 +1,30 @@
+import { useState } from 'react';
 import { Button } from '../../shared/ui';
 import { useAdminContext } from '../app/AdminContext';
+import { AdminDialog } from '../components/AdminDialog';
 import { AdminEmptyBlock } from '../components/AdminEmptyBlock';
 import { AdminListPageHeader } from '../components/AdminListPageHeader';
 import { AgentList } from '../features/agents/AgentList';
 
 export function AgentsListPage({ onNavigate }: { onNavigate: (path: string) => void }) {
-  const { resources, deleteAgent, applyPendingAgents } = useAdminContext();
+  const { resources, deleteAgent, applyPendingAgents, previewAgentPromptTemplate, restoreAgentPromptTemplate } = useAdminContext();
+  const [previewState, setPreviewState] = useState<{ name: string; prompt: string } | null>(null);
+
+  async function handlePreview(name: string) {
+    const result = await previewAgentPromptTemplate(name);
+    if (!result) {
+      return;
+    }
+    setPreviewState({ name, prompt: result.templatePrompt });
+  }
+
+  async function handleRestore(name: string) {
+    const prompt = await restoreAgentPromptTemplate(name);
+    if (!prompt) {
+      return;
+    }
+    setPreviewState({ name, prompt });
+  }
 
   return (
     <section data-admin-page="agents-list" className="admin-page-stack">
@@ -15,7 +34,12 @@ export function AgentsListPage({ onNavigate }: { onNavigate: (path: string) => v
         meta={resources.pendingReason ? `待生效：${resources.pendingReason}` : undefined}
         actions={<div className="admin-row-actions"><Button onClick={() => onNavigate('/admin/agents/new')} data-admin-action="create-agent">新建</Button>{resources.pendingReason ? <Button variant="secondary" onClick={() => void applyPendingAgents()}>应用待生效配置</Button> : null}</div>}
       />
-      {resources.agents.length === 0 ? <AdminEmptyBlock title="暂无智能体" description="创建后可分配到分组或切换为 API 模式。" action={<Button onClick={() => onNavigate('/admin/agents/new')}>新建智能体</Button>} /> : <AgentList agents={resources.agents} onEdit={(name) => onNavigate(`/admin/agents/${encodeURIComponent(name)}/edit`)} onDelete={(name) => void deleteAgent(name)} />}
+      {previewState ? (
+        <AdminDialog dialogId="agent-prompt-preview" title={`${previewState.name} · 默认提示词`} onClose={() => setPreviewState(null)}>
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{previewState.prompt}</pre>
+        </AdminDialog>
+      ) : null}
+      {resources.agents.length === 0 ? <AdminEmptyBlock title="暂无智能体" description="创建后可分配到分组或切换为 API 模式。" action={<Button onClick={() => onNavigate('/admin/agents/new')}>新建智能体</Button>} /> : <AgentList agents={resources.agents} onEdit={(name) => onNavigate(`/admin/agents/${encodeURIComponent(name)}/edit`)} onPreview={(name) => void handlePreview(name)} onRestore={(name) => void handleRestore(name)} onDelete={(name) => void deleteAgent(name)} />}
     </section>
   );
 }

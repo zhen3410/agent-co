@@ -29,11 +29,8 @@ export function SessionSidebar({
           padding: 'var(--space-4)'
         }}
       >
-        <header style={{ display: 'grid', gap: 'var(--space-1)' }}>
+        <header>
           <strong style={{ color: 'var(--color-text)' }}>会话</strong>
-          <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
-            导航保持次级，只在切换上下文时使用。
-          </span>
         </header>
 
         <ul style={{ display: 'grid', gap: 'var(--space-2)', listStyle: 'none', margin: 0, padding: 0 }}>
@@ -71,11 +68,8 @@ export function SessionSidebar({
           padding: 'var(--space-4)'
         }}
       >
-        <header style={{ display: 'grid', gap: 'var(--space-1)' }}>
+        <header>
           <strong style={{ color: 'var(--color-text)' }}>当前上下文</strong>
-          <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
-            智能体与会话信息在这里轻量呈现。
-          </span>
         </header>
 
         <dl style={{ display: 'grid', gap: 'var(--space-3)', margin: 0 }}>

@@ -265,3 +265,142 @@ test('编辑 API 智能体时会保留未暴露在表单中的温度与 token �
   assert.equal(updatedPayload.input.agent.apiMaxTokens, 1024);
   assert.equal(updatedPayload.input.agent.apiModel, 'gpt-5.1');
 });
+
+
+test('智能体列表支持预览与恢复默认提示词', async () => {
+  const calls = [];
+  const api = {
+    async listUsers() { return { users: [] }; },
+    async createUser() { throw new Error('not used'); },
+    async updateUserPassword() { throw new Error('not used'); },
+    async deleteUser() { throw new Error('not used'); },
+    async listAgents() {
+      return {
+        agents: [{ name: 'planner', avatar: '🧭', personality: '计划', color: '#111827', systemPrompt: '当前提示词', executionMode: 'cli', cliName: 'codex' }],
+        pendingAgents: null,
+        pendingReason: null,
+        pendingUpdatedAt: null
+      };
+    },
+    async createAgent() { throw new Error('not used'); },
+    async updateAgent() { throw new Error('not used'); },
+    async deleteAgent() { throw new Error('not used'); },
+    async applyPendingAgents() { throw new Error('not used'); },
+    async getAgentPromptTemplate(name) {
+      calls.push(['preview', name]);
+      return { success: true, currentPrompt: '当前提示词', templatePrompt: '默认模板内容' };
+    },
+    async restoreAgentPromptTemplate(name) {
+      calls.push(['restore', name]);
+      return { success: true, applyMode: 'immediate', systemPrompt: '默认模板内容' };
+    },
+    async listGroups() { return { groups: [], updatedAt: 1 }; },
+    async createGroup() { throw new Error('not used'); },
+    async updateGroup() { throw new Error('not used'); },
+    async deleteGroup() { throw new Error('not used'); },
+    async listModelConnections() { return { connections: [] }; },
+    async createModelConnection() { throw new Error('not used'); },
+    async updateModelConnection() { throw new Error('not used'); },
+    async deleteModelConnection() { throw new Error('not used'); },
+    async testModelConnection() { throw new Error('not used'); }
+  };
+
+  const renderer = await renderAdminPage({ api, initialAuthToken: 'token-123', initialPathname: '/admin/agents' });
+
+  await act(async () => {
+    renderer.root.findAllByProps({ 'data-admin-action': 'preview-agent-template:planner' }).find((node) => node.type === 'button').props.onClick();
+    await flushEffects();
+  });
+
+  const preview = renderer.root.findByProps({ 'data-admin-dialog': 'agent-prompt-preview' });
+  assert.match(collectText(preview.children), /默认模板内容/);
+  assert.deepEqual(calls[0], ['preview', 'planner']);
+
+  await act(async () => {
+    renderer.root.findByProps({ 'data-admin-action': 'close-agent-prompt-preview' }).props.onClick();
+    await flushEffects();
+  });
+
+  assert.equal(renderer.root.findAllByProps({ 'data-admin-dialog': 'agent-prompt-preview' }).length, 0);
+
+  await act(async () => {
+    renderer.root.findAllByProps({ 'data-admin-action': 'restore-agent-template:planner' }).find((node) => node.type === 'button').props.onClick();
+    await flushEffects();
+  });
+
+  assert.deepEqual(calls[1], ['restore', 'planner']);
+  const notice = renderer.root.findByProps({ 'data-admin-notice': 'true' });
+  assert.equal(notice.props['data-tone'], 'success');
+  assert.match(collectText(notice.children), /已恢复默认提示词/);
+  assert.match(collectText(renderer.toJSON()), /默认模板内容/);
+});
+
+test('智能体编辑页预览默认提示词不会覆盖草稿，恢复会回填默认提示词', async () => {
+  const calls = [];
+  const api = {
+    async listUsers() { return { users: [] }; },
+    async createUser() { throw new Error('not used'); },
+    async updateUserPassword() { throw new Error('not used'); },
+    async deleteUser() { throw new Error('not used'); },
+    async listAgents() {
+      return {
+        agents: [{ name: 'planner', avatar: '🧭', personality: '计划', color: '#111827', systemPrompt: '当前提示词', executionMode: 'cli', cliName: 'codex' }],
+        pendingAgents: null,
+        pendingReason: null,
+        pendingUpdatedAt: null
+      };
+    },
+    async createAgent() { throw new Error('not used'); },
+    async updateAgent() { throw new Error('not used'); },
+    async deleteAgent() { throw new Error('not used'); },
+    async applyPendingAgents() { throw new Error('not used'); },
+    async getAgentPromptTemplate(name) {
+      calls.push(['preview', name]);
+      return { success: true, currentPrompt: '当前提示词', templatePrompt: '默认模板内容' };
+    },
+    async restoreAgentPromptTemplate(name) {
+      calls.push(['restore', name]);
+      return { success: true, applyMode: 'immediate', systemPrompt: '默认模板内容' };
+    },
+    async listGroups() { return { groups: [], updatedAt: 1 }; },
+    async createGroup() { throw new Error('not used'); },
+    async updateGroup() { throw new Error('not used'); },
+    async deleteGroup() { throw new Error('not used'); },
+    async listModelConnections() { return { connections: [] }; },
+    async createModelConnection() { throw new Error('not used'); },
+    async updateModelConnection() { throw new Error('not used'); },
+    async deleteModelConnection() { throw new Error('not used'); },
+    async testModelConnection() { throw new Error('not used'); }
+  };
+
+  const renderer = await renderAdminPage({ api, initialAuthToken: 'token-123', initialPathname: '/admin/agents/planner/edit' });
+  await changeField(renderer, 'agent-systemPrompt', '本地草稿');
+
+  await act(async () => {
+    renderer.root.findByProps({ 'data-admin-action': 'preview-agent-template' }).props.onClick();
+    await flushEffects();
+  });
+
+  const preview = renderer.root.findByProps({ 'data-admin-dialog': 'agent-prompt-preview' });
+  assert.match(collectText(preview.children), /默认模板内容/);
+  assert.equal(findByName(renderer, 'agent-systemPrompt').props.value, '本地草稿');
+  assert.deepEqual(calls[0], ['preview', 'planner']);
+
+  await act(async () => {
+    renderer.root.findByProps({ 'data-admin-action': 'close-agent-prompt-preview' }).props.onClick();
+    await flushEffects();
+  });
+
+  assert.equal(renderer.root.findAllByProps({ 'data-admin-dialog': 'agent-prompt-preview' }).length, 0);
+
+  await act(async () => {
+    renderer.root.findByProps({ 'data-admin-action': 'restore-agent-template' }).props.onClick();
+    await flushEffects();
+  });
+
+  assert.deepEqual(calls[1], ['restore', 'planner']);
+  assert.equal(findByName(renderer, 'agent-systemPrompt').props.value, '默认模板内容');
+  const notice = renderer.root.findByProps({ 'data-admin-notice': 'true' });
+  assert.equal(notice.props['data-tone'], 'success');
+  assert.match(collectText(notice.children), /已恢复默认提示词/);
+});

@@ -1,8 +1,4 @@
-import { EmptyState, ErrorState, Spinner } from '../../../shared/ui';
-import type { ChatMessage } from '../../types';
-import { renderMarkdownHtml } from '../../services/chat-markdown';
-
-const CHAT_MESSAGE_LIST_STYLES = `
+<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><style>body{margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px} *{box-sizing:border-box} .chat-host{max-width:393px;margin:0 auto;} :root{--space-1:.25rem;--space-2:.5rem;--space-3:.75rem;--space-4:1rem;--radius-md:.75rem;--color-text:#111827;--color-text-muted:#6b7280;--color-text-tertiary:#94a3b8;--font-size-sm:13px;--font-weight-semibold:600;}</style></head><body><div class="chat-host"><section data-chat-message-list="messages" aria-label="消息列表" class="chat-message-list"><style>
   .chat-message-list {
     display: grid;
     gap: var(--space-3);
@@ -29,11 +25,11 @@ const CHAT_MESSAGE_LIST_STYLES = `
     min-width: 0;
   }
 
-  .chat-message-list__item[data-align='end'] .chat-message-list__row {
+  .chat-message-list__item[data-align=&#x27;end&#x27;] .chat-message-list__row {
     justify-content: flex-end;
   }
 
-  .chat-message-list__item[data-align='start'] .chat-message-list__row {
+  .chat-message-list__item[data-align=&#x27;start&#x27;] .chat-message-list__row {
     justify-content: flex-start;
   }
 
@@ -55,23 +51,23 @@ const CHAT_MESSAGE_LIST_STYLES = `
     width: 2rem;
   }
 
-  .chat-message-list__avatar[data-tone='user'] {
+  .chat-message-list__avatar[data-tone=&#x27;user&#x27;] {
     background: linear-gradient(180deg, rgba(149, 236, 105, 0.98) 0%, rgba(143, 232, 98, 0.98) 100%);
     border-color: rgba(116, 201, 70, 0.42);
     color: #166534;
   }
 
-  .chat-message-list__avatar[data-tone='review'] {
+  .chat-message-list__avatar[data-tone=&#x27;review&#x27;] {
     background: linear-gradient(180deg, rgba(255, 248, 235, 0.98) 0%, rgba(255, 243, 214, 0.96) 100%);
     border-color: rgba(245, 158, 11, 0.24);
     color: #b45309;
   }
 
-  .chat-message-list__item[data-align='end'] {
+  .chat-message-list__item[data-align=&#x27;end&#x27;] {
     align-items: flex-end;
   }
 
-  .chat-message-list__item[data-align='start'] {
+  .chat-message-list__item[data-align=&#x27;start&#x27;] {
     align-items: flex-start;
   }
 
@@ -87,11 +83,11 @@ const CHAT_MESSAGE_LIST_STYLES = `
     padding: 0 0.15rem;
   }
 
-  .chat-message-list__item[data-align='end'] .chat-message-list__meta {
+  .chat-message-list__item[data-align=&#x27;end&#x27;] .chat-message-list__meta {
     justify-content: flex-end;
   }
 
-  .chat-message-list__item[data-tone='user'] .chat-message-list__meta {
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__meta {
     display: none;
   }
 
@@ -110,26 +106,26 @@ const CHAT_MESSAGE_LIST_STYLES = `
 
   .chat-message-list__bubble::after {
     border: 0.55rem solid transparent;
-    content: '';
+    content: &#x27;&#x27;;
     height: 0;
     position: absolute;
     top: 1rem;
     width: 0;
   }
 
-  .chat-message-list__item[data-tone='assistant'] .chat-message-list__bubble {
+  .chat-message-list__item[data-tone=&#x27;assistant&#x27;] .chat-message-list__bubble {
     background: rgba(255, 255, 255, 0.98);
     border-color: rgba(203, 213, 225, 0.96);
     border-bottom-left-radius: 0.4rem;
     position: relative;
   }
 
-  .chat-message-list__item[data-tone='assistant'] .chat-message-list__bubble::after {
+  .chat-message-list__item[data-tone=&#x27;assistant&#x27;] .chat-message-list__bubble::after {
     border-right-color: rgba(255, 255, 255, 0.98);
     left: -1rem;
   }
 
-  .chat-message-list__item[data-tone='user'] .chat-message-list__bubble {
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__bubble {
     background: linear-gradient(180deg, rgba(149, 236, 105, 0.98) 0%, rgba(143, 232, 98, 0.98) 100%);
     border-color: rgba(116, 201, 70, 0.45);
     border-bottom-right-radius: 0.4rem;
@@ -137,12 +133,12 @@ const CHAT_MESSAGE_LIST_STYLES = `
     position: relative;
   }
 
-  .chat-message-list__item[data-tone='user'] .chat-message-list__bubble::after {
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__bubble::after {
     border-left-color: rgba(145, 234, 101, 0.98);
     right: -1rem;
   }
 
-  .chat-message-list__item[data-tone='review'] .chat-message-list__bubble {
+  .chat-message-list__item[data-tone=&#x27;review&#x27;] .chat-message-list__bubble {
     background: linear-gradient(180deg, rgba(255, 248, 235, 0.98) 0%, rgba(255, 243, 214, 0.96) 100%);
     border-color: rgba(245, 158, 11, 0.26);
     border-bottom-left-radius: 0.4rem;
@@ -150,12 +146,12 @@ const CHAT_MESSAGE_LIST_STYLES = `
     position: relative;
   }
 
-  .chat-message-list__item[data-tone='review'] .chat-message-list__bubble::after {
+  .chat-message-list__item[data-tone=&#x27;review&#x27;] .chat-message-list__bubble::after {
     border-right-color: rgba(255, 248, 235, 0.98);
     left: -1rem;
   }
 
-  .chat-message-list__item[data-tone='system'] .chat-message-list__bubble {
+  .chat-message-list__item[data-tone=&#x27;system&#x27;] .chat-message-list__bubble {
     background: rgba(248, 250, 252, 0.96);
     border-color: rgba(148, 163, 184, 0.24);
     border-bottom-left-radius: 0.4rem;
@@ -163,7 +159,7 @@ const CHAT_MESSAGE_LIST_STYLES = `
     position: relative;
   }
 
-  .chat-message-list__item[data-tone='system'] .chat-message-list__bubble::after {
+  .chat-message-list__item[data-tone=&#x27;system&#x27;] .chat-message-list__bubble::after {
     border-right-color: rgba(248, 250, 252, 0.92);
     left: -1rem;
   }
@@ -181,12 +177,12 @@ const CHAT_MESSAGE_LIST_STYLES = `
     text-transform: uppercase;
   }
 
-  .chat-message-list__item[data-tone='review'] .chat-message-list__kind {
+  .chat-message-list__item[data-tone=&#x27;review&#x27;] .chat-message-list__kind {
     background: rgba(245, 158, 11, 0.16);
     color: #b45309;
   }
 
-  .chat-message-list__item[data-tone='user'] .chat-message-list__kind {
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__kind {
     background: rgba(17, 24, 39, 0.08);
     color: #475569;
   }
@@ -199,29 +195,29 @@ const CHAT_MESSAGE_LIST_STYLES = `
     overflow-wrap: anywhere;
   }
 
-  .chat-message-list__item[data-tone='user'] .chat-message-list__body,
-  .chat-message-list__item[data-tone='user'] .chat-message-list__meta,
-  .chat-message-list__item[data-tone='user'] .chat-message-list__meta strong {
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__body,
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__meta,
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__meta strong {
     color: #1f2937;
   }
 
-  .chat-message-list__item[data-tone='review'] .chat-message-list__meta strong {
+  .chat-message-list__item[data-tone=&#x27;review&#x27;] .chat-message-list__meta strong {
     color: #92400e;
   }
 
-  .chat-message-list__item[data-tone='system'] .chat-message-list__meta {
+  .chat-message-list__item[data-tone=&#x27;system&#x27;] .chat-message-list__meta {
     color: var(--color-text-tertiary);
   }
 
-  .chat-message-list__body > * {
+  .chat-message-list__body &gt; * {
     max-width: 100%;
   }
 
-  .chat-message-list__body > :first-child {
+  .chat-message-list__body &gt; :first-child {
     margin-top: 0;
   }
 
-  .chat-message-list__body > :last-child {
+  .chat-message-list__body &gt; :last-child {
     margin-bottom: 0;
   }
 
@@ -277,11 +273,11 @@ const CHAT_MESSAGE_LIST_STYLES = `
     font-weight: var(--font-weight-semibold);
   }
 
-  .chat-message-list__item[data-tone='user'] .chat-message-list__body strong,
-  .chat-message-list__item[data-tone='user'] .chat-message-list__body h1,
-  .chat-message-list__item[data-tone='user'] .chat-message-list__body h2,
-  .chat-message-list__item[data-tone='user'] .chat-message-list__body h3,
-  .chat-message-list__item[data-tone='user'] .chat-message-list__body a {
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__body strong,
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__body h1,
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__body h2,
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__body h3,
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__body a {
     color: #111827;
   }
 
@@ -307,7 +303,7 @@ const CHAT_MESSAGE_LIST_STYLES = `
     padding: 0.08rem 0.35rem;
   }
 
-  .chat-message-list__item[data-tone='user'] .chat-message-list__body code {
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__body code {
     background: rgba(17, 24, 39, 0.08);
   }
 
@@ -324,7 +320,7 @@ const CHAT_MESSAGE_LIST_STYLES = `
     padding: 0;
   }
 
-  .chat-message-list__item[data-tone='user'] .chat-message-list__body pre {
+  .chat-message-list__item[data-tone=&#x27;user&#x27;] .chat-message-list__body pre {
     background: rgba(255, 255, 255, 0.36);
     border-color: rgba(17, 24, 39, 0.08);
   }
@@ -361,7 +357,7 @@ const CHAT_MESSAGE_LIST_STYLES = `
     font-weight: var(--font-weight-semibold);
   }
 
-  .chat-message-list__item[data-tone='review'] .chat-message-list__body th {
+  .chat-message-list__item[data-tone=&#x27;review&#x27;] .chat-message-list__body th {
     background: rgba(245, 158, 11, 0.12);
   }
 
@@ -402,166 +398,4 @@ const CHAT_MESSAGE_LIST_STYLES = `
       word-break: break-word;
     }
   }
-`;
-
-export interface ChatMessageListProps {
-  messages: ChatMessage[];
-  isLoading?: boolean;
-  errorMessage?: string | null;
-}
-
-function formatTimestamp(timestamp: number): string {
-  if (!Number.isFinite(timestamp)) {
-    return '';
-  }
-
-  return new Date(timestamp).toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-}
-
-function resolveRoleLabel(role: ChatMessage['role']): string {
-  if (role === 'user') {
-    return '用户';
-  }
-  if (role === 'assistant') {
-    return '助手';
-  }
-  return '系统';
-}
-
-function resolveMessageTone(message: ChatMessage): 'user' | 'assistant' | 'review' | 'system' {
-  if (message.messageSubtype === 'invocation_review') {
-    return 'review';
-  }
-  if (message.role === 'user') {
-    return 'user';
-  }
-  if (message.role === 'system') {
-    return 'system';
-  }
-  return 'assistant';
-}
-
-function resolveMessageKindLabel(message: ChatMessage): string {
-  if (message.messageSubtype === 'invocation_review') {
-    return 'review';
-  }
-  if (message.role === 'user') {
-    return 'user';
-  }
-  if (message.role === 'system') {
-    return 'system';
-  }
-  return 'agent';
-}
-
-export function ChatMessageList({ messages, isLoading = false, errorMessage = null }: ChatMessageListProps) {
-  if (errorMessage) {
-    return (
-      <section
-        data-chat-message-list="messages"
-        aria-label="消息列表"
-        style={{
-          border: '1px solid rgba(148, 163, 184, 0.2)',
-          borderRadius: 'calc(var(--radius-lg) + 6px)',
-          padding: 'var(--space-4)'
-        }}
-      >
-        <ErrorState title="消息加载失败" message={errorMessage} />
-      </section>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <section
-        data-chat-message-list="messages"
-        aria-label="消息列表"
-        style={{
-          border: '1px solid rgba(148, 163, 184, 0.2)',
-          borderRadius: 'calc(var(--radius-lg) + 6px)',
-          padding: 'var(--space-4)'
-        }}
-      >
-        <Spinner label="正在加载消息…" />
-      </section>
-    );
-  }
-
-  if (messages.length === 0) {
-    return (
-      <section
-        data-chat-message-list="messages"
-        aria-label="消息列表"
-        style={{
-          border: '1px solid rgba(148, 163, 184, 0.2)',
-          borderRadius: 'calc(var(--radius-lg) + 6px)',
-          padding: 'var(--space-4)'
-        }}
-      >
-        <EmptyState
-          title="暂无消息"
-          description="发送第一条消息后，这里会显示用户与智能体的对话内容。"
-        />
-      </section>
-    );
-  }
-
-  return (
-    <section
-      data-chat-message-list="messages"
-      aria-label="消息列表"
-      className="chat-message-list"
-    >
-      <style>{CHAT_MESSAGE_LIST_STYLES}</style>
-      {messages.map((message) => {
-        const tone = resolveMessageTone(message);
-        const align = tone === 'user' ? 'end' : 'start';
-        const renderedText = tone === 'review'
-          ? (message.reviewDisplayText || message.text)
-          : message.text;
-        return (
-          <article
-            key={message.id}
-            aria-label={`${message.sender} 的消息`}
-            className="chat-message-list__item"
-            data-align={align}
-            data-tone={tone}
-          >
-            <header className="chat-message-list__meta">
-              <strong style={{ color: 'var(--color-text)' }}>{message.sender}</strong>
-              <span className="chat-message-list__kind">{resolveMessageKindLabel(message)}</span>
-              <span>{resolveRoleLabel(message.role)} · {formatTimestamp(message.timestamp)}</span>
-            </header>
-                <div className="chat-message-list__row">
-                  {tone === 'user' ? null : (
-                    <div className="chat-message-list__avatar" aria-hidden="true">
-                      {(message.sender || '?').trim().slice(0, 2).toUpperCase()}
-                    </div>
-                  )}
-                  <div className="chat-message-list__bubble">
-                {tone === 'review' ? (
-                  <div className="chat-message-list__review-banner">
-                    <span aria-hidden="true">✦</span>
-                    <span>review</span>
-                  </div>
-                ) : null}
-                <div
-                  className="chat-message-list__body"
-                  dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(renderedText) }}
-                    />
-                  </div>
-                  {tone === 'user' ? (
-                    <div className="chat-message-list__avatar" data-tone="user" aria-hidden="true">
-                      {(message.sender || '我').trim().slice(0, 1).toUpperCase()}
-                    </div>
-                  ) : null}
-                </div>
-          </article>
-        );
-      })}
-    </section>
-  );
-}
+</style><article aria-label="Alice 的消息" class="chat-message-list__item" data-align="start" data-tone="assistant"><header class="chat-message-list__meta"><strong style="color:var(--color-text)">Alice</strong><span class="chat-message-list__kind">agent</span><span>助手 · 08:00</span></header><div class="chat-message-list__row"><div class="chat-message-list__avatar" aria-hidden="true">AL</div><div class="chat-message-list__bubble"><div class="chat-message-list__body"><p>辛苦</p><p>回家多喝热水多吃饭补补身体</p></div></div></div></article><article aria-label="我 的消息" class="chat-message-list__item" data-align="end" data-tone="user"><header class="chat-message-list__meta"><strong style="color:var(--color-text)">我</strong><span class="chat-message-list__kind">user</span><span>用户 · 08:00</span></header><div class="chat-message-list__row"><div class="chat-message-list__bubble"><div class="chat-message-list__body"><p>我刚下班。早点回家休息</p></div></div><div class="chat-message-list__avatar" data-tone="user" aria-hidden="true">我</div></div></article><article aria-label="Alice 的消息" class="chat-message-list__item" data-align="start" data-tone="assistant"><header class="chat-message-list__meta"><strong style="color:var(--color-text)">Alice</strong><span class="chat-message-list__kind">agent</span><span>助手 · 08:00</span></header><div class="chat-message-list__row"><div class="chat-message-list__avatar" aria-hidden="true">AL</div><div class="chat-message-list__bubble"><div class="chat-message-list__body"><p>目前最近的工作就是上周五上午上传了项目 5 个工程问题，我连现场都没去，同事帮拍的。</p></div></div></div></article><article aria-label="我 的消息" class="chat-message-list__item" data-align="end" data-tone="user"><header class="chat-message-list__meta"><strong style="color:var(--color-text)">我</strong><span class="chat-message-list__kind">user</span><span>用户 · 08:00</span></header><div class="chat-message-list__row"><div class="chat-message-list__bubble"><div class="chat-message-list__body"><p>你这工作太不饱和了</p></div></div><div class="chat-message-list__avatar" data-tone="user" aria-hidden="true">我</div></div></article><article aria-label="Reviewer 的消息" class="chat-message-list__item" data-align="start" data-tone="review"><header class="chat-message-list__meta"><strong style="color:var(--color-text)">Reviewer</strong><span class="chat-message-list__kind">review</span><span>助手 · 08:00</span></header><div class="chat-message-list__row"><div class="chat-message-list__avatar" aria-hidden="true">RE</div><div class="chat-message-list__bubble"><div class="chat-message-list__review-banner"><span aria-hidden="true">✦</span><span>review</span></div><div class="chat-message-list__body"><p>已确认普通消息应更接近 IM 气泡样式。</p></div></div></div></article></section></div></body></html>

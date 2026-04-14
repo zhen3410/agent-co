@@ -131,18 +131,15 @@ export function CallGraphPanel({ sessionId = null, refreshSignal = 0, fetch }: C
         padding: 'var(--space-4)'
       }}
     >
-      <header style={{ display: 'grid', gap: 'var(--space-1)' }}>
+      <header>
         <strong style={{ color: 'var(--color-text)' }}>调用图谱</strong>
-        <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
-          以摘要方式展示调用链路，避免压过主对话。
-        </span>
       </header>
 
       <section data-chat-call-graph-panel="call-graph" style={{ display: 'grid', gap: 'var(--space-3)' }}>
         {!sessionId ? (
           <EmptyState
             title="未选择会话"
-            description="请选择会话后查看调用图。"
+            description=""
           />
         ) : null}
 
@@ -160,7 +157,7 @@ export function CallGraphPanel({ sessionId = null, refreshSignal = 0, fetch }: C
         {sessionId && callGraph.loadState === 'ready' && callGraph.data.nodes.length === 0 ? (
           <EmptyState
             title="暂无调用图节点"
-            description="当前会话还没有形成调用链路。"
+            description=""
           />
         ) : null}
 

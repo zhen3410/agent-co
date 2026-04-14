@@ -77,6 +77,16 @@ export function resolveAppliedTheme(choice: ThemeChoice, prefersDark: boolean): 
   return choice;
 }
 
+export function getNextThemeChoice(choice: ThemeChoice): ThemeChoice {
+  if (choice === 'system') {
+    return 'light';
+  }
+  if (choice === 'light') {
+    return 'dark';
+  }
+  return 'system';
+}
+
 export function applyThemeToDocument(target: ThemeDocumentTarget, value: { choice: ThemeChoice; theme: AppliedTheme }): void {
   target.documentElement.dataset.theme = value.theme;
   target.documentElement.dataset.themeChoice = value.choice;
@@ -153,11 +163,8 @@ export function ThemeProvider({ children }: { children?: ReactNode }) {
   }, []);
 
   const toggleTheme = useCallback(() => {
-    setChoiceState((currentChoice) => {
-      const currentTheme = resolveAppliedTheme(currentChoice, prefersDark);
-      return currentTheme === 'dark' ? 'light' : 'dark';
-    });
-  }, [prefersDark]);
+    setChoiceState((currentChoice) => getNextThemeChoice(currentChoice));
+  }, []);
 
   const value = useMemo<ThemeContextValue>(() => ({
     choice,
@@ -179,32 +186,29 @@ export function useTheme(): ThemeContextValue {
 
 export function ThemeToggle({ className = '' }: { className?: string }) {
   const { choice, setChoice } = useTheme();
+  const nextChoice = getNextThemeChoice(choice);
+  const labelMap: Record<ThemeChoice, string> = {
+    system: '自动',
+    light: '浅色',
+    dark: '深色'
+  };
+  const iconMap: Record<ThemeChoice, string> = {
+    system: '◐',
+    light: '☼',
+    dark: '☾'
+  };
 
   return (
-    <div
-      role="group"
-      aria-label="主题切换"
-      data-theme-toggle="group"
+    <button
+      type="button"
+      aria-label={`主题：${labelMap[choice]}，点击切换到${labelMap[nextChoice]}`}
+      title={`主题：${labelMap[choice]}`}
+      data-theme-toggle="button"
+      data-theme-choice={choice}
       className={['theme-toggle', className].filter(Boolean).join(' ')}
+      onClick={() => setChoice(nextChoice)}
     >
-      {[
-        { value: 'system' as ThemeChoice, label: '自动' },
-        { value: 'light' as ThemeChoice, label: '浅色' },
-        { value: 'dark' as ThemeChoice, label: '深色' }
-      ].map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          className="theme-toggle__button"
-          data-theme-toggle="option"
-          data-theme-choice={option.value}
-          data-active={choice === option.value ? 'true' : 'false'}
-          aria-pressed={choice === option.value}
-          onClick={() => setChoice(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
+      <span className="theme-toggle__icon" aria-hidden="true">{iconMap[choice]}</span>
+    </button>
   );
 }

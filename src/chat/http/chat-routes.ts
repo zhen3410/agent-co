@@ -265,6 +265,19 @@ export async function handleChatRoutes(
     return true;
   }
 
+  if (requestUrl.pathname === '/api/agents/switch' && method === 'POST') {
+    try {
+      const body = await parseBody<{ agentName?: string | null }>(req);
+      sendJson(res, 200, deps.sessionService.switchAgent(
+        { userKey: deps.userKey },
+        typeof body.agentName === 'string' ? normalizeBodyText(body.agentName) : null
+      ));
+    } catch (error) {
+      sendServiceError(res, error);
+    }
+    return true;
+  }
+
   if (requestUrl.pathname === '/api/workdirs/select' && method === 'POST') {
     try {
       const body = await parseBody<{ agentName?: string; workdir?: string }>(req);

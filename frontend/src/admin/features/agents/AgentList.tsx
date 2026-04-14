@@ -6,10 +6,14 @@ import type { AdminAgent } from '../../types';
 export function AgentList({
   agents,
   onEdit,
+  onPreview,
+  onRestore,
   onDelete
 }: {
   agents: AdminAgent[];
   onEdit: (name: string) => void;
+  onPreview: (name: string) => void;
+  onRestore: (name: string) => void;
   onDelete: (name: string) => void;
 }) {
   return (
@@ -28,6 +32,8 @@ export function AgentList({
           render: (agent) => (
             <div className="admin-row-actions">
               <Button variant="secondary" data-admin-action={`edit-agent:${agent.name}`} onClick={() => onEdit(agent.name)}>编辑</Button>
+              <Button variant="secondary" data-admin-action={`preview-agent-template:${agent.name}`} onClick={() => onPreview(agent.name)}>预览</Button>
+              <Button variant="secondary" data-admin-action={`restore-agent-template:${agent.name}`} onClick={() => onRestore(agent.name)}>恢复</Button>
               <Button variant="danger" onClick={() => onDelete(agent.name)}>删除</Button>
             </div>
           )

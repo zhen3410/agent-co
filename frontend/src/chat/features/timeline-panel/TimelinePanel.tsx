@@ -146,18 +146,15 @@ export function TimelinePanel({ sessionId = null, refreshSignal = 0, fetch }: Ti
         padding: 'var(--space-4)'
       }}
     >
-      <header style={{ display: 'grid', gap: 'var(--space-1)' }}>
+      <header>
         <strong style={{ color: 'var(--color-text)' }}>会话时间线</strong>
-        <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
-          用简洁事件流补充主对话，不抢占主舞台。
-        </span>
       </header>
 
       <section data-chat-timeline-panel="timeline" style={{ display: 'grid', gap: 'var(--space-3)' }}>
         {!sessionId ? (
           <EmptyState
             title="未选择会话"
-            description="请选择会话后查看时间线。"
+            description=""
           />
         ) : null}
 
@@ -175,7 +172,7 @@ export function TimelinePanel({ sessionId = null, refreshSignal = 0, fetch }: Ti
         {sessionId && timeline.loadState === 'ready' && timeline.data.length === 0 ? (
           <EmptyState
             title="暂无时间线事件"
-            description="当前会话还没有可展示的事件。"
+            description=""
           />
         ) : null}
 

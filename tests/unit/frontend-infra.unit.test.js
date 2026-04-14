@@ -347,6 +347,48 @@ test('layouts render shared shell chrome and tool page slots', () => {
   assert.match(toolHtml, /Rows/);
 });
 
+test('mobile shell and message styles keep header sticky and preserve readable sizing', () => {
+  const baseCss = fs.readFileSync(path.resolve(rootDir, 'frontend/src/shared/styles/base.css'), 'utf8');
+  const tokensCss = fs.readFileSync(path.resolve(rootDir, 'frontend/src/shared/styles/tokens.css'), 'utf8');
+  const messageListSource = fs.readFileSync(path.resolve(rootDir, 'frontend/src/chat/features/message-list/ChatMessageList.tsx'), 'utf8');
+  const composerSource = fs.readFileSync(path.resolve(rootDir, 'frontend/src/chat/features/composer/ChatComposer.tsx'), 'utf8');
+  const chatPageSource = fs.readFileSync(path.resolve(rootDir, 'frontend/src/chat/pages/ChatPage.tsx'), 'utf8');
+
+  assert.match(baseCss, /\.layout-app-shell__header\s*\{[\s\S]*position:\s*fixed;/);
+  assert.match(baseCss, /\.layout-app-shell__header\s*\{[\s\S]*top:\s*0;/);
+  assert.match(tokensCss, /--app-shell-header-height:\s*5\.5rem/);
+  assert.match(tokensCss, /--chat-composer-dock-height:\s*6\.5rem/);
+  assert.match(baseCss, /-webkit-text-size-adjust:\s*100%/);
+  assert.match(baseCss, /text-size-adjust:\s*100%/);
+  assert.match(baseCss, /html,\s*body\s*\{[\s\S]*overflow-x:\s*hidden;/);
+  assert.match(baseCss, /#root\s*\{[\s\S]*overflow-x:\s*hidden;/);
+  assert.doesNotMatch(baseCss, /\.layout-app-shell\s*\{[\s\S]*overflow-x:\s*hidden;/);
+  assert.match(baseCss, /@media \(max-width: 720px\)[\s\S]*\.layout-app-shell__header\s*\{[\s\S]*padding:/);
+  assert.match(baseCss, /@media \(max-width: 720px\)[\s\S]*\.layout-app-shell__header\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto/);
+  assert.match(baseCss, /@media \(max-width: 720px\)[\s\S]*\.layout-app-shell__actions\s*\{[\s\S]*justify-self:\s*end;/);
+  assert.match(baseCss, /@media \(max-width: 720px\)[\s\S]*\.layout-app-shell__main\s*\{[\s\S]*padding:\s*calc\(var\(--app-shell-header-height\) \+ 0\.35rem\)\s*var\(--space-3\)\s*var\(--space-2\)/);
+  assert.match(baseCss, /@media \(max-width: 720px\)[\s\S]*\.ui-empty-state\s*\{[\s\S]*padding:/);
+  assert.match(messageListSource, /font-size:\s*16px|fontSize:\s*'16px'|fontSize:\s*16/);
+  assert.match(messageListSource, /@media \(max-width: 720px\)[\s\S]*padding:\s*var\(--space-1\)\s*0\s*calc\(var\(--chat-composer-dock-height\) \+ env\(safe-area-inset-bottom,\s*0px\) \+ var\(--space-4\)\)/);
+  assert.match(messageListSource, /\.chat-message-list\s*\{[\s\S]*overflow-x:\s*hidden;/);
+  assert.match(messageListSource, /\.chat-message-list__bubble\s*\{[\s\S]*max-width:\s*min\(32rem,\s*calc\(100% - 3\.5rem\)\)/);
+  assert.match(messageListSource, /\.chat-message-list__item\[data-tone='assistant'\]\s*\.chat-message-list__bubble\s*\{[\s\S]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.98\)/);
+  assert.match(messageListSource, /\.chat-message-list__item\[data-tone='user'\]\s*\.chat-message-list__meta\s*\{[\s\S]*display:\s*none;/);
+  assert.match(messageListSource, /\.chat-message-list__avatar\s*\{/);
+  assert.match(messageListSource, /className="chat-message-list__avatar" data-tone="user"/);
+  assert.match(messageListSource, /@media \(max-width: 720px\)[\s\S]*\.chat-message-list__bubble\s*\{[\s\S]*max-width:\s*min\(calc\(100% - 2\.75rem\),\s*19rem\)/);
+  assert.match(messageListSource, /\.chat-message-list__body\s*\{[\s\S]*overflow-wrap:\s*anywhere;/);
+  assert.match(messageListSource, /\.chat-message-list__body h1,[\s\S]*\.chat-message-list__body h2,[\s\S]*\.chat-message-list__body h3/);
+  assert.match(messageListSource, /\.chat-message-list__body code\s*\{[\s\S]*background:/);
+  assert.match(composerSource, /font-size:\s*16px|fontSize:\s*'16px'|fontSize:\s*16/);
+  assert.match(composerSource, /@media \(max-width: 720px\)[\s\S]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.98\)/);
+  assert.match(composerSource, /@media \(max-width: 720px\)[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(chatPageSource, /\.chat-page-shell__composer-dock\s*\{[\s\S]*position:\s*fixed;/);
+  assert.match(chatPageSource, /@media \(max-width: 959px\)[\s\S]*\.chat-page-shell__conversation-stage\s*\{[\s\S]*padding-bottom:\s*calc\(var\(--chat-composer-dock-height\) \+ env\(safe-area-inset-bottom,\s*0px\) \+ var\(--space-3\)\)/);
+  assert.match(chatPageSource, /@media \(max-width: 959px\)[\s\S]*\.chat-page-shell__composer-dock\s*\{[\s\S]*padding:\s*0\s*var\(--space-2\)\s*calc\(env\(safe-area-inset-bottom,\s*0px\) \+ 0\.35rem\)/);
+  assert.match(chatPageSource, /\.chat-page-shell__layout\s*\{[\s\S]*max-width:\s*100%/);
+});
+
 test('runtime config helpers read bootstrap config from window and script tags', () => {
   const runtimeModulePath = path.join(rootDir, 'frontend/src/shared/config/runtime-config.ts');
   const source = fs.readFileSync(runtimeModulePath, 'utf8');
@@ -544,9 +586,19 @@ test('chat bootstrap auth loader requests auth-status and falls back to auth-dis
   });
 });
 
+test('chat composer height sizing uses tighter bounds on mobile and larger bounds on desktop', () => {
+  const { getChatComposerTextareaHeight } = loadTsModule('frontend/src/chat/features/composer/useChatComposer.ts');
+
+  assert.equal(getChatComposerTextareaHeight({ scrollHeight: 20, viewportWidth: 390 }), 44);
+  assert.equal(getChatComposerTextareaHeight({ scrollHeight: 500, viewportWidth: 390 }), 88);
+  assert.equal(getChatComposerTextareaHeight({ scrollHeight: 40, viewportWidth: 1280 }), 44);
+  assert.equal(getChatComposerTextareaHeight({ scrollHeight: 500, viewportWidth: 1280 }), 120);
+});
+
 test('theme runtime resolves system preference, applies document theme, and persists manual selections', () => {
   const {
     THEME_STORAGE_KEY,
+    getNextThemeChoice,
     resolveThemeChoice,
     resolveAppliedTheme,
     applyThemeToDocument,
@@ -558,6 +610,9 @@ test('theme runtime resolves system preference, applies document theme, and pers
   assert.equal(resolveAppliedTheme('system', true), 'dark');
   assert.equal(resolveAppliedTheme('system', false), 'light');
   assert.equal(resolveAppliedTheme('light', true), 'light');
+  assert.equal(getNextThemeChoice('system'), 'light');
+  assert.equal(getNextThemeChoice('light'), 'dark');
+  assert.equal(getNextThemeChoice('dark'), 'system');
 
   const documentElement = {
     dataset: {}
@@ -588,4 +643,48 @@ test('theme runtime resolves system preference, applies document theme, and pers
 
   persistThemeChoice(storage, 'system');
   assert.equal(storage.values.has(THEME_STORAGE_KEY), false);
+});
+
+
+test('admin API 客户端为默认提示词预览与恢复使用真实后端协议', async () => {
+  const { createAdminApi } = loadTsModule('frontend/src/admin/services/admin-api.ts');
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).includes('/prompt/template')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ success: true, currentPrompt: '当前提示词', templatePrompt: '默认模板内容' }),
+        text: async () => '{}'
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ success: true, applyMode: 'immediate', systemPrompt: '默认模板内容' }),
+      text: async () => '{}'
+    };
+  };
+
+  const api = createAdminApi({
+    baseUrl: 'https://unit.test',
+    fetch: fetchImpl,
+    getAdminToken: () => 'token-123'
+  });
+
+  const preview = await api.getAgentPromptTemplate('Codex架构师');
+  const restore = await api.restoreAgentPromptTemplate('Codex架构师');
+
+  assert.equal(preview.templatePrompt, '默认模板内容');
+  assert.equal(restore.systemPrompt, '默认模板内容');
+  assert.equal(calls[0].url, 'https://unit.test/api/agents/Codex%E6%9E%B6%E6%9E%84%E5%B8%88/prompt/template');
+  assert.equal(calls[0].init.method, 'GET');
+  assert.equal(calls[0].init.headers['x-admin-token'], 'token-123');
+  assert.equal(calls[1].url, 'https://unit.test/api/agents/Codex%E6%9E%B6%E6%9E%84%E5%B8%88/prompt/restore-template');
+  assert.equal(calls[1].init.method, 'POST');
+  assert.equal(calls[1].init.headers['content-type'], 'application/json');
+  assert.equal(calls[1].init.body, JSON.stringify({ applyMode: 'immediate' }));
 });

@@ -16,6 +16,23 @@ export interface UseChatComposerResult {
   submit: (event?: { preventDefault?: () => void }) => Promise<void>;
 }
 
+export interface ChatComposerTextareaHeightOptions {
+  scrollHeight: number;
+  viewportWidth?: number;
+}
+
+export function getChatComposerTextareaHeight({
+  scrollHeight,
+  viewportWidth
+}: ChatComposerTextareaHeightOptions): number {
+  const isMobile = typeof viewportWidth === 'number' && viewportWidth <= 720;
+  const minHeight = isMobile ? 44 : 44;
+  const maxHeight = isMobile ? 88 : 120;
+  const resolvedScrollHeight = Number.isFinite(scrollHeight) ? scrollHeight : minHeight;
+
+  return Math.min(Math.max(resolvedScrollHeight, minHeight), maxHeight);
+}
+
 export function useChatComposer({ disabled = false, onSubmit }: UseChatComposerOptions): UseChatComposerResult {
   const [value, setValue] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -33,7 +50,10 @@ export function useChatComposer({ disabled = false, onSubmit }: UseChatComposerO
     }
 
     textarea.style.height = '0px';
-    const nextHeight = Math.min(Math.max(textarea.scrollHeight, 144), 320);
+    const nextHeight = getChatComposerTextareaHeight({
+      scrollHeight: textarea.scrollHeight,
+      viewportWidth: typeof window === 'undefined' ? undefined : window.innerWidth
+    });
     textarea.style.height = `${nextHeight}px`;
   }, [value]);
 
