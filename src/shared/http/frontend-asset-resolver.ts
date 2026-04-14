@@ -62,8 +62,8 @@ function resolveFrontendAssetTarget(
   entryHtmlFile: string,
   options: FrontendAssetResolverOptions
 ): FrontendAssetTarget | null {
-  const entryPaths = options.entryPaths ?? ['/', '/index.html', `/${entryHtmlFile}`];
-  if (entryPaths.includes(pathname)) {
+  const entryPaths = options.entryPaths ?? ['/', '/index.html', `/${entryHtmlFile}`, '/admin'];
+  if (entryPaths.includes(pathname) || pathname === '/admin' || pathname.startsWith('/admin/')) {
     return {
       filePath: entryHtmlFile,
       required: true
