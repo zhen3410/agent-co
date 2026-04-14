@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { createHttpClient } from '../../../shared/lib/http/http-client';
-import { Card, EmptyState, ErrorState, Spinner } from '../../../shared/ui';
+import { EmptyState, ErrorState, Spinner } from '../../../shared/ui';
 import { getMergedRuntimeConfig } from '../../../shared/config/runtime-config';
 import { useSessionPanelResource } from '../shared/useSessionPanelResource';
 
@@ -135,12 +135,26 @@ export function TimelinePanel({ sessionId = null, refreshSignal = 0, fetch }: Ti
   });
 
   return (
-    <Card title="会话时间线">
+    <section
+      aria-label="会话时间线"
+      style={{
+        background: 'rgba(248, 250, 252, 0.8)',
+        border: '1px solid rgba(148, 163, 184, 0.16)',
+        borderRadius: 'calc(var(--radius-lg) + 2px)',
+        display: 'grid',
+        gap: 'var(--space-3)',
+        padding: 'var(--space-4)'
+      }}
+    >
+      <header>
+        <strong style={{ color: 'var(--color-text)' }}>会话时间线</strong>
+      </header>
+
       <section data-chat-timeline-panel="timeline" style={{ display: 'grid', gap: 'var(--space-3)' }}>
         {!sessionId ? (
           <EmptyState
             title="未选择会话"
-            description="请选择会话后查看时间线。"
+            description=""
           />
         ) : null}
 
@@ -158,7 +172,7 @@ export function TimelinePanel({ sessionId = null, refreshSignal = 0, fetch }: Ti
         {sessionId && timeline.loadState === 'ready' && timeline.data.length === 0 ? (
           <EmptyState
             title="暂无时间线事件"
-            description="当前会话还没有可展示的事件。"
+            description=""
           />
         ) : null}
 
@@ -173,6 +187,6 @@ export function TimelinePanel({ sessionId = null, refreshSignal = 0, fetch }: Ti
           </ol>
         ) : null}
       </section>
-    </Card>
+    </section>
   );
 }

@@ -10,20 +10,12 @@ export function EmptyState({ title, description, action }: EmptyStateProps) {
   return (
     <section
       aria-live="polite"
-      style={{
-        backgroundColor: 'var(--color-surface-muted)',
-        border: '1px dashed var(--color-border)',
-        borderRadius: 'var(--radius-lg)',
-        color: 'var(--color-text-muted)',
-        display: 'grid',
-        gap: 'var(--space-2)',
-        justifyItems: 'start',
-        padding: 'var(--space-6)'
-      }}
+      data-ui="empty-state"
+      className="ui-empty-state"
     >
-      <h2 style={{ color: 'var(--color-text)', margin: 0 }}>{title}</h2>
-      {description ? <p style={{ margin: 0 }}>{description}</p> : null}
-      {action ? <div>{action}</div> : null}
+      <h2 className="ui-empty-state__title">{title}</h2>
+      {description ? <p className="ui-empty-state__description">{description}</p> : null}
+      {action ? <div className="ui-empty-state__action">{action}</div> : null}
     </section>
   );
 }

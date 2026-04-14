@@ -10,19 +10,12 @@ export function ErrorState({ title = 'Something went wrong', message, action }: 
   return (
     <section
       role="alert"
-      style={{
-        backgroundColor: 'var(--color-surface)',
-        border: '1px solid var(--status-error)',
-        borderRadius: 'var(--radius-lg)',
-        color: 'var(--status-error)',
-        display: 'grid',
-        gap: 'var(--space-2)',
-        padding: 'var(--space-4)'
-      }}
+      data-ui="error-state"
+      className="ui-error-state"
     >
-      <h2 style={{ margin: 0 }}>{title}</h2>
-      <p style={{ margin: 0 }}>{message}</p>
-      {action ? <div>{action}</div> : null}
+      <h2 className="ui-error-state__title">{title}</h2>
+      <p className="ui-error-state__message">{message}</p>
+      {action ? <div className="ui-error-state__action">{action}</div> : null}
     </section>
   );
 }

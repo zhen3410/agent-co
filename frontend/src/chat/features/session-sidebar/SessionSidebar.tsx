@@ -1,4 +1,3 @@
-import { Card } from '../../../shared/ui';
 import type { ChatSessionSummary } from '../../types';
 
 export interface SessionSidebarProps {
@@ -15,8 +14,25 @@ export function SessionSidebar({
   enabledAgents = []
 }: SessionSidebarProps) {
   return (
-    <aside data-chat-sidebar="sessions" style={{ display: 'grid', gap: 'var(--space-4)' }}>
-      <Card title="会话">
+    <aside
+      data-chat-sidebar="sessions"
+      aria-label="会话与上下文"
+      style={{ display: 'grid', gap: 'var(--space-4)' }}
+    >
+      <section
+        style={{
+          background: 'rgba(248, 250, 252, 0.88)',
+          border: '1px solid rgba(148, 163, 184, 0.18)',
+          borderRadius: 'calc(var(--radius-lg) + 2px)',
+          display: 'grid',
+          gap: 'var(--space-3)',
+          padding: 'var(--space-4)'
+        }}
+      >
+        <header>
+          <strong style={{ color: 'var(--color-text)' }}>会话</strong>
+        </header>
+
         <ul style={{ display: 'grid', gap: 'var(--space-2)', listStyle: 'none', margin: 0, padding: 0 }}>
           {sessions.length === 0 ? (
             <li style={{ color: 'var(--color-text-muted)' }}>暂无会话</li>
@@ -26,34 +42,47 @@ export function SessionSidebar({
               <li
                 key={session.id}
                 style={{
-                  background: isActive ? 'var(--color-surface-muted)' : 'transparent',
-                  border: '1px solid var(--color-border)',
+                  background: isActive ? 'rgba(37, 99, 235, 0.06)' : 'transparent',
+                  border: '1px solid rgba(148, 163, 184, 0.2)',
                   borderRadius: 'var(--radius-md)',
-                  padding: 'var(--space-2) var(--space-3)'
+                  padding: 'var(--space-3)'
                 }}
               >
                 <div style={{ fontWeight: 'var(--font-weight-medium)' }}>{session.name || '未命名会话'}</div>
-                <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
+                <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', marginTop: 'var(--space-1)' }}>
                   {isActive ? '当前会话' : session.id}
                 </div>
               </li>
             );
           })}
         </ul>
-      </Card>
+      </section>
 
-      <Card title="当前上下文">
-        <dl style={{ display: 'grid', gap: 'var(--space-2)', margin: 0 }}>
+      <section
+        style={{
+          background: 'rgba(248, 250, 252, 0.72)',
+          border: '1px solid rgba(148, 163, 184, 0.16)',
+          borderRadius: 'calc(var(--radius-lg) + 2px)',
+          display: 'grid',
+          gap: 'var(--space-3)',
+          padding: 'var(--space-4)'
+        }}
+      >
+        <header>
+          <strong style={{ color: 'var(--color-text)' }}>当前上下文</strong>
+        </header>
+
+        <dl style={{ display: 'grid', gap: 'var(--space-3)', margin: 0 }}>
           <div>
-            <dt style={{ color: 'var(--color-text-muted)' }}>当前智能体</dt>
-            <dd style={{ margin: 0 }}>{currentAgent || '自动选择'}</dd>
+            <dt style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>当前智能体</dt>
+            <dd style={{ margin: 'var(--space-1) 0 0' }}>{currentAgent || '自动选择'}</dd>
           </div>
           <div>
-            <dt style={{ color: 'var(--color-text-muted)' }}>已启用智能体</dt>
-            <dd style={{ margin: 0 }}>{enabledAgents.length > 0 ? enabledAgents.join('、') : '暂无'}</dd>
+            <dt style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>已启用智能体</dt>
+            <dd style={{ margin: 'var(--space-1) 0 0' }}>{enabledAgents.length > 0 ? enabledAgents.join('、') : '暂无'}</dd>
           </div>
         </dl>
-      </Card>
+      </section>
     </aside>
   );
 }

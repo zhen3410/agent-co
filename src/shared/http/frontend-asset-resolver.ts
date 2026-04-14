@@ -6,6 +6,10 @@ interface FrontendAssetTarget {
   required: boolean;
 }
 
+export interface FrontendAssetResolverOptions {
+  entryPaths?: string[];
+}
+
 export interface ResolvedFrontendAsset {
   rootDir: string;
   filePath: string;
@@ -53,8 +57,13 @@ function resolveFrontendContentType(filePath: string): string {
   }
 }
 
-function resolveFrontendAssetTarget(pathname: string, entryHtmlFile: string): FrontendAssetTarget | null {
-  if (pathname === '/' || pathname === '/index.html' || pathname === `/${entryHtmlFile}`) {
+function resolveFrontendAssetTarget(
+  pathname: string,
+  entryHtmlFile: string,
+  options: FrontendAssetResolverOptions
+): FrontendAssetTarget | null {
+  const entryPaths = options.entryPaths ?? ['/', '/index.html', `/${entryHtmlFile}`, '/admin'];
+  if (entryPaths.includes(pathname) || pathname === '/admin' || pathname.startsWith('/admin/')) {
     return {
       filePath: entryHtmlFile,
       required: true
@@ -75,8 +84,12 @@ function buildMissingRequiredError(filePath: string): string {
   return `前端构建产物缺失: ${filePath}。请先执行 npm run build 生成 dist/frontend。`;
 }
 
-export function resolveFrontendAssetRequest(pathname: string, entryHtmlFile: string): FrontendAssetResolution | null {
-  const target = resolveFrontendAssetTarget(pathname, entryHtmlFile);
+export function resolveFrontendAssetRequest(
+  pathname: string,
+  entryHtmlFile: string,
+  options: FrontendAssetResolverOptions = {}
+): FrontendAssetResolution | null {
+  const target = resolveFrontendAssetTarget(pathname, entryHtmlFile, options);
   if (!target) {
     return null;
   }

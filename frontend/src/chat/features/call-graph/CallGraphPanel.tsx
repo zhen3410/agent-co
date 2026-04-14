@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { createHttpClient } from '../../../shared/lib/http/http-client';
-import { Card, EmptyState, ErrorState, Spinner } from '../../../shared/ui';
+import { EmptyState, ErrorState, Spinner } from '../../../shared/ui';
 import { getMergedRuntimeConfig } from '../../../shared/config/runtime-config';
 import { useSessionPanelResource } from '../shared/useSessionPanelResource';
 
@@ -120,12 +120,26 @@ export function CallGraphPanel({ sessionId = null, refreshSignal = 0, fetch }: C
   });
 
   return (
-    <Card title="调用图谱">
+    <section
+      aria-label="调用图谱"
+      style={{
+        background: 'rgba(248, 250, 252, 0.8)',
+        border: '1px solid rgba(148, 163, 184, 0.16)',
+        borderRadius: 'calc(var(--radius-lg) + 2px)',
+        display: 'grid',
+        gap: 'var(--space-3)',
+        padding: 'var(--space-4)'
+      }}
+    >
+      <header>
+        <strong style={{ color: 'var(--color-text)' }}>调用图谱</strong>
+      </header>
+
       <section data-chat-call-graph-panel="call-graph" style={{ display: 'grid', gap: 'var(--space-3)' }}>
         {!sessionId ? (
           <EmptyState
             title="未选择会话"
-            description="请选择会话后查看调用图。"
+            description=""
           />
         ) : null}
 
@@ -143,7 +157,7 @@ export function CallGraphPanel({ sessionId = null, refreshSignal = 0, fetch }: C
         {sessionId && callGraph.loadState === 'ready' && callGraph.data.nodes.length === 0 ? (
           <EmptyState
             title="暂无调用图节点"
-            description="当前会话还没有形成调用链路。"
+            description=""
           />
         ) : null}
 
@@ -179,6 +193,6 @@ export function CallGraphPanel({ sessionId = null, refreshSignal = 0, fetch }: C
           </>
         ) : null}
       </section>
-    </Card>
+    </section>
   );
 }

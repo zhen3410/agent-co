@@ -1,41 +1,101 @@
 :root {
-  /* color */
-  --color-bg: #f8fafc;
+  /* palette */
+  --color-bg-canvas: #f5f6fb;
+  --color-bg-muted: #ecf0f6;
   --color-surface: #ffffff;
-  --color-surface-muted: #f1f5f9;
-  --color-text: #0f172a;
-  --color-text-muted: #475569;
-  --color-border: #cbd5e1;
+  --color-surface-muted: #f4f5f9;
+  --color-surface-elevated: #fdfcff;
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #94a3b8;
+  --color-text-muted: #6b7280;
+  --color-text-disabled: #9ca3af;
+
+  --color-border-default: #d7dce8;
+  --color-border-muted: #e4e7f1;
+  --color-border-strong: #bcc2d4;
+
   --color-primary: #2563eb;
+  --color-primary-emphasis: #1d4ed8;
+  --color-primary-soft: #dbe9ff;
   --color-primary-contrast: #ffffff;
+
+  --color-accent: #7c3aed;
+  --color-accent-soft: #ede9fe;
+
+  --color-bg: var(--color-bg-canvas);
+  --color-text: var(--color-text-primary);
+  --color-border: var(--color-border-default);
 
   /* spacing */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
-  --space-6: 1.5rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
 
   /* radius */
   --radius-sm: 0.25rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
 
   /* shadow */
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
-  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.12);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 2px 6px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 4px 10px rgba(15, 23, 42, 0.08);
 
   /* typography */
   --font-family-sans: 'Inter', 'Segoe UI', 'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'IBM Plex Mono', 'SFMono-Regular', 'Menlo', monospace;
   --font-size-sm: 0.875rem;
   --font-size-md: 1rem;
-  --font-size-lg: 1.25rem;
+  --font-size-lg: 1.125rem;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
+  --line-height-body: 1.7;
 
-  /* status colors */
+  /* motion */
+  --motion-base: 200ms;
+  --motion-fast: 180ms;
+  --motion-slow: 320ms;
+  --motion-pop: 200ms;
+  --motion-easing: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --focus-ring: 2px solid rgba(37, 99, 235, 0.6);
+  --focus-offset: 2px;
+
+  /* status */
   --status-success: #059669;
   --status-warning: #d97706;
   --status-error: #dc2626;
-  --status-info: #0284c7;
+  --status-info: #0ea5e9;
+  --app-shell-header-height: 5.5rem;
+  --chat-composer-dock-height: 6.5rem;
+}
+
+:root[data-theme='dark'] {
+  --color-bg-canvas: #080b13;
+  --color-bg-muted: #101325;
+  --color-surface: #111523;
+  --color-surface-muted: #181c2b;
+  --color-surface-elevated: #1f2430;
+  --color-text-primary: #f8fafc;
+
+  --color-text-secondary: #e2e8f0;
+  --color-text-tertiary: #94a3b8;
+  --color-text-muted: #bac3d6;
+
+  --color-border-default: rgba(255, 255, 255, 0.08);
+  --color-border-muted: rgba(255, 255, 255, 0.12);
+  --color-border-strong: rgba(255, 255, 255, 0.18);
+
+  --color-primary: #8fb5ff;
+  --color-primary-emphasis: #5cc2ff;
+  --color-primary-soft: rgba(143, 181, 255, 0.2);
+  --color-primary-contrast: #02122f;
 }

@@ -1,5 +1,18 @@
 export type ChatMessageRole = 'user' | 'assistant' | 'system';
 
+export interface ChatAgent {
+  name: string;
+  avatar?: string;
+  color?: string;
+}
+
+export interface ChatAgentGroup {
+  id: string;
+  name: string;
+  icon: string;
+  agentNames: string[];
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatMessageRole;
@@ -33,11 +46,21 @@ export interface ChatHistoryResponse {
   enabledAgents: string[];
   currentAgent: string | null;
   agentWorkdirs: Record<string, string>;
-  agents: unknown[];
+  agents: ChatAgent[];
 }
 
 export interface ChatSendMessageRequest {
   message: string;
+}
+
+export interface ChatLoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface ChatLoginResponse {
+  success: boolean;
+  authEnabled: boolean;
 }
 
 export interface ChatSendMessageResponse {
@@ -46,6 +69,34 @@ export interface ChatSendMessageResponse {
   latestEventSeq?: number;
   currentAgent?: string | null;
   notice?: string;
+}
+
+export interface ChatSessionMutationResponse {
+  success: true;
+  session?: ChatSessionDetails | null;
+  enabledAgents?: string[];
+  chatSessions?: ChatSessionSummary[];
+  activeSessionId?: string | null;
+}
+
+export interface ChatSessionSelectionResponse extends ChatHistoryResponse {
+  success?: true;
+}
+
+export interface ChatSessionAgentToggleResponse {
+  success: true;
+  enabledAgents: string[];
+  currentAgentWillExpire: boolean;
+}
+
+export interface ChatSwitchAgentResponse {
+  success: true;
+  currentAgent: string | null;
+}
+
+export interface ChatGroupsResponse {
+  groups: ChatAgentGroup[];
+  updatedAt: number;
 }
 
 export interface ChatRealtimeMessageEnvelope {

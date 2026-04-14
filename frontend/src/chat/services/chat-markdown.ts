@@ -30,8 +30,25 @@ function applyInlineMarkdown(text: string): string {
   return formatted.replace(/\u0000INLINE_(\d+)\u0000/g, (_, index) => placeholders[Number(index)] || '');
 }
 
+function splitTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
+function isTableDivider(line: string): boolean {
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
 function parseMarkdown(text: string): string {
-  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  const normalizedText = String(text || '')
+    .replace(/\\n/g, '\n')
+    .replace(/\r\n/g, '\n');
+  const lines = normalizedText.split('\n');
   const html: string[] = [];
   let index = 0;
 
@@ -72,6 +89,28 @@ function parseMarkdown(text: string): string {
         index += 1;
       }
       html.push(`<blockquote>${quoteLines.map((entry) => `<p>${applyInlineMarkdown(entry)}</p>`).join('')}</blockquote>`);
+      continue;
+    }
+
+    if (trimmed.includes('|') && index + 1 < lines.length && isTableDivider(lines[index + 1].trim())) {
+      const headerCells = splitTableRow(trimmed);
+      const bodyRows: string[] = [];
+      index += 2;
+
+      while (index < lines.length) {
+        const current = lines[index].trim();
+        if (!current || !current.includes('|')) {
+          break;
+        }
+
+        const cells = splitTableRow(current);
+        bodyRows.push(`<tr>${cells.map((cell) => `<td>${applyInlineMarkdown(cell)}</td>`).join('')}</tr>`);
+        index += 1;
+      }
+
+      html.push(
+        `<table><thead><tr>${headerCells.map((cell) => `<th>${applyInlineMarkdown(cell)}</th>`).join('')}</tr></thead><tbody>${bodyRows.join('')}</tbody></table>`
+      );
       continue;
     }
 

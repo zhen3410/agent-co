@@ -109,7 +109,10 @@ function createSampleHistoryState() {
     enabledAgents: ['Alice'],
     currentAgent: 'Alice',
     agentWorkdirs: {},
-    agents: []
+    agents: [
+      { name: 'Alice', avatar: 'A', color: '#2563eb' },
+      { name: 'Bob', avatar: 'B', color: '#7c3aed' }
+    ]
   };
 }
 
@@ -178,7 +181,7 @@ function createSampleCallGraphProjection() {
   };
 }
 
-test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /assets 静态资源', async () => {
+test('chat 服务在主入口 URL 返回首页 shell，并可访问 /chat.html 与 /assets 静态资源', async () => {
   const fixture = await createChatServerFixture();
 
   try {
@@ -187,7 +190,16 @@ test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /asset
 
     assert.equal(homeResponse.status, 200);
     assert.match(homeResponse.headers.get('content-type') || '', /text\/html/i);
-    assert.match(homeHtml, /<meta name="agent-co-page" content="chat"\s*\/>/);
+    assert.match(homeHtml, /<meta name="agent-co-page" content="home"\s*\/>/);
+    assert.match(homeHtml, /<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"\s*\/?>/);
+
+    const chatResponse = await fetch(`http://127.0.0.1:${fixture.port}/chat.html`);
+    const chatHtml = await chatResponse.text();
+
+    assert.equal(chatResponse.status, 200);
+    assert.match(chatResponse.headers.get('content-type') || '', /text\/html/i);
+    assert.match(chatHtml, /<meta name="agent-co-page" content="chat"\s*\/>/);
+    assert.match(chatHtml, /<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"\s*\/?>/);
 
     const assetPath = extractFirstJsAssetPath(homeHtml);
     const assetResponse = await fetch(`http://127.0.0.1:${fixture.port}${assetPath}`);
@@ -204,6 +216,21 @@ test('chat 服务在主入口 URL 返回 Vite 构建 shell，并可访问 /asset
   }
 });
 
+test('HomePage 渲染首页入口结构与主行动按钮', () => {
+  const { HomePage } = loadTsModule('frontend/src/home/pages/HomePage.tsx');
+
+  const html = renderToStaticMarkup(React.createElement(HomePage));
+
+  assert.match(html, /data-home-page="shell"/);
+  assert.match(html, /data-home-hero="intro"/);
+  assert.match(html, /data-home-cta="primary"/);
+  assert.match(html, /data-home-workflow="preview"/);
+  assert.match(html, /data-theme-toggle="button"/);
+  assert.doesNotMatch(html, /开发者/);
+  assert.doesNotMatch(html, /小团队/);
+  assert.doesNotMatch(html, /内容优先/);
+});
+
 test('ChatPage 渲染聊天页壳、会话侧边栏、消息列表与输入区', () => {
   const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
 
@@ -212,12 +239,156 @@ test('ChatPage 渲染聊天页壳、会话侧边栏、消息列表与输入区',
   }));
 
   assert.match(html, /data-chat-page="shell"/);
+  assert.match(html, /data-chat-layout="conversation-first"/);
+  assert.match(html, /data-chat-region="conversation-stage"/);
+  assert.match(html, /data-chat-region="composer-dock"/);
+  assert.match(html, /data-chat-mobile-toggle="controls"/);
+  assert.match(html, /data-chat-control-drawer="controls"/);
+  assert.match(html, /data-chat-desktop-only="session-rail"/);
   assert.match(html, /data-chat-sidebar="sessions"/);
   assert.match(html, /data-chat-message-list="messages"/);
   assert.match(html, /data-chat-composer="composer"/);
+  assert.match(html, /data-chat-toolbar="collapsed"/);
+  assert.match(html, /data-chat-toolbar-control="drawer-toggle"/);
+  assert.match(html, /aria-label="打开控制栏"/);
+  assert.match(html, /data-chat-toolbar-control="session-select"/);
+  assert.match(html, /data-chat-toolbar-control="new-session"/);
+  assert.match(html, /data-chat-toolbar-control="agent-select"/);
+  assert.match(html, /data-theme-toggle="button"/);
   assert.match(html, /默认会话/);
   assert.match(html, /你好/);
   assert.match(html, /已收到/);
+  assert.doesNotMatch(html, /data-chat-mobile-toggle="sessions"/);
+  assert.doesNotMatch(html, /data-chat-toolbar-control="drawer-toggle"[^>]*>控制</);
+  assert.doesNotMatch(html, /主舞台聚焦/);
+  assert.doesNotMatch(html, /支持 Markdown/);
+  assert.doesNotMatch(html, /实时预览/);
+  assert.doesNotMatch(html, /导航保持次级/);
+  assert.doesNotMatch(html, /轻量呈现/);
+  assert.doesNotMatch(html, /当前会话的同步与讨论状态/);
+  assert.doesNotMatch(html, /用简洁事件流补充主对话/);
+  assert.doesNotMatch(html, /以摘要方式展示调用链路/);
+});
+
+test('ChatPage 渲染工作台登录入口提示与稳定的登录面板标记', () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const html = renderToStaticMarkup(React.createElement(ChatPage, {
+    initialAuthStatus: {
+      authEnabled: true,
+      authenticated: false
+    }
+  }));
+
+  assert.match(html, /data-chat-page="login"/);
+  assert.match(html, /data-chat-login="panel"/);
+  assert.match(html, /data-chat-login="form"/);
+  assert.match(html, /data-chat-login-action="submit"/);
+  assert.match(html, /进入工作台/);
+  assert.match(html, /登录后继续/);
+});
+
+test('ChatPage 登录门禁可见时不触发 history 或 realtime 请求', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const calls = { history: 0, realtime: 0 };
+  const api = {
+    loadHistory: async () => {
+      calls.history += 1;
+      return createSampleHistoryState();
+    },
+    sendMessage: async () => ({ accepted: true })
+  };
+  const createRealtimeConnection = () => {
+    calls.realtime += 1;
+    return {
+      connect() {},
+      disconnect() {}
+    };
+  };
+
+  let renderer;
+  await act(async () => {
+    renderer = TestRenderer.create(React.createElement(ChatPage, {
+      initialAuthStatus: {
+        authEnabled: true,
+        authenticated: false
+      },
+      api,
+      createRealtimeConnection
+    }));
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  assert.equal(calls.history, 0);
+  assert.equal(calls.realtime, 0);
+  assert.match(JSON.stringify(renderer.toJSON()), /data-chat-page":"login"/);
+});
+
+test('ChatPage 登录门禁提交成功后进入聊天工作台并加载 history', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const calls = {
+    login: [],
+    history: 0,
+    realtime: 0
+  };
+  const api = {
+    loadHistory: async () => {
+      calls.history += 1;
+      return createSampleHistoryState();
+    },
+    sendMessage: async () => ({ accepted: true }),
+    login: async (request) => {
+      calls.login.push(request);
+      return {
+        success: true,
+        authEnabled: true
+      };
+    }
+  };
+  const createRealtimeConnection = () => {
+    calls.realtime += 1;
+    return {
+      connect() {},
+      disconnect() {}
+    };
+  };
+
+  let renderer;
+  await act(async () => {
+    renderer = TestRenderer.create(React.createElement(ChatPage, {
+      initialAuthStatus: {
+        authEnabled: true,
+        authenticated: false
+      },
+      api,
+      createRealtimeConnection
+    }));
+  });
+
+  const usernameInput = renderer.root.findAll((node) => node.type === 'input' && node.props && node.props.name === 'username')[0];
+  const passwordInput = renderer.root.findAll((node) => node.type === 'input' && node.props && node.props.name === 'password')[0];
+  const submitButton = renderer.root.findAll((node) => node.props && node.props['data-chat-login-action'] === 'submit')[0];
+
+  await act(async () => {
+    usernameInput.props.onChange({ target: { value: 'demo' } });
+    passwordInput.props.onChange({ target: { value: 'secret' } });
+  });
+
+  await act(async () => {
+    await submitButton.props.onClick({ preventDefault() {} });
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  assert.deepEqual(calls.login, [{ username: 'demo', password: 'secret' }]);
+  assert.ok(calls.history >= 1);
+  assert.doesNotMatch(JSON.stringify(renderer.toJSON()), /data-chat-page":"login"/);
+  assert.match(JSON.stringify(renderer.toJSON()), /data-chat-page":"shell"/);
 });
 
 test('ChatPage 渲染 runtime 状态、timeline 与 call-graph 二级面板', () => {
@@ -227,9 +398,125 @@ test('ChatPage 渲染 runtime 状态、timeline 与 call-graph 二级面板', ()
     initialState: createSampleHistoryState()
   }));
 
+  assert.match(html, /data-chat-toggle="secondary-panels"/);
+  assert.match(html, /data-chat-runtime-drawer="panels"/);
   assert.match(html, /data-chat-runtime-status="badge"/);
   assert.match(html, /data-chat-timeline-panel="timeline"/);
   assert.match(html, /data-chat-call-graph-panel="call-graph"/);
+});
+
+test('ChatPage 点击控制抽屉中的运行详情会展开详情抽屉并关闭控制抽屉', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(ChatPage, {
+        initialState: createSampleHistoryState(),
+        api: {
+          async loadHistory() {
+            return createSampleHistoryState();
+          },
+          async sendMessage() {
+            return { accepted: true };
+          }
+        },
+        createRealtimeConnection: () => ({
+          connect() {},
+          disconnect() {}
+        })
+      }));
+    });
+
+    const drawerToggle = renderer.root.find((node) => (
+      node.type === 'button' && node.props && node.props['data-chat-toolbar-control'] === 'drawer-toggle'
+    ));
+
+    await act(async () => {
+      drawerToggle.props.onClick();
+    });
+
+    const runtimeButton = renderer.root.find((node) => (
+      node.type === 'button' && node.props && node.props['data-chat-toggle'] === 'secondary-panels'
+    ));
+
+    await act(async () => {
+      runtimeButton.props.onClick();
+    });
+
+    const runtimeDrawer = renderer.root.find((node) => (
+      node.props && node.props['data-chat-runtime-drawer'] === 'panels'
+    ));
+    const controlDrawer = renderer.root.find((node) => (
+      node.props && node.props['data-chat-control-drawer'] === 'controls'
+    ));
+
+    assert.equal(runtimeDrawer.props['data-open'], true);
+    assert.equal(controlDrawer.props['data-open'], false);
+  } finally {
+    await act(async () => {
+      renderer?.unmount();
+    });
+  }
+});
+
+test('ChatPage 点击运行详情抽屉遮罩会关闭抽屉', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(ChatPage, {
+        initialState: createSampleHistoryState(),
+        api: {
+          async loadHistory() {
+            return createSampleHistoryState();
+          },
+          async sendMessage() {
+            return { accepted: true };
+          }
+        },
+        createRealtimeConnection: () => ({
+          connect() {},
+          disconnect() {}
+        })
+      }));
+    });
+
+    const drawerToggle = renderer.root.find((node) => (
+      node.type === 'button' && node.props && node.props['data-chat-toolbar-control'] === 'drawer-toggle'
+    ));
+
+    await act(async () => {
+      drawerToggle.props.onClick();
+    });
+
+    const runtimeButton = renderer.root.find((node) => (
+      node.type === 'button' && node.props && node.props['data-chat-toggle'] === 'secondary-panels'
+    ));
+
+    await act(async () => {
+      runtimeButton.props.onClick();
+    });
+
+    const runtimeDrawer = renderer.root.find((node) => (
+      node.props && node.props['data-chat-runtime-drawer'] === 'panels'
+    ));
+
+    await act(async () => {
+      runtimeDrawer.props.onClick({ target: 'overlay', currentTarget: 'overlay' });
+    });
+
+    const nextRuntimeDrawer = renderer.root.find((node) => (
+      node.props && node.props['data-chat-runtime-drawer'] === 'panels'
+    ));
+
+    assert.equal(nextRuntimeDrawer.props['data-open'], false);
+  } finally {
+    await act(async () => {
+      renderer?.unmount();
+    });
+  }
 });
 
 test('RuntimeStatusBadge 使用会话 sync-status 端点并渲染同步信息', async () => {
@@ -376,6 +663,39 @@ test('chat API 发送动作保持当前页面的后端请求契约', async () =>
   assert.equal(calls[0].init.body, JSON.stringify({ message: '新的提示词' }));
 });
 
+test('chat API 支持会话与智能体控制栏动作契约', async () => {
+  const { createChatApi } = loadTsModule('frontend/src/chat/services/chat-api.ts');
+  const calls = [];
+
+  const api = createChatApi({
+    fetch: async (url, init = {}) => {
+      calls.push({ url, init });
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ success: true, currentAgent: 'Alice', activeSessionId: 'session-2', enabledAgents: ['Alice'] }),
+        text: async () => '{"success":true}'
+      };
+    }
+  });
+
+  await api.createSession();
+  await api.selectSession('session-2');
+  await api.setSessionAgent('session-2', 'Alice', true);
+  await api.switchAgent('Alice');
+
+  assert.deepEqual(
+    calls.map((call) => ({ url: call.url, method: call.init.method, body: call.init.body })),
+    [
+      { url: '/api/sessions', method: 'POST', body: '{}' },
+      { url: '/api/sessions/select', method: 'POST', body: JSON.stringify({ sessionId: 'session-2' }) },
+      { url: '/api/session-agents', method: 'POST', body: JSON.stringify({ sessionId: 'session-2', agentName: 'Alice', enabled: true }) },
+      { url: '/api/agents/switch', method: 'POST', body: JSON.stringify({ agentName: 'Alice' }) }
+    ]
+  );
+});
+
 test('消息列表保留基础 Markdown 渲染能力', () => {
   const { ChatMessageList } = loadTsModule('frontend/src/chat/features/message-list/ChatMessageList.tsx');
 
@@ -393,18 +713,62 @@ test('消息列表保留基础 Markdown 渲染能力', () => {
 
   assert.match(html, /<strong>React<\/strong>/);
   assert.match(html, /<code>pwd<\/code>/);
+  assert.match(html, /chat-message-list__bubble/);
+});
+
+test('消息列表支持基础 Markdown 表格渲染', () => {
+  const { ChatMessageList } = loadTsModule('frontend/src/chat/features/message-list/ChatMessageList.tsx');
+
+  const html = renderToStaticMarkup(React.createElement(ChatMessageList, {
+    messages: [
+      {
+        id: 'assistant-table-1',
+        role: 'assistant',
+        sender: 'Alice',
+        text: '| 角色 | 状态 |\\n| --- | --- |\\n| FRONTEND | 已完成 |',
+        timestamp: 2
+      }
+    ]
+  }));
+
+  assert.match(html, /<table>/);
+  assert.match(html, /<th>角色<\/th>/);
+  assert.match(html, /<td>FRONTEND<\/td>/);
+});
+
+test('消息列表为 review 消息使用独立气泡和色彩语义', () => {
+  const { ChatMessageList } = loadTsModule('frontend/src/chat/features/message-list/ChatMessageList.tsx');
+
+  const html = renderToStaticMarkup(React.createElement(ChatMessageList, {
+    messages: [
+      {
+        id: 'review-1',
+        role: 'assistant',
+        sender: 'Codex架构师',
+        text: '建议继续拆分 review。',
+        timestamp: 2,
+        messageSubtype: 'invocation_review',
+        reviewDisplayText: '**accept** `review`'
+      }
+    ]
+  }));
+
+  assert.match(html, /data-tone="review"/);
+  assert.match(html, /chat-message-list__kind">review</);
+  assert.match(html, /chat-message-list__bubble/);
+  assert.match(html, /chat-message-list__review-banner/);
+  assert.match(html, /<strong>accept<\/strong>/);
+  assert.match(html, /<code>review<\/code>/);
+  assert.doesNotMatch(html, /建议继续拆分 review/);
 });
 
 test('chat markdown 渲染能力位于 chat 共享边界并在功能组件复用', () => {
   const markdownServicePath = path.resolve(rootDir, 'frontend/src/chat/services/chat-markdown.ts');
-  const composerPath = path.resolve(rootDir, 'frontend/src/chat/features/composer/ChatComposer.tsx');
   const messageListPath = path.resolve(rootDir, 'frontend/src/chat/features/message-list/ChatMessageList.tsx');
 
   assert.equal(fs.existsSync(markdownServicePath), true, 'chat markdown renderer should live under chat/services');
 
-  const composerSource = fs.readFileSync(composerPath, 'utf8');
   const messageListSource = fs.readFileSync(messageListPath, 'utf8');
-  assert.match(composerSource, /from '\.\.\/\.\.\/services\/chat-markdown'/);
   assert.match(messageListSource, /from '\.\.\/\.\.\/services\/chat-markdown'/);
 });
 
@@ -1123,6 +1487,63 @@ test('ChatPage 在存在 initialState 时仍可通过刷新动作重新拉取 hi
 
     assert.equal(loadHistoryCalls, 1, 'refresh click should trigger history reload even with initialState');
     assert.match(JSON.stringify(renderer.toJSON()), /刷新后的会话内容/);
+  } finally {
+    await act(async () => {
+      renderer?.unmount();
+    });
+    global.window = originalWindow;
+  }
+});
+
+test('ChatPage 进入聊天页后会自动滚动到最新消息', async () => {
+  const { ChatPage } = loadTsModule('frontend/src/chat/pages/ChatPage.tsx');
+
+  const scrollCalls = [];
+  const originalWindow = global.window;
+  global.window = {
+    location: {
+      protocol: 'http:',
+      host: '127.0.0.1:3000'
+    },
+    setTimeout(handler) {
+      handler();
+      return 1;
+    },
+    clearTimeout() {}
+  };
+
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(ChatPage, {
+        initialState: createSampleHistoryState(),
+        api: {
+          async loadHistory() {
+            return createSampleHistoryState();
+          },
+          async sendMessage() {
+            return { accepted: true };
+          }
+        },
+        createRealtimeConnection: () => ({
+          connect() {},
+          disconnect() {}
+        })
+      }), {
+        createNodeMock: (element) => {
+          if (element && element.props && element.props['aria-hidden'] === 'true') {
+            return {
+              scrollIntoView(options) {
+                scrollCalls.push(options || null);
+              }
+            };
+          }
+          return null;
+        }
+      });
+    });
+
+    assert.equal(scrollCalls.length > 0, true);
   } finally {
     await act(async () => {
       renderer?.unmount();
